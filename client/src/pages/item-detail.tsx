@@ -1,11 +1,16 @@
+import * as React from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Pencil, ArrowRightLeft, Trash2 } from 'lucide-react';
+import { Pencil, ArrowRightLeft, Trash2, Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useItem, useDeleteProperty } from '@/hooks/use-inventory';
 import { toast } from '@/components/ui/toast';
+import { FileList } from '@/components/files/file-list';
+import { FileUpload } from '@/components/files/file-upload';
+import { ConditionForm } from '@/components/condition/condition-form';
+import { ConditionTimeline } from '@/components/condition/condition-timeline';
 
 const conditionVariant = {
   new: 'success',
@@ -28,6 +33,8 @@ export function ItemDetail() {
   const { data: item, isLoading } = useItem(id);
   // Reuse delete mutation pattern — actual item delete not yet available, placeholder
   const _deleteProperty = useDeleteProperty();
+
+  const [conditionFormOpen, setConditionFormOpen] = React.useState(false);
 
   if (isLoading) {
     return (
@@ -110,13 +117,38 @@ export function ItemDetail() {
         </div>
       </Card>
 
-      {/* Coming Soon sections */}
-      {['Dates', 'Accessories', 'Files', 'Condition History'].map((section) => (
+      {/* Phase 4 placeholders */}
+      {['Dates', 'Accessories', 'Lending'].map((section) => (
         <Card key={section}>
           <h2 className="text-sm font-semibold text-[var(--color-text)] mb-1">{section}</h2>
-          <p className="text-xs text-[var(--color-text-muted)]">Coming soon</p>
+          <p className="text-xs text-[var(--color-text-muted)]">Coming in Phase 4</p>
         </Card>
       ))}
+
+      {/* Files */}
+      <Card>
+        <h2 className="text-sm font-semibold text-[var(--color-text)] mb-3">Files</h2>
+        <FileList itemId={id} />
+        <FileUpload itemId={id} />
+      </Card>
+
+      {/* Condition History */}
+      <Card>
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-sm font-semibold text-[var(--color-text)]">Condition History</h2>
+          <Button size="sm" variant="outline" onClick={() => setConditionFormOpen(true)}>
+            <Plus className="w-3.5 h-3.5" />
+            Record
+          </Button>
+        </div>
+        <ConditionTimeline itemId={id} />
+        <ConditionForm
+          itemId={id}
+          isOpen={conditionFormOpen}
+          onOpenChange={setConditionFormOpen}
+          onComplete={() => {}}
+        />
+      </Card>
 
       {/* Actions */}
       <div className="flex gap-2">

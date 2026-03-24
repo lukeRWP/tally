@@ -40,4 +40,18 @@ export const queryKeys = {
   auth: {
     session: ['auth', 'session'] as const,
   },
+  files: {
+    all: ['files'] as const,
+    byItem: (itemId: number) => [...queryKeys.files.all, 'byItem', itemId] as const,
+  },
+  conditions: {
+    all: ['conditions'] as const,
+    byItem: (itemId: number) => [...queryKeys.conditions.all, 'byItem', itemId] as const,
+  },
+  products: {
+    all: ['products'] as const,
+    detail: (id: number) => [...queryKeys.products.all, 'detail', id] as const,
+    barcode: (barcode: string) => [...queryKeys.products.all, 'barcode', barcode] as const,
+    search: (q: string) => [...queryKeys.products.all, 'search', q] as const,
+  },
 };
