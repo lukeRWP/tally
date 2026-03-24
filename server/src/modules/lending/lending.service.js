@@ -1,0 +1,146 @@
+let _db = null;
+let _logger = null;
+
+function _mapLending(row) {
+  return {
+    id: row.ID,
+    itemId: row.ITEM_ID,
+    lentTo: row.LENT_TO,
+    lentAt: row.LENT_AT,
+    dueAt: row.DUE_AT || null,
+    returnedAt: row.RETURNED_AT || null,
+    notes: row.NOTES || null,
+    createdBy: row.CREATED_BY,
+    // Optional joined fields
+    ...(row.ITEM_NAME !== undefined && { itemName: row.ITEM_NAME || null }),
+    ...(row.CONTAINER_NAME !== undefined && { containerName: row.CONTAINER_NAME || null }),
+    ...(row.AREA_NAME !== undefined && { areaName: row.AREA_NAME || null }),
+    ...(row.PROPERTY_NAME !== undefined && { propertyName: row.PROPERTY_NAME || null }),
+  };
+}
+
+const LendingService = {
+  // ── Initialization ─────────────────────────────────────────────────────────
+
+  init({ db, logger }) {
+    _db = db;
+    _logger = logger;
+  },
+
+  // ── Lend ──────────────────────────────────────────────────────────────────
+
+  async lend(itemId, data, userId) {
+    const result = await _db.query(
+      `INSERT INTO TALLY.item_lending (ITEM_ID, LENT_TO, LENT_AT, DUE_AT, NOTES, CREATED_BY)
+       VALUES (?, ?, NOW(), ?, ?, ?)`,
+      [
+        itemId,
+        data.lentTo,
+        data.dueAt || null,
+        data.notes || null,
+        userId,
+      ]
+    );
+
+    await _db.query(
+      `UPDATE TALLY.items SET STATUS = 'lent' WHERE ID = ?`,
+      [itemId]
+    );
+
+    const rows = await _db.query(
+      `SELECT * FROM TALLY.item_lending WHERE ID = ?`,
+      [result.insertId]
+    );
+
+    return _mapLending(rows[0]);
+  },
+
+  // ── Return ────────────────────────────────────────────────────────────────
+
+  async return(lendingId, userId) {
+    await _db.query(
+      `UPDATE TALLY.item_lending SET RETURNED_AT = NOW() WHERE ID = ?`,
+      [lendingId]
+    );
+
+    const rows = await _db.query(
+      `SELECT * FROM TALLY.item_lending WHERE ID = ?`,
+      [lendingId]
+    );
+
+    if (!rows.length) return null;
+
+    const lending = rows[0];
+
+    await _db.query(
+      `UPDATE TALLY.items SET STATUS = 'active' WHERE ID = ?`,
+      [lending.ITEM_ID]
+    );
+
+    return _mapLending(lending);
+  },
+
+  // ── Get Active ────────────────────────────────────────────────────────────
+
+  async getActive(itemId) {
+    const rows = await _db.query(
+      `SELECT * FROM TALLY.item_lending
+       WHERE ITEM_ID = ? AND RETURNED_AT IS NULL
+       LIMIT 1`,
+      [itemId]
+    );
+
+    if (!rows.length) return null;
+    return _mapLending(rows[0]);
+  },
+
+  // ── Get History ───────────────────────────────────────────────────────────
+
+  async getHistory(itemId) {
+    const rows = await _db.query(
+      `SELECT * FROM TALLY.item_lending
+       WHERE ITEM_ID = ?
+       ORDER BY LENT_AT DESC`,
+      [itemId]
+    );
+
+    return rows.map(_mapLending);
+  },
+
+  // ── Get Overdue ───────────────────────────────────────────────────────────
+
+  async getOverdue(userId) {
+    const rows = await _db.query(
+      `SELECT
+         il.*,
+         i.NAME  AS ITEM_NAME,
+         c.NAME  AS CONTAINER_NAME,
+         a.NAME  AS AREA_NAME,
+         pr.NAME AS PROPERTY_NAME
+       FROM TALLY.item_lending il
+       JOIN TALLY.items i       ON i.ID  = il.ITEM_ID
+       JOIN TALLY.containers c  ON c.ID  = i.CONTAINER_ID
+       JOIN TALLY.areas a       ON a.ID  = c.AREA_ID
+       JOIN TALLY.properties pr ON pr.ID = a.PROPERTY_ID
+       JOIN TALLY.property_members pm ON pm.PROPERTY_ID = a.PROPERTY_ID
+       WHERE il.RETURNED_AT IS NULL
+         AND il.DUE_AT < NOW()
+         AND pm.USER_ID = ?`,
+      [userId]
+    );
+
+    return rows.map(_mapLending);
+  },
+
+  // ── Get Item ID for Lending ───────────────────────────────────────────────
+
+  async getItemIdForLending(lendingId) {
+    const rows = await _db.query(
+      `SELECT ITEM_ID FROM TALLY.item_lending WHERE ID = ?`,
+      [lendingId]
+    );
+    return rows[0]?.ITEM_ID || null;
+  },
+};
+
+module.exports = LendingService;
