@@ -110,6 +110,8 @@ Each feature lives in `server/src/modules/{feature}/` with three files:
 | products    | `/api/products`   | Barcode lookup, catalog CRUD, duplicate check, text search |
 | files       | `/api/files`      | Upload, download (presigned URLs), list by item, delete    |
 | conditions  | `/api/conditions` | Create snapshot (photo + rating), history by item, delete  |
+| tags        | `/api/tags`       | Tag CRUD, polymorphic entity tagging                       |
+| labels      | `/api/labels`     | QR generation, PDF/ZPL label printing, code resolution     |
 
 All modules are registered in `server/index.js` via:
 
@@ -122,6 +124,8 @@ require('./src/modules/inventory/items.routes')({ app, db, logger, config });
 require('./src/modules/files/files.routes')({ app, db, logger, config });
 require('./src/modules/files/condition.routes')({ app, db, logger, config });
 require('./src/modules/products/products.routes')({ app, db, logger, config });
+require('./src/modules/tags/tags.routes')({ app, db, logger, config });
+require('./src/modules/labels/labels.routes')({ app, db, logger, config });
 ```
 
 ## Phase 2 Infrastructure & Integrations
@@ -271,3 +275,33 @@ TLY-{TYPE}-{HEX}
 | `I`  | Item       |
 
 Example: `TLY-I-3a9f2c` — a unique item identifier encoded as a scannable QR code.
+
+## Phase 3 Features
+
+### QR Deep-Link Resolution
+
+Scanning a TLY code navigates to `/s/TLY-X-XXXX` on the client. The `ScanRedirectPage` component calls `GET /api/labels/_x_/resolve/:code`, which decodes the entity type and ID from the code and returns the canonical deep-link path (e.g. `/items/42`). The client then redirects to that path automatically.
+
+### Scan-Scan-Done Workflow (Move Mode)
+
+The scan page supports a two-scan move flow:
+
+1. First scan — select a destination container (enters "move mode", shown as an amber banner).
+2. Second scan — scan an item; it is immediately moved to the selected container via `PATCH /api/items/_p_/:id/move`.
+3. Repeat step 2 to move more items to the same destination, or cancel move mode to start over.
+
+This allows rapid relocation of many items without navigating away from the scan page.
+
+### Label Printing (PDF Avery sheets + ZPL thermal)
+
+- `POST /api/labels/_y_/generate` — accepts an array of `{ entityType, entityId }` objects and returns either a PDF (Avery 5160 / 30-up sheet layout) or a ZPL string for thermal printers, depending on the `format` field (`pdf` | `zpl`).
+- PDF labels are generated server-side using `pdfkit` and returned as `application/pdf`.
+- ZPL labels are plain text returned as `text/plain`, ready to spool directly to a Zebra-compatible printer.
+- The label UI (`/labels`) lets users build a print queue, choose format, and download or print.
+
+### Tags System (property-scoped, polymorphic)
+
+- Tags are scoped to a property — each `tag` row references a `PROPERTY_ID`.
+- Tags can be attached to any entity type (`item`, `container`, `area`) via the `entity_tags` join table (`ENTITY_TYPE` + `ENTITY_ID` columns).
+- API: `GET /api/tags/_x_/property/:propertyId` lists all tags for a property; `POST /api/tags/_y_/entity` attaches a tag to an entity; `DELETE /api/tags/_d_/entity` removes it.
+- The search endpoint (`GET /api/items/_x_/search`) accepts an optional `tagIds` query parameter (comma-separated) to filter results to items that have all specified tags.
