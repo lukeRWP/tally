@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Pencil, ArrowRightLeft, Trash2, Plus, Printer } from 'lucide-react';
+import { Pencil, ArrowRightLeft, Trash2, Plus, Printer, Link, CalendarPlus, HandCoins } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { LabelPrintDialog } from '@/components/labels/label-print-dialog';
 import { Badge } from '@/components/ui/badge';
@@ -13,6 +13,13 @@ import { FileUpload } from '@/components/files/file-upload';
 import { ConditionForm } from '@/components/condition/condition-form';
 import { ConditionTimeline } from '@/components/condition/condition-timeline';
 import { TagPicker } from '@/components/tags/tag-picker';
+import { DateList } from '@/components/dates/date-list';
+import { DateForm } from '@/components/dates/date-form';
+import { AccessoryList } from '@/components/accessories/accessory-list';
+import { AccessoryPicker } from '@/components/accessories/accessory-picker';
+import { LendingList } from '@/components/lending/lending-list';
+import { LendForm } from '@/components/lending/lend-form';
+import { useItemDates } from '@/hooks/use-dates';
 
 const conditionVariant = {
   new: 'success',
@@ -26,6 +33,23 @@ const statusVariant = {
   removed: 'danger',
   lent: 'info',
 } as const;
+
+function computeDepreciation(
+  purchasePrice: number,
+  depreciationRate: number,
+  purchaseDate: string | null,
+  fallbackDate: string,
+) {
+  const since = purchaseDate || fallbackDate;
+  const purchaseTime = new Date(since).getTime();
+  const now = Date.now();
+  const msPerYear = 365.25 * 24 * 60 * 60 * 1000;
+  const yearsSince = (now - purchaseTime) / msPerYear;
+  const currentValue = purchasePrice * Math.pow(1 - depreciationRate, yearsSince);
+  const sinceYear = new Date(since).getFullYear().toString();
+  const ratePercent = Math.round(depreciationRate * 100);
+  return { currentValue: Math.max(0, currentValue), ratePercent, sinceYear };
+}
 
 export function ItemDetail() {
   const { itemId } = useParams<{ itemId: string }>();
@@ -42,6 +66,12 @@ export function ItemDetail() {
 
   const [conditionFormOpen, setConditionFormOpen] = React.useState(false);
   const [printOpen, setPrintOpen] = React.useState(false);
+  const [dateFormOpen, setDateFormOpen] = React.useState(false);
+  const [accessoryPickerOpen, setAccessoryPickerOpen] = React.useState(false);
+  const [lendFormOpen, setLendFormOpen] = React.useState(false);
+
+  // Fetch item dates for depreciation calculation
+  const { data: itemDates } = useItemDates(id);
 
   if (isLoading) {
     return (
@@ -56,6 +86,31 @@ export function ItemDetail() {
   if (!item) {
     return <p className="text-sm text-[var(--color-text-muted)] text-center py-8">Item not found.</p>;
   }
+
+  // Cast to access depreciation fields from the API
+  const extItem = item as typeof item & {
+    depreciationEnabled?: boolean;
+    depreciationRate?: number | null;
+  };
+
+  // Find earliest "purchased" date for depreciation
+  const purchasedDate = itemDates
+    ?.filter((d) => d.dateType.toLowerCase() === 'purchased')
+    .sort((a, b) => new Date(a.dateValue).getTime() - new Date(b.dateValue).getTime())[0]
+    ?.dateValue ?? null;
+
+  const depreciation =
+    extItem.depreciationEnabled &&
+    extItem.purchasePrice != null &&
+    extItem.depreciationRate != null &&
+    extItem.depreciationRate > 0
+      ? computeDepreciation(
+          extItem.purchasePrice,
+          extItem.depreciationRate,
+          purchasedDate,
+          extItem.createdAt,
+        )
+      : null;
 
   return (
     <div className="flex flex-col gap-4">
@@ -122,6 +177,17 @@ export function ItemDetail() {
             </p>
           </div>
         </div>
+        {depreciation && (
+          <div className="mt-2 pt-2 border-t border-[var(--color-border)]">
+            <p className="text-xs text-[var(--color-text-secondary)]">
+              Est. Value: <span className="font-medium text-[var(--color-text)]">${depreciation.currentValue.toFixed(2)}</span>
+              {' '}
+              <span className="text-[var(--color-text-muted)]">
+                ({depreciation.ratePercent}% annual, since {depreciation.sinceYear})
+              </span>
+            </p>
+          </div>
+        )}
       </Card>
 
       {/* Tags */}
@@ -132,13 +198,58 @@ export function ItemDetail() {
         </Card>
       )}
 
-      {/* Phase 4 placeholders */}
-      {['Dates', 'Accessories', 'Lending'].map((section) => (
-        <Card key={section}>
-          <h2 className="text-sm font-semibold text-[var(--color-text)] mb-1">{section}</h2>
-          <p className="text-xs text-[var(--color-text-muted)]">Coming in Phase 4</p>
-        </Card>
-      ))}
+      {/* Dates */}
+      <Card>
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-sm font-semibold text-[var(--color-text)]">Dates</h2>
+          <Button size="sm" variant="outline" onClick={() => setDateFormOpen(true)}>
+            <CalendarPlus className="w-3.5 h-3.5" />
+            Add Date
+          </Button>
+        </div>
+        <DateList itemId={id} />
+        <DateForm
+          itemId={id}
+          isOpen={dateFormOpen}
+          onOpenChange={setDateFormOpen}
+        />
+      </Card>
+
+      {/* Accessories */}
+      <Card>
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-sm font-semibold text-[var(--color-text)]">Accessories</h2>
+          <Button size="sm" variant="outline" onClick={() => setAccessoryPickerOpen(true)}>
+            <Link className="w-3.5 h-3.5" />
+            Link
+          </Button>
+        </div>
+        <AccessoryList itemId={id} />
+        <AccessoryPicker
+          itemId={id}
+          isOpen={accessoryPickerOpen}
+          onOpenChange={setAccessoryPickerOpen}
+        />
+      </Card>
+
+      {/* Lending */}
+      <Card>
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-sm font-semibold text-[var(--color-text)]">Lending</h2>
+          {item.status === 'active' && (
+            <Button size="sm" variant="outline" onClick={() => setLendFormOpen(true)}>
+              <HandCoins className="w-3.5 h-3.5" />
+              Lend
+            </Button>
+          )}
+        </div>
+        <LendingList itemId={id} itemName={item.name} />
+        <LendForm
+          itemId={id}
+          isOpen={lendFormOpen}
+          onOpenChange={setLendFormOpen}
+        />
+      </Card>
 
       {/* Files */}
       <Card>

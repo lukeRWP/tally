@@ -62,4 +62,19 @@ export const queryKeys = {
   labels: {
     all: ['labels'] as const,
   },
+  lending: {
+    all: ['lending'] as const,
+    byItem: (itemId: number) => [...queryKeys.lending.all, 'byItem', itemId] as const,
+    active: (itemId: number) => [...queryKeys.lending.all, 'active', itemId] as const,
+    overdue: () => [...queryKeys.lending.all, 'overdue'] as const,
+  },
+  dates: {
+    all: ['dates'] as const,
+    byItem: (itemId: number) => [...queryKeys.dates.all, 'byItem', itemId] as const,
+    upcoming: () => [...queryKeys.dates.all, 'upcoming'] as const,
+  },
+  accessories: {
+    all: ['accessories'] as const,
+    byItem: (itemId: number) => [...queryKeys.accessories.all, 'byItem', itemId] as const,
+  },
 };
