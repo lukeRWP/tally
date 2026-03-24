@@ -10,6 +10,7 @@ const cookieParser = require('cookie-parser');
 const rateLimit = require('express-rate-limit');
 
 const db = require('./src/infrastructure/db');
+const storage = require('./src/infrastructure/storage');
 const logger = require('./src/utils/logger');
 const errorHandler = require('./src/middleware/error-handler');
 
@@ -42,6 +43,9 @@ app.use(
     legacyHeaders: false,
   })
 );
+
+storage.init();
+storage.ensureBucket().catch(err => logger.warn('MinIO bucket check failed', { error: err.message }));
 
 // ── Health Check ────────────────────────────────────────────────────────────
 
