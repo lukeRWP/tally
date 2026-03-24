@@ -1,3 +1,80 @@
+import { LogOut, Sun, Moon, Monitor } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Card } from '@/components/ui/card';
+import { useAuthStore } from '@/store/auth-store';
+
 export function SettingsPage() {
-  return <div>Settings — coming in Task 14</div>;
+  const { user, theme, setTheme, logout } = useAuthStore();
+
+  return (
+    <div className="flex flex-col gap-4">
+      <h1 className="text-lg font-bold text-[var(--color-text)]">Settings</h1>
+
+      {/* Profile */}
+      <Card>
+        <h2 className="text-sm font-semibold text-[var(--color-text)] mb-2">Profile</h2>
+        {user ? (
+          <div className="flex items-center gap-3">
+            {user.avatarUrl ? (
+              <img
+                src={user.avatarUrl}
+                alt={user.displayName}
+                className="w-10 h-10 rounded-full object-cover"
+              />
+            ) : (
+              <div className="w-10 h-10 rounded-full bg-[var(--color-primary-bg)] flex items-center justify-center text-sm font-bold text-[var(--color-primary)]">
+                {user.displayName.charAt(0).toUpperCase()}
+              </div>
+            )}
+            <div>
+              <p className="text-sm font-medium text-[var(--color-text)]">{user.displayName}</p>
+              <p className="text-xs text-[var(--color-text-muted)]">{user.email}</p>
+            </div>
+          </div>
+        ) : (
+          <p className="text-sm text-[var(--color-text-muted)]">Not signed in</p>
+        )}
+      </Card>
+
+      {/* Theme */}
+      <Card>
+        <h2 className="text-sm font-semibold text-[var(--color-text)] mb-2">Appearance</h2>
+        <div className="flex gap-2">
+          <Button
+            variant={theme === 'light' ? 'default' : 'outline'}
+            size="sm"
+            onClick={() => setTheme('light')}
+            className="flex-1"
+          >
+            <Sun className="w-4 h-4" />
+            Light
+          </Button>
+          <Button
+            variant={theme === 'dark' ? 'default' : 'outline'}
+            size="sm"
+            onClick={() => setTheme('dark')}
+            className="flex-1"
+          >
+            <Moon className="w-4 h-4" />
+            Dark
+          </Button>
+          <Button
+            variant={theme === 'system' ? 'default' : 'outline'}
+            size="sm"
+            onClick={() => setTheme('system')}
+            className="flex-1"
+          >
+            <Monitor className="w-4 h-4" />
+            System
+          </Button>
+        </div>
+      </Card>
+
+      {/* Logout */}
+      <Button variant="destructive" onClick={logout} className="w-full">
+        <LogOut className="w-4 h-4" />
+        Sign Out
+      </Button>
+    </div>
+  );
 }
