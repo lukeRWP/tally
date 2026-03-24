@@ -2,7 +2,7 @@ services:
   tally-db:
     image: mysql:8.0
     ports:
-      - "3306:3306"
+      - "3307:3306"
     environment:
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
       MYSQL_DATABASE: TALLY
@@ -23,7 +23,7 @@ services:
       context: ./server
       dockerfile: Dockerfile
     ports:
-      - "2727:2727"
+      - "2728:2727"
     depends_on:
       tally-db:
         condition: service_healthy
@@ -40,7 +40,7 @@ services:
       context: ./client
       dockerfile: Dockerfile
     ports:
-      - "8080:80"
+      - "8081:80"
     depends_on:
       - tally-server
     networks:
@@ -49,8 +49,8 @@ services:
   tally-minio:
     image: minio/minio
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - "9002:9000"
+      - "9003:9001"
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: ${S3_ACCESS_KEY}
@@ -63,7 +63,7 @@ services:
   tally-vault:
     image: hashicorp/vault:1.17
     ports:
-      - "8200:8200"
+      - "8201:8200"
     environment:
       VAULT_DEV_ROOT_TOKEN_ID: tally-dev-token
       VAULT_DEV_LISTEN_ADDRESS: 0.0.0.0:8200

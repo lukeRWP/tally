@@ -67,8 +67,8 @@ const config = Object.freeze({
   storage: {
     endpoint: process.env.S3_ENDPOINT,
     bucket: process.env.S3_BUCKET,
-    accessKeyId: process.env.S3_ACCESS_KEY_ID,
-    secretAccessKey: process.env.S3_SECRET_ACCESS_KEY,
+    accessKeyId: process.env.S3_ACCESS_KEY,
+    secretAccessKey: process.env.S3_SECRET_KEY,
     region: process.env.S3_REGION || 'us-east-1',
   },
 

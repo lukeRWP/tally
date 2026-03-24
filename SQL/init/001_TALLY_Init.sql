@@ -7,6 +7,11 @@ CREATE DATABASE IF NOT EXISTS TALLY
 
 USE TALLY;
 
+-- Create application user
+CREATE USER IF NOT EXISTS 'tally_api'@'%' IDENTIFIED BY 'tally_dev_password';
+GRANT ALL PRIVILEGES ON TALLY.* TO 'tally_api'@'%';
+FLUSH PRIVILEGES;
+
 -- ============================================================
 -- 1. users
 -- ============================================================
@@ -146,7 +151,7 @@ CREATE TABLE IF NOT EXISTS items (
     CURRENT_VALUE         DECIMAL(10,2)                    NULL,
     DEPRECIATION_ENABLED  BOOLEAN                          NOT NULL DEFAULT FALSE,
     DEPRECIATION_RATE     DECIMAL(5,4)                     NULL,
-    CONDITION             ENUM('new','good','fair','poor') NULL,
+    `CONDITION`           ENUM('new','good','fair','poor') NULL,
     QR_CODE               VARCHAR(20)                      NULL,
     STATUS                ENUM('active','removed','lent')  NOT NULL DEFAULT 'active',
     CREATED_AT            DATETIME                         NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -190,7 +195,7 @@ CREATE TABLE IF NOT EXISTS item_accessories (
 CREATE TABLE IF NOT EXISTS condition_snapshots (
     ID          INT                              NOT NULL AUTO_INCREMENT,
     ITEM_ID     INT                              NOT NULL,
-    CONDITION   ENUM('new','good','fair','poor') NOT NULL,
+    `CONDITION` ENUM('new','good','fair','poor') NOT NULL,
     PHOTO_KEY   VARCHAR(255)                     NOT NULL,
     NOTES       TEXT                             NULL,
     RECORDED_BY INT                              NOT NULL,
