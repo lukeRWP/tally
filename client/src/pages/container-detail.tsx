@@ -18,6 +18,7 @@ import {
 } from '@/hooks/use-inventory';
 import { toast } from '@/components/ui/toast';
 import { TagPicker } from '@/components/tags/tag-picker';
+import { LabelPrintDialog } from '@/components/labels/label-print-dialog';
 
 export function ContainerDetail() {
   const { containerId } = useParams<{ containerId: string }>();
@@ -25,6 +26,7 @@ export function ContainerDetail() {
 
   const [createType, setCreateType] = useState<'container' | 'item' | null>(null);
   const [fabOpen, setFabOpen] = useState(false);
+  const [printOpen, setPrintOpen] = useState(false);
 
   const { data: container, isLoading: containerLoading } = useContainer(id);
   const { data: children, isLoading: childrenLoading } = useContainerChildren(id);
@@ -104,7 +106,7 @@ export function ContainerDetail() {
           <ScanLine className="w-4 h-4" />
           Scan Into
         </Button>
-        <Button variant="outline" size="sm" onClick={() => toast('Label printing coming soon')}>
+        <Button variant="outline" size="sm" onClick={() => setPrintOpen(true)}>
           <Printer className="w-4 h-4" />
           Print
         </Button>
@@ -220,6 +222,18 @@ export function ContainerDetail() {
         type="item"
         onSubmit={handleCreateItem}
         isPending={createItem.isPending}
+      />
+      <LabelPrintDialog
+        entities={[{
+          id: container.id,
+          name: container.name,
+          qrCode: container.qrCode,
+          type: 'container',
+          breadcrumb: container.breadcrumb.map((b) => b.name).join(' > '),
+        }]}
+        entityType="container"
+        isOpen={printOpen}
+        onOpenChange={setPrintOpen}
       />
     </div>
   );

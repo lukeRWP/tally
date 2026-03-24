@@ -1,7 +1,8 @@
 import * as React from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Pencil, ArrowRightLeft, Trash2, Plus } from 'lucide-react';
+import { Pencil, ArrowRightLeft, Trash2, Plus, Printer } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { LabelPrintDialog } from '@/components/labels/label-print-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Card } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -40,6 +41,7 @@ export function ItemDetail() {
     ?.breadcrumb?.find((b) => b.type === 'property')?.id ?? 0;
 
   const [conditionFormOpen, setConditionFormOpen] = React.useState(false);
+  const [printOpen, setPrintOpen] = React.useState(false);
 
   if (isLoading) {
     return (
@@ -173,6 +175,10 @@ export function ItemDetail() {
           <ArrowRightLeft className="w-4 h-4" />
           Move
         </Button>
+        <Button variant="outline" size="sm" className="flex-1" onClick={() => setPrintOpen(true)}>
+          <Printer className="w-4 h-4" />
+          Print Asset Tag
+        </Button>
         <Button variant="destructive" size="sm" className="flex-1" onClick={() => {
           toast('Delete coming soon');
           navigate(-1);
@@ -181,6 +187,19 @@ export function ItemDetail() {
           Delete
         </Button>
       </div>
+      <LabelPrintDialog
+        entities={[{
+          id: item.id,
+          name: item.name,
+          qrCode: item.qrCode,
+          type: 'item',
+          breadcrumb: (item as unknown as { breadcrumb?: { name: string }[] })
+            ?.breadcrumb?.map((b) => b.name).join(' > '),
+        }]}
+        entityType="item"
+        isOpen={printOpen}
+        onOpenChange={setPrintOpen}
+      />
     </div>
   );
 }

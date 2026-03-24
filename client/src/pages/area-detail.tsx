@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { Plus } from 'lucide-react';
+import { Plus, Printer } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -10,12 +10,14 @@ import { EntityForm } from '@/components/inventory/entity-form';
 import { useArea, useContainers, useCreateContainer } from '@/hooks/use-inventory';
 import { toast } from '@/components/ui/toast';
 import { TagPicker } from '@/components/tags/tag-picker';
+import { LabelPrintDialog } from '@/components/labels/label-print-dialog';
 
 export function AreaDetail() {
   const { areaId } = useParams<{ areaId: string }>();
   const id = Number(areaId);
 
   const [createOpen, setCreateOpen] = useState(false);
+  const [printOpen, setPrintOpen] = useState(false);
   const { data: area, isLoading: areaLoading } = useArea(id);
   const { data: containers, isLoading: containersLoading } = useContainers(id);
   const createContainer = useCreateContainer();
@@ -53,7 +55,13 @@ export function AreaDetail() {
 
       {/* Header */}
       <div>
-        <h1 className="text-lg font-bold text-[var(--color-text)]">{area.name}</h1>
+        <div className="flex items-center justify-between gap-2">
+          <h1 className="text-lg font-bold text-[var(--color-text)]">{area.name}</h1>
+          <Button variant="outline" size="sm" onClick={() => setPrintOpen(true)}>
+            <Printer className="w-4 h-4" />
+            Print Label
+          </Button>
+        </div>
         <p className="text-[10px] font-mono text-[var(--color-text-muted)]">{area.qrCode}</p>
         {area.description && (
           <p className="text-sm text-[var(--color-text-secondary)] mt-1">{area.description}</p>
@@ -105,6 +113,18 @@ export function AreaDetail() {
         type="container"
         onSubmit={handleCreateContainer}
         isPending={createContainer.isPending}
+      />
+      <LabelPrintDialog
+        entities={[{
+          id: area.id,
+          name: area.name,
+          qrCode: area.qrCode,
+          type: 'area',
+          breadcrumb: (breadcrumb as { name: string }[]).map((b) => b.name).join(' > '),
+        }]}
+        entityType="area"
+        isOpen={printOpen}
+        onOpenChange={setPrintOpen}
       />
     </div>
   );
