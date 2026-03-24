@@ -74,6 +74,7 @@ require('./src/modules/inventory/items.routes')({ app, db, logger, config });
 require('./src/modules/files/files.routes')({ app, db, logger, config });
 require('./src/modules/files/condition.routes')({ app, db, logger, config });
 require('./src/modules/products/products.routes')({ app, db, logger, config });
+require('./src/modules/tags/tags.routes')({ app, db, logger, config });
 
 // ── Error Handler (must be last) ────────────────────────────────────────────
 
