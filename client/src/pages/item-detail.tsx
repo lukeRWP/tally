@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Pencil, ArrowRightLeft, Trash2, Plus, Printer, Link, CalendarPlus, HandCoins } from 'lucide-react';
+import { Pencil, ArrowRightLeft, Trash2, Plus, Printer, Link, CalendarPlus, HandCoins, Share2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { LabelPrintDialog } from '@/components/labels/label-print-dialog';
 import { Badge } from '@/components/ui/badge';
@@ -20,6 +20,7 @@ import { AccessoryPicker } from '@/components/accessories/accessory-picker';
 import { LendingList } from '@/components/lending/lending-list';
 import { LendForm } from '@/components/lending/lend-form';
 import { useItemDates } from '@/hooks/use-dates';
+import { ShareDialog } from '@/components/sharing/share-dialog';
 
 const conditionVariant = {
   new: 'success',
@@ -69,6 +70,7 @@ export function ItemDetail() {
   const [dateFormOpen, setDateFormOpen] = React.useState(false);
   const [accessoryPickerOpen, setAccessoryPickerOpen] = React.useState(false);
   const [lendFormOpen, setLendFormOpen] = React.useState(false);
+  const [shareOpen, setShareOpen] = React.useState(false);
 
   // Fetch item dates for depreciation calculation
   const { data: itemDates } = useItemDates(id);
@@ -277,7 +279,7 @@ export function ItemDetail() {
       </Card>
 
       {/* Actions */}
-      <div className="flex gap-2">
+      <div className="flex gap-2 flex-wrap">
         <Button variant="outline" size="sm" className="flex-1" onClick={() => toast('Edit coming soon')}>
           <Pencil className="w-4 h-4" />
           Edit
@@ -286,9 +288,13 @@ export function ItemDetail() {
           <ArrowRightLeft className="w-4 h-4" />
           Move
         </Button>
+        <Button variant="outline" size="sm" className="flex-1" onClick={() => setShareOpen(true)}>
+          <Share2 className="w-4 h-4" />
+          Share
+        </Button>
         <Button variant="outline" size="sm" className="flex-1" onClick={() => setPrintOpen(true)}>
           <Printer className="w-4 h-4" />
-          Print Asset Tag
+          Print
         </Button>
         <Button variant="destructive" size="sm" className="flex-1" onClick={() => {
           toast('Delete coming soon');
@@ -310,6 +316,13 @@ export function ItemDetail() {
         entityType="item"
         isOpen={printOpen}
         onOpenChange={setPrintOpen}
+      />
+      <ShareDialog
+        entityType="item"
+        entityId={item.id}
+        entityName={item.name}
+        isOpen={shareOpen}
+        onOpenChange={setShareOpen}
       />
     </div>
   );

@@ -19,6 +19,7 @@ import {
 import { toast } from '@/components/ui/toast';
 import { TagPicker } from '@/components/tags/tag-picker';
 import { LabelPrintDialog } from '@/components/labels/label-print-dialog';
+import { ShareDialog } from '@/components/sharing/share-dialog';
 
 export function ContainerDetail() {
   const { containerId } = useParams<{ containerId: string }>();
@@ -27,6 +28,7 @@ export function ContainerDetail() {
   const [createType, setCreateType] = useState<'container' | 'item' | null>(null);
   const [fabOpen, setFabOpen] = useState(false);
   const [printOpen, setPrintOpen] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
 
   const { data: container, isLoading: containerLoading } = useContainer(id);
   const { data: children, isLoading: childrenLoading } = useContainerChildren(id);
@@ -110,7 +112,7 @@ export function ContainerDetail() {
           <Printer className="w-4 h-4" />
           Print
         </Button>
-        <Button variant="outline" size="sm" onClick={() => toast('Sharing coming soon')}>
+        <Button variant="outline" size="sm" onClick={() => setShareOpen(true)}>
           <Share2 className="w-4 h-4" />
           Share
         </Button>
@@ -234,6 +236,13 @@ export function ContainerDetail() {
         entityType="container"
         isOpen={printOpen}
         onOpenChange={setPrintOpen}
+      />
+      <ShareDialog
+        entityType="container"
+        entityId={container.id}
+        entityName={container.name}
+        isOpen={shareOpen}
+        onOpenChange={setShareOpen}
       />
     </div>
   );

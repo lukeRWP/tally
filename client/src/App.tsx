@@ -3,6 +3,7 @@ import { RootLayout } from '@/components/layout/root-layout';
 import { Login } from '@/pages/login';
 import { OAuthCallback } from '@/pages/oauth-callback';
 import { QrRedirect } from '@/pages/qr-redirect';
+import { ShareView } from '@/pages/share-view';
 
 // Lazy load pages to keep initial bundle small
 import { Home } from '@/pages/home';
@@ -23,6 +24,7 @@ export function App() {
       <Route path="/login" element={<Login />} />
       <Route path="/oauth/callback" element={<OAuthCallback />} />
       <Route path="/s/:code" element={<QrRedirect />} />
+      <Route path="/share/:token" element={<ShareView />} />
       <Route element={<RootLayout />}>
         <Route index element={<Home />} />
         <Route path="/inventory" element={<Inventory />} />
