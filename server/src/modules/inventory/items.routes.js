@@ -65,6 +65,43 @@ module.exports = function itemsRoutes({ app, db, logger }) {
     }
   );
 
+  // ── Recycle Bin ───────────────────────────────────────────────────────────
+
+  // GET /api/items/_x_/deleted
+  app.get(
+    '/api/items/_x_/deleted',
+    app.locals.requireAuth,
+    async (req, res) => {
+      const limit  = Math.min(parseInt(req.query.limit,  10) || 50, 200);
+      const offset = Math.max(parseInt(req.query.offset, 10) || 0,  0);
+      const items = await ItemsService.getDeleted(req.user.id, { limit, offset });
+      success(res, { items });
+    }
+  );
+
+  // DELETE /api/items/_d_/:itemId/permanent
+  app.delete(
+    '/api/items/_d_/:itemId/permanent',
+    app.locals.requireAuth,
+    resolvePropertyFromItem,
+    app.locals.resolvePropertyRole,
+    app.locals.requireRole('owner'),
+    async (req, res) => {
+      await ItemsService.permanentDelete(req.params.itemId);
+      success(res, null, 'Item permanently deleted');
+    }
+  );
+
+  // POST /api/items/_y_/purge-expired
+  app.post(
+    '/api/items/_y_/purge-expired',
+    app.locals.requireAuth,
+    async (req, res) => {
+      const count = await ItemsService.purgeExpired();
+      success(res, { purged: count }, `Purged ${count} expired item(s)`);
+    }
+  );
+
   // ── Read ──────────────────────────────────────────────────────────────────
 
   // GET /api/items/_x_/:itemId

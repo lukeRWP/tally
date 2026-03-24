@@ -1,5 +1,6 @@
 const { generateCode } = require('../../utils/qr');
 const AuditService = require('../audit/audit.service');
+const storage = require('../../infrastructure/storage');
 
 let _db = null;
 let _logger = null;
@@ -271,6 +272,107 @@ const ItemsService = {
       [itemId]
     );
     return rows[0]?.PROPERTY_ID || null;
+  },
+
+  // ── Recycle Bin ────────────────────────────────────────────────────────────
+
+  async getDeleted(userId, { limit = 50, offset = 0 } = {}) {
+    const rows = await _db.query(
+      `SELECT
+         i.*,
+         c.NAME  AS CONTAINER_NAME,
+         a.NAME  AS AREA_NAME,
+         pr.NAME AS PROPERTY_NAME,
+         DATEDIFF(DATE_ADD(i.DELETED_AT, INTERVAL 30 DAY), NOW()) AS DAYS_LEFT
+       FROM TALLY.items i
+       JOIN TALLY.containers c ON i.CONTAINER_ID = c.ID
+       JOIN TALLY.areas a ON c.AREA_ID = a.ID
+       JOIN TALLY.properties pr ON a.PROPERTY_ID = pr.ID
+       JOIN TALLY.property_members pm ON a.PROPERTY_ID = pm.PROPERTY_ID
+       WHERE i.DELETED_AT IS NOT NULL
+         AND i.DELETED_AT > DATE_SUB(NOW(), INTERVAL 30 DAY)
+         AND pm.USER_ID = ?
+       ORDER BY i.DELETED_AT DESC
+       LIMIT ? OFFSET ?`,
+      [userId, limit, offset]
+    );
+    return rows.map(row => ({
+      ...ItemsService._mapItem(row),
+      containerName: row.CONTAINER_NAME || null,
+      areaName: row.AREA_NAME || null,
+      propertyName: row.PROPERTY_NAME || null,
+      daysLeft: row.DAYS_LEFT != null ? Number(row.DAYS_LEFT) : 0,
+    }));
+  },
+
+  async permanentDelete(itemId) {
+    // 1. entity_tags
+    await _db.query(
+      `DELETE FROM TALLY.entity_tags WHERE ENTITY_TYPE = 'item' AND ENTITY_ID = ?`,
+      [itemId]
+    );
+
+    // 2. item_accessories (item may appear on either side)
+    await _db.query(
+      `DELETE FROM TALLY.item_accessories WHERE ITEM_ID = ? OR ACCESSORY_ID = ?`,
+      [itemId, itemId]
+    );
+
+    // 3. item_dates
+    await _db.query(
+      `DELETE FROM TALLY.item_dates WHERE ITEM_ID = ?`,
+      [itemId]
+    );
+
+    // 4. item_lending
+    await _db.query(
+      `DELETE FROM TALLY.item_lending WHERE ITEM_ID = ?`,
+      [itemId]
+    );
+
+    // 5. condition_snapshots — delete MinIO objects first
+    const snapshots = await _db.query(
+      `SELECT PHOTO_KEY FROM TALLY.condition_snapshots WHERE ITEM_ID = ?`,
+      [itemId]
+    );
+    for (const snap of snapshots) {
+      try { await storage.remove(snap.PHOTO_KEY); } catch (_) {}
+    }
+    await _db.query(
+      `DELETE FROM TALLY.condition_snapshots WHERE ITEM_ID = ?`,
+      [itemId]
+    );
+
+    // 6. item_files — delete MinIO objects first
+    const files = await _db.query(
+      `SELECT FILE_KEY FROM TALLY.item_files WHERE ITEM_ID = ?`,
+      [itemId]
+    );
+    for (const f of files) {
+      try { await storage.remove(f.FILE_KEY); } catch (_) {}
+    }
+    await _db.query(
+      `DELETE FROM TALLY.item_files WHERE ITEM_ID = ?`,
+      [itemId]
+    );
+
+    // 7. Hard-delete the item
+    await _db.query(
+      `DELETE FROM TALLY.items WHERE ID = ?`,
+      [itemId]
+    );
+  },
+
+  async purgeExpired() {
+    const rows = await _db.query(
+      `SELECT ID FROM TALLY.items
+       WHERE DELETED_AT IS NOT NULL
+         AND DELETED_AT < DATE_SUB(NOW(), INTERVAL 30 DAY)`
+    );
+    for (const row of rows) {
+      await ItemsService.permanentDelete(row.ID);
+    }
+    return rows.length;
   },
 };
 
