@@ -29,6 +29,7 @@ const searchItems = Joi.object({
   propertyId: Joi.number().integer(),
   condition: Joi.string().valid('new', 'good', 'fair', 'poor'),
   status: Joi.string().valid('active', 'removed', 'lent'),
+  tagIds: Joi.array().items(Joi.number().integer()).allow(null),
 });
 
 module.exports = { createItem, updateItem, moveItem, searchItems };

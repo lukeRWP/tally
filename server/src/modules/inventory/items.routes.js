@@ -47,11 +47,20 @@ module.exports = function itemsRoutes({ app, db, logger }) {
     '/api/items/_x_/search',
     app.locals.requireAuth,
     async (req, res) => {
-      const { error: validationError, value } = searchItems.validate(req.query, { abortEarly: false });
+      // Normalise tagIds: may arrive as "1,2,3" CSV string or already as array
+      const rawQuery = { ...req.query };
+      if (typeof rawQuery.tagIds === 'string' && rawQuery.tagIds.length > 0) {
+        rawQuery.tagIds = rawQuery.tagIds.split(',').map(Number).filter(n => !isNaN(n));
+      }
+      const { error: validationError, value } = searchItems.validate(rawQuery, { abortEarly: false });
       if (validationError) {
         return error(res, 'Validation failed', 422, validationError.details.map(d => d.message));
       }
-      const items = await ItemsService.search(value.q, req.user.id);
+      const items = await ItemsService.search(value.q, req.user.id, {
+        tagIds: value.tagIds || null,
+        condition: value.condition || null,
+        status: value.status || null,
+      });
       success(res, { items });
     }
   );

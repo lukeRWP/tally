@@ -185,7 +185,7 @@ const ItemsService = {
     return ItemsService.getById(id);
   },
 
-  async search(query, userId) {
+  async search(query, userId, { tagIds, condition, status } = {}) {
     // Append * to each word for prefix matching in BOOLEAN MODE
     const booleanQuery = query
       .trim()
@@ -194,20 +194,55 @@ const ItemsService = {
       .map(word => `${word}*`)
       .join(' ');
 
-    const rows = await _db.query(
-      `SELECT i.*, p.NAME AS PRODUCT_NAME, p.BRAND AS PRODUCT_BRAND
-       FROM TALLY.items i
-       LEFT JOIN TALLY.products p ON i.PRODUCT_ID = p.ID
-       JOIN TALLY.containers c ON i.CONTAINER_ID = c.ID
-       JOIN TALLY.areas a ON c.AREA_ID = a.ID
-       JOIN TALLY.property_members pm ON a.PROPERTY_ID = pm.PROPERTY_ID
-       WHERE pm.USER_ID = ?
-         AND i.DELETED_AT IS NULL
-         AND (MATCH(i.NAME, i.DESCRIPTION) AGAINST(? IN BOOLEAN MODE)
-              OR (p.ID IS NOT NULL AND MATCH(p.NAME, p.BRAND, p.DESCRIPTION) AGAINST(? IN BOOLEAN MODE)))
-       LIMIT 50`,
-      [userId, booleanQuery, booleanQuery]
-    );
+    const hasTagFilter = Array.isArray(tagIds) && tagIds.length > 0;
+
+    const joins = [
+      `LEFT JOIN TALLY.products p ON i.PRODUCT_ID = p.ID`,
+      `JOIN TALLY.containers c ON i.CONTAINER_ID = c.ID`,
+      `JOIN TALLY.areas a ON c.AREA_ID = a.ID`,
+      `JOIN TALLY.property_members pm ON a.PROPERTY_ID = pm.PROPERTY_ID`,
+    ];
+
+    if (hasTagFilter) {
+      joins.push(`JOIN TALLY.entity_tags et ON et.ENTITY_ID = i.ID AND et.ENTITY_TYPE = 'item'`);
+      joins.push(`LEFT JOIN TALLY.tags t ON t.ID = et.TAG_ID`);
+    }
+
+    const where = [
+      `pm.USER_ID = ?`,
+      `i.DELETED_AT IS NULL`,
+      `(MATCH(i.NAME, i.DESCRIPTION) AGAINST(? IN BOOLEAN MODE)
+              OR (p.ID IS NOT NULL AND MATCH(p.NAME, p.BRAND, p.DESCRIPTION) AGAINST(? IN BOOLEAN MODE))
+              ${hasTagFilter ? `OR t.NAME LIKE ?` : ''})`,
+    ];
+
+    const params = [userId, booleanQuery, booleanQuery];
+
+    if (hasTagFilter) {
+      // Add LIKE param for tag name search (must come right after the booleanQuery params)
+      params.push(`%${query.trim()}%`);
+      where.push(`et.TAG_ID IN (?)`);
+      params.push(tagIds);
+    }
+
+    if (condition) {
+      where.push(`i.\`CONDITION\` = ?`);
+      params.push(condition);
+    }
+
+    if (status) {
+      where.push(`i.STATUS = ?`);
+      params.push(status);
+    }
+
+    const sql = `
+      SELECT DISTINCT i.*, p.NAME AS PRODUCT_NAME, p.BRAND AS PRODUCT_BRAND
+      FROM TALLY.items i
+      ${joins.join('\n      ')}
+      WHERE ${where.join('\n        AND ')}
+      LIMIT 50`;
+
+    const rows = await _db.query(sql, params);
 
     return rows.map(ItemsService._mapItem);
   },

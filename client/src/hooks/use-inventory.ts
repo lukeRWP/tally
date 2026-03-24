@@ -178,11 +178,24 @@ export function useMoveItem() {
   });
 }
 
-export function useSearchItems(query: string) {
+export interface SearchFilters {
+  tagIds?: number[];
+  condition?: string;
+  status?: string;
+}
+
+export function useSearchItems(query: string, filters?: SearchFilters) {
   return useQuery({
-    queryKey: queryKeys.items.search(query),
-    queryFn: () =>
-      api.get<Item[]>(`/api/items/_x_/search?q=${encodeURIComponent(query)}`),
+    queryKey: queryKeys.items.search(query, filters),
+    queryFn: () => {
+      const params = new URLSearchParams({ q: query });
+      if (filters?.tagIds && filters.tagIds.length > 0) {
+        params.set('tagIds', filters.tagIds.join(','));
+      }
+      if (filters?.condition) params.set('condition', filters.condition);
+      if (filters?.status) params.set('status', filters.status);
+      return api.get<Item[]>(`/api/items/_x_/search?${params.toString()}`);
+    },
     enabled: query.length >= 1,
   });
 }

@@ -35,7 +35,7 @@ export const queryKeys = {
     all: ['items'] as const,
     byContainer: (containerId: number) => [...queryKeys.items.all, 'byContainer', containerId] as const,
     detail: (id: number) => [...queryKeys.items.all, 'detail', id] as const,
-    search: (q: string) => [...queryKeys.items.all, 'search', q] as const,
+    search: (q: string, filters?: Record<string, unknown>) => [...queryKeys.items.all, 'search', q, filters] as const,
   },
   auth: {
     session: ['auth', 'session'] as const,
