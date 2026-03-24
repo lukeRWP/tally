@@ -1,0 +1,168 @@
+module.exports = function containersRoutes({ app, db, logger }) {
+  const ContainersService = require('./containers.service');
+  ContainersService.init({ db, logger });
+
+  const AreasService = require('./areas.service');
+
+  const { createContainer, updateContainer, moveContainer } = require('./containers.schema');
+  const { success, error } = require('../../utils/response');
+
+  // ── Middleware ─────────────────────────────────────────────────────────────
+
+  async function resolvePropertyFromContainer(req, res, next) {
+    const containerId = req.params.containerId;
+    const propertyId = await ContainersService.getPropertyIdForContainer(containerId);
+    if (!propertyId) return error(res, 'Container not found', 404);
+    req.params.propertyId = propertyId;
+    next();
+  }
+
+  async function resolvePropertyFromArea(req, res, next) {
+    const areaId = req.params.areaId;
+    const propertyId = await AreasService.getPropertyIdForArea(areaId);
+    if (!propertyId) return error(res, 'Area not found', 404);
+    req.params.propertyId = propertyId;
+    next();
+  }
+
+  // ── List by Area ──────────────────────────────────────────────────────────
+
+  // GET /api/containers/_x_/area/:areaId — top-level containers for an area
+  app.get(
+    '/api/containers/_x_/area/:areaId',
+    app.locals.requireAuth,
+    resolvePropertyFromArea,
+    app.locals.resolvePropertyRole,
+    async (req, res) => {
+      if (!req.propertyRole) return error(res, 'Area not found or access denied', 404);
+      const containers = await ContainersService.getByArea(req.params.areaId);
+      success(res, { containers });
+    }
+  );
+
+  // ── Read ──────────────────────────────────────────────────────────────────
+
+  // GET /api/containers/_x_/:containerId — single container detail
+  app.get(
+    '/api/containers/_x_/:containerId',
+    app.locals.requireAuth,
+    resolvePropertyFromContainer,
+    app.locals.resolvePropertyRole,
+    async (req, res) => {
+      if (!req.propertyRole) return error(res, 'Container not found or access denied', 404);
+      const container = await ContainersService.getById(req.params.containerId);
+      if (!container) return error(res, 'Container not found', 404);
+      success(res, { container });
+    }
+  );
+
+  // ── Children ──────────────────────────────────────────────────────────────
+
+  // GET /api/containers/_x_/:containerId/children — direct child containers
+  app.get(
+    '/api/containers/_x_/:containerId/children',
+    app.locals.requireAuth,
+    resolvePropertyFromContainer,
+    app.locals.resolvePropertyRole,
+    async (req, res) => {
+      if (!req.propertyRole) return error(res, 'Container not found or access denied', 404);
+      const containers = await ContainersService.getByParent(req.params.containerId);
+      success(res, { containers });
+    }
+  );
+
+  // ── All Descendant Items ──────────────────────────────────────────────────
+
+  // GET /api/containers/_x_/:containerId/all-items — items in this + nested
+  app.get(
+    '/api/containers/_x_/:containerId/all-items',
+    app.locals.requireAuth,
+    resolvePropertyFromContainer,
+    app.locals.resolvePropertyRole,
+    async (req, res) => {
+      if (!req.propertyRole) return error(res, 'Container not found or access denied', 404);
+      const items = await ContainersService.getAllDescendantItems(req.params.containerId);
+      success(res, { items });
+    }
+  );
+
+  // ── Create ────────────────────────────────────────────────────────────────
+
+  // POST /api/containers/_y_/create
+  app.post(
+    '/api/containers/_y_/create',
+    app.locals.requireAuth,
+    async (req, res, next) => {
+      const { error: validationError, value } = createContainer.validate(req.body, { abortEarly: false });
+      if (validationError) {
+        return error(res, 'Validation failed', 422, validationError.details.map(d => d.message));
+      }
+      req.validatedBody = value;
+      // Resolve property from the area in body
+      const propertyId = await AreasService.getPropertyIdForArea(value.areaId);
+      if (!propertyId) return error(res, 'Area not found', 404);
+      req.params.propertyId = propertyId;
+      next();
+    },
+    app.locals.resolvePropertyRole,
+    app.locals.requireRole('owner', 'editor'),
+    async (req, res) => {
+      const value = req.validatedBody;
+      const container = await ContainersService.create(value);
+      success(res, { container }, 'Container created', 201);
+    }
+  );
+
+  // ── Update ────────────────────────────────────────────────────────────────
+
+  // PUT /api/containers/_u_/:containerId
+  app.put(
+    '/api/containers/_u_/:containerId',
+    app.locals.requireAuth,
+    resolvePropertyFromContainer,
+    app.locals.resolvePropertyRole,
+    app.locals.requireRole('owner', 'editor'),
+    async (req, res) => {
+      const { error: validationError, value } = updateContainer.validate(req.body, { abortEarly: false });
+      if (validationError) {
+        return error(res, 'Validation failed', 422, validationError.details.map(d => d.message));
+      }
+      const container = await ContainersService.update(req.params.containerId, value);
+      success(res, { container });
+    }
+  );
+
+  // ── Move ──────────────────────────────────────────────────────────────────
+
+  // PATCH /api/containers/_p_/:containerId/move
+  app.patch(
+    '/api/containers/_p_/:containerId/move',
+    app.locals.requireAuth,
+    resolvePropertyFromContainer,
+    app.locals.resolvePropertyRole,
+    app.locals.requireRole('owner', 'editor'),
+    async (req, res) => {
+      const { error: validationError, value } = moveContainer.validate(req.body, { abortEarly: false });
+      if (validationError) {
+        return error(res, 'Validation failed', 422, validationError.details.map(d => d.message));
+      }
+      const container = await ContainersService.move(req.params.containerId, value.parentContainerId, value.areaId);
+      success(res, { container });
+    }
+  );
+
+  // ── Delete ────────────────────────────────────────────────────────────────
+
+  // DELETE /api/containers/_d_/:containerId
+  app.delete(
+    '/api/containers/_d_/:containerId',
+    app.locals.requireAuth,
+    resolvePropertyFromContainer,
+    app.locals.resolvePropertyRole,
+    app.locals.requireRole('owner'),
+    async (req, res) => {
+      await ContainersService.softDelete(req.params.containerId);
+      success(res, null, 'Container deleted');
+    }
+  );
+};
