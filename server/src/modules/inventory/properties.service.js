@@ -1,4 +1,5 @@
 const { generateCode } = require('../../utils/qr');
+const AuditService = require('../audit/audit.service');
 
 let _db = null;
 let _logger = null;
@@ -105,6 +106,8 @@ const PropertiesService = {
         [propertyId, userId]
       );
 
+      AuditService.logChange(userId, 'property', propertyId, 'created', data, propertyId);
+
       return PropertiesService.getById(propertyId);
     } catch (err) {
       // Duplicate QR code — retry once with a new code
@@ -123,13 +126,15 @@ const PropertiesService = {
           [propertyId, userId]
         );
 
+        AuditService.logChange(userId, 'property', propertyId, 'created', data, propertyId);
+
         return PropertiesService.getById(propertyId);
       }
       throw err;
     }
   },
 
-  async update(id, data) {
+  async update(id, data, userId) {
     const fields = [];
     const values = [];
 
@@ -145,21 +150,25 @@ const PropertiesService = {
       values
     );
 
+    AuditService.logChange(userId, 'property', id, 'updated', data, id);
+
     return PropertiesService.getById(id);
   },
 
-  async softDelete(id) {
+  async softDelete(id, userId) {
     await _db.query(
       'UPDATE TALLY.properties SET DELETED_AT = NOW() WHERE ID = ?',
       [id]
     );
+    AuditService.logChange(userId, 'property', id, 'deleted', {}, id);
   },
 
-  async restore(id) {
+  async restore(id, userId) {
     await _db.query(
       'UPDATE TALLY.properties SET DELETED_AT = NULL WHERE ID = ?',
       [id]
     );
+    AuditService.logChange(userId, 'property', id, 'restored', {}, id);
   },
 
   async getMembers(propertyId) {

@@ -66,7 +66,7 @@ module.exports = function areasRoutes({ app, db, logger }) {
     app.locals.requireRole('owner', 'editor'),
     async (req, res) => {
       const value = req.validatedBody;
-      const area = await AreasService.create(value, value.propertyId);
+      const area = await AreasService.create(value, value.propertyId, req.user.id);
       success(res, { area }, 'Area created', 201);
     }
   );
@@ -85,7 +85,7 @@ module.exports = function areasRoutes({ app, db, logger }) {
       if (validationError) {
         return error(res, 'Validation failed', 422, validationError.details.map(d => d.message));
       }
-      const area = await AreasService.update(req.params.areaId, value);
+      const area = await AreasService.update(req.params.areaId, value, req.user.id);
       success(res, { area });
     }
   );
@@ -100,7 +100,7 @@ module.exports = function areasRoutes({ app, db, logger }) {
     app.locals.resolvePropertyRole,
     app.locals.requireRole('owner'),
     async (req, res) => {
-      await AreasService.softDelete(req.params.areaId);
+      await AreasService.softDelete(req.params.areaId, req.user.id);
       success(res, null, 'Area deleted');
     }
   );

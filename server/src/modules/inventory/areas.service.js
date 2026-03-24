@@ -1,4 +1,5 @@
 const { generateCode } = require('../../utils/qr');
+const AuditService = require('../audit/audit.service');
 
 let _db = null;
 let _logger = null;
@@ -65,7 +66,7 @@ const AreasService = {
     return AreasService._mapArea(rows[0]);
   },
 
-  async create(data, propertyId) {
+  async create(data, propertyId, userId) {
     let qrCode = generateCode('area');
     try {
       const result = await _db.query(
@@ -73,6 +74,7 @@ const AreasService = {
          VALUES (?, ?, ?, ?)`,
         [propertyId, data.name, data.description || null, qrCode]
       );
+      AuditService.logChange(userId, 'area', result.insertId, 'created', data, propertyId);
       return AreasService.getById(result.insertId);
     } catch (err) {
       // Duplicate QR code — retry once with a new code
@@ -83,13 +85,14 @@ const AreasService = {
            VALUES (?, ?, ?, ?)`,
           [propertyId, data.name, data.description || null, qrCode]
         );
+        AuditService.logChange(userId, 'area', result.insertId, 'created', data, propertyId);
         return AreasService.getById(result.insertId);
       }
       throw err;
     }
   },
 
-  async update(id, data) {
+  async update(id, data, userId) {
     const fields = [];
     const values = [];
 
@@ -104,14 +107,19 @@ const AreasService = {
       values
     );
 
+    const propertyId = await AreasService.getPropertyIdForArea(id);
+    AuditService.logChange(userId, 'area', id, 'updated', data, propertyId);
+
     return AreasService.getById(id);
   },
 
-  async softDelete(id) {
+  async softDelete(id, userId) {
+    const propertyId = await AreasService.getPropertyIdForArea(id);
     await _db.query(
       'UPDATE TALLY.areas SET DELETED_AT = NOW() WHERE ID = ?',
       [id]
     );
+    AuditService.logChange(userId, 'area', id, 'deleted', {}, propertyId);
   },
 
   async getPropertyIdForArea(areaId) {

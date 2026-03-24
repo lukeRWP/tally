@@ -1,4 +1,5 @@
 const { generateCode } = require('../../utils/qr');
+const AuditService = require('../audit/audit.service');
 
 let _db = null;
 let _logger = null;
@@ -95,7 +96,7 @@ const ItemsService = {
     return item;
   },
 
-  async create(data) {
+  async create(data, userId) {
     let qrCode = generateCode('item');
     try {
       const result = await _db.query(
@@ -113,6 +114,8 @@ const ItemsService = {
           data.condition || 'good',
         ]
       );
+      const propertyId = await ItemsService.getPropertyIdForItem(result.insertId);
+      AuditService.logChange(userId, 'item', result.insertId, 'created', data, propertyId);
       return ItemsService.getById(result.insertId);
     } catch (err) {
       // Duplicate QR code — retry once with a new code
@@ -133,13 +136,15 @@ const ItemsService = {
             data.condition || 'good',
           ]
         );
+        const propertyId = await ItemsService.getPropertyIdForItem(result.insertId);
+        AuditService.logChange(userId, 'item', result.insertId, 'created', data, propertyId);
         return ItemsService.getById(result.insertId);
       }
       throw err;
     }
   },
 
-  async update(id, data) {
+  async update(id, data, userId) {
     const fields = [];
     const values = [];
 
@@ -159,29 +164,38 @@ const ItemsService = {
       values
     );
 
+    const propertyId = await ItemsService.getPropertyIdForItem(id);
+    AuditService.logChange(userId, 'item', id, 'updated', data, propertyId);
+
     return ItemsService.getById(id);
   },
 
-  async move(id, newContainerId) {
+  async move(id, newContainerId, userId) {
     await _db.query(
       'UPDATE TALLY.items SET CONTAINER_ID = ? WHERE ID = ?',
       [newContainerId, id]
     );
+    const propertyId = await ItemsService.getPropertyIdForItem(id);
+    AuditService.logChange(userId, 'item', id, 'moved', { containerId: newContainerId }, propertyId);
     return ItemsService.getById(id);
   },
 
-  async softDelete(id) {
+  async softDelete(id, userId) {
+    const propertyId = await ItemsService.getPropertyIdForItem(id);
     await _db.query(
       "UPDATE TALLY.items SET DELETED_AT = NOW(), STATUS = 'removed' WHERE ID = ?",
       [id]
     );
+    AuditService.logChange(userId, 'item', id, 'deleted', {}, propertyId);
   },
 
-  async restore(id) {
+  async restore(id, userId) {
     await _db.query(
       "UPDATE TALLY.items SET DELETED_AT = NULL, STATUS = 'active' WHERE ID = ?",
       [id]
     );
+    const propertyId = await ItemsService.getPropertyIdForItem(id);
+    AuditService.logChange(userId, 'item', id, 'restored', {}, propertyId);
     return ItemsService.getById(id);
   },
 

@@ -1,5 +1,6 @@
 const { generateCode } = require('../../utils/qr');
 const ClosureTableService = require('./closure-table.service');
+const AuditService = require('../audit/audit.service');
 
 let _db = null;
 let _logger = null;
@@ -133,7 +134,7 @@ const ContainersService = {
     return rows.map(ContainersService._mapItem);
   },
 
-  async create(data) {
+  async create(data, userId) {
     let qrCode = generateCode('container');
     try {
       const result = await _db.query(
@@ -142,6 +143,8 @@ const ContainersService = {
         [data.areaId, data.parentContainerId || null, data.name, data.type, data.description || null, qrCode]
       );
       await _closureTable.addNode(result.insertId, data.parentContainerId || null);
+      const propertyId = await ContainersService.getPropertyIdForContainer(result.insertId);
+      AuditService.logChange(userId, 'container', result.insertId, 'created', data, propertyId);
       return ContainersService.getById(result.insertId);
     } catch (err) {
       // Duplicate QR code — retry once with a new code
@@ -153,13 +156,15 @@ const ContainersService = {
           [data.areaId, data.parentContainerId || null, data.name, data.type, data.description || null, qrCode]
         );
         await _closureTable.addNode(result.insertId, data.parentContainerId || null);
+        const propertyId = await ContainersService.getPropertyIdForContainer(result.insertId);
+        AuditService.logChange(userId, 'container', result.insertId, 'created', data, propertyId);
         return ContainersService.getById(result.insertId);
       }
       throw err;
     }
   },
 
-  async update(id, data) {
+  async update(id, data, userId) {
     const fields = [];
     const values = [];
 
@@ -175,10 +180,13 @@ const ContainersService = {
       values
     );
 
+    const propertyId = await ContainersService.getPropertyIdForContainer(id);
+    AuditService.logChange(userId, 'container', id, 'updated', data, propertyId);
+
     return ContainersService.getById(id);
   },
 
-  async move(id, newParentContainerId, newAreaId) {
+  async move(id, newParentContainerId, newAreaId, userId) {
     const fields = ['PARENT_CONTAINER_ID = ?'];
     const values = [newParentContainerId || null];
 
@@ -195,15 +203,20 @@ const ContainersService = {
 
     await _closureTable.moveNode(id, newParentContainerId || null);
 
+    const propertyId = await ContainersService.getPropertyIdForContainer(id);
+    AuditService.logChange(userId, 'container', id, 'moved', { parentContainerId: newParentContainerId, areaId: newAreaId }, propertyId);
+
     return ContainersService.getById(id);
   },
 
-  async softDelete(id) {
+  async softDelete(id, userId) {
+    const propertyId = await ContainersService.getPropertyIdForContainer(id);
     await _db.query(
       'UPDATE TALLY.containers SET DELETED_AT = NOW() WHERE ID = ?',
       [id]
     );
     await _closureTable.removeNode(id);
+    AuditService.logChange(userId, 'container', id, 'deleted', {}, propertyId);
   },
 
   async getPropertyIdForContainer(containerId) {

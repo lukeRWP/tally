@@ -108,7 +108,7 @@ module.exports = function containersRoutes({ app, db, logger }) {
     app.locals.requireRole('owner', 'editor'),
     async (req, res) => {
       const value = req.validatedBody;
-      const container = await ContainersService.create(value);
+      const container = await ContainersService.create(value, req.user.id);
       success(res, { container }, 'Container created', 201);
     }
   );
@@ -127,7 +127,7 @@ module.exports = function containersRoutes({ app, db, logger }) {
       if (validationError) {
         return error(res, 'Validation failed', 422, validationError.details.map(d => d.message));
       }
-      const container = await ContainersService.update(req.params.containerId, value);
+      const container = await ContainersService.update(req.params.containerId, value, req.user.id);
       success(res, { container });
     }
   );
@@ -146,7 +146,7 @@ module.exports = function containersRoutes({ app, db, logger }) {
       if (validationError) {
         return error(res, 'Validation failed', 422, validationError.details.map(d => d.message));
       }
-      const container = await ContainersService.move(req.params.containerId, value.parentContainerId, value.areaId);
+      const container = await ContainersService.move(req.params.containerId, value.parentContainerId, value.areaId, req.user.id);
       success(res, { container });
     }
   );
@@ -161,7 +161,7 @@ module.exports = function containersRoutes({ app, db, logger }) {
     app.locals.resolvePropertyRole,
     app.locals.requireRole('owner'),
     async (req, res) => {
-      await ContainersService.softDelete(req.params.containerId);
+      await ContainersService.softDelete(req.params.containerId, req.user.id);
       success(res, null, 'Container deleted');
     }
   );

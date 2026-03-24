@@ -59,7 +59,7 @@ module.exports = function propertiesRoutes({ app, db, logger }) {
       if (validationError) {
         return error(res, 'Validation failed', 422, validationError.details.map(d => d.message));
       }
-      const property = await PropertiesService.update(req.params.propertyId, value);
+      const property = await PropertiesService.update(req.params.propertyId, value, req.user.id);
       success(res, { property });
     }
   );
@@ -73,7 +73,7 @@ module.exports = function propertiesRoutes({ app, db, logger }) {
     app.locals.resolvePropertyRole,
     app.locals.requireRole('owner'),
     async (req, res) => {
-      await PropertiesService.softDelete(req.params.propertyId);
+      await PropertiesService.softDelete(req.params.propertyId, req.user.id);
       success(res, null, 'Property deleted');
     }
   );

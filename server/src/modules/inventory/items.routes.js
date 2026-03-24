@@ -103,7 +103,7 @@ module.exports = function itemsRoutes({ app, db, logger }) {
     app.locals.requireRole('owner', 'editor'),
     async (req, res) => {
       const value = req.validatedBody;
-      const item = await ItemsService.create(value);
+      const item = await ItemsService.create(value, req.user.id);
       success(res, { item }, 'Item created', 201);
     }
   );
@@ -122,7 +122,7 @@ module.exports = function itemsRoutes({ app, db, logger }) {
       if (validationError) {
         return error(res, 'Validation failed', 422, validationError.details.map(d => d.message));
       }
-      const item = await ItemsService.update(req.params.itemId, value);
+      const item = await ItemsService.update(req.params.itemId, value, req.user.id);
       success(res, { item });
     }
   );
@@ -141,7 +141,7 @@ module.exports = function itemsRoutes({ app, db, logger }) {
       if (validationError) {
         return error(res, 'Validation failed', 422, validationError.details.map(d => d.message));
       }
-      const item = await ItemsService.move(req.params.itemId, value.containerId);
+      const item = await ItemsService.move(req.params.itemId, value.containerId, req.user.id);
       success(res, { item });
     }
   );
@@ -156,7 +156,7 @@ module.exports = function itemsRoutes({ app, db, logger }) {
     app.locals.resolvePropertyRole,
     app.locals.requireRole('owner'),
     async (req, res) => {
-      await ItemsService.softDelete(req.params.itemId);
+      await ItemsService.softDelete(req.params.itemId, req.user.id);
       success(res, null, 'Item deleted');
     }
   );
