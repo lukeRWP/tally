@@ -82,6 +82,7 @@ require('./src/modules/accessories/accessories.routes')({ app, db, logger, confi
 require('./src/modules/audit/audit.routes')({ app, db, logger, config });
 require('./src/modules/notifications/notifications.routes')({ app, db, logger, config });
 require('./src/modules/reports/reports.routes')({ app, db, logger, config });
+require('./src/modules/sharing/sharing.routes')({ app, db, logger, config });
 
 // ── Error Handler (must be last) ────────────────────────────────────────────
 
