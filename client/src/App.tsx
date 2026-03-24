@@ -2,6 +2,7 @@ import { Routes, Route, Navigate } from 'react-router-dom';
 import { RootLayout } from '@/components/layout/root-layout';
 import { Login } from '@/pages/login';
 import { OAuthCallback } from '@/pages/oauth-callback';
+import { QrRedirect } from '@/pages/qr-redirect';
 
 // Lazy load pages to keep initial bundle small
 import { Home } from '@/pages/home';
@@ -19,7 +20,7 @@ export function App() {
     <Routes>
       <Route path="/login" element={<Login />} />
       <Route path="/oauth/callback" element={<OAuthCallback />} />
-      <Route path="/s/:code" element={<Navigate to="/" />} />
+      <Route path="/s/:code" element={<QrRedirect />} />
       <Route element={<RootLayout />}>
         <Route index element={<Home />} />
         <Route path="/inventory" element={<Inventory />} />
