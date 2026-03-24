@@ -107,6 +107,9 @@ Each feature lives in `server/src/modules/{feature}/` with three files:
 | areas       | `/api/areas`      | CRUD scoped to a property                                  |
 | containers  | `/api/containers` | CRUD + move (uses closure table for hierarchy)             |
 | items       | `/api/items`      | CRUD + move + FULLTEXT search                              |
+| products    | `/api/products`   | Barcode lookup, catalog CRUD, duplicate check, text search |
+| files       | `/api/files`      | Upload, download (presigned URLs), list by item, delete    |
+| conditions  | `/api/conditions` | Create snapshot (photo + rating), history by item, delete  |
 
 All modules are registered in `server/index.js` via:
 
@@ -116,7 +119,41 @@ require('./src/modules/inventory/properties.routes')({ app, db, logger, config }
 require('./src/modules/inventory/areas.routes')({ app, db, logger, config });
 require('./src/modules/inventory/containers.routes')({ app, db, logger, config });
 require('./src/modules/inventory/items.routes')({ app, db, logger, config });
+require('./src/modules/files/files.routes')({ app, db, logger, config });
+require('./src/modules/files/condition.routes')({ app, db, logger, config });
+require('./src/modules/products/products.routes')({ app, db, logger, config });
 ```
+
+## Phase 2 Infrastructure & Integrations
+
+### MinIO Object Storage
+
+- MinIO is an S3-compatible object store running as a Docker service (`tally-minio`).
+- The server calls `storage.ensureBucket()` on startup to auto-create the configured bucket if it does not exist.
+- File downloads use **presigned URLs** — the server generates a time-limited URL and returns it to the client; the client fetches the file directly from MinIO. The Express server never streams file bytes.
+- Upload flow: client sends `multipart/form-data` (NOT JSON) to `POST /api/files/_y_/upload`; the server pipes the stream to MinIO via the `minio` SDK.
+
+### External Product Lookup APIs
+
+Two external APIs are queried in sequence when a barcode is scanned and not found locally:
+
+1. **Open Food Facts** (`https://world.openfoodfacts.org/api/v2/product/{barcode}.json`) — free, no key required, best for food/grocery items.
+2. **UPC Database** (`https://api.upcitemdb.com/prod/trial/lookup?upc={barcode}`) — general product catalog, free tier available.
+
+Results are normalised to the internal `products` schema and optionally cached in the `TALLY.products` table.
+
+### Camera Barcode Scanning
+
+- Library: `html5-qrcode` (client-side, no server involvement).
+- The `ScanPage` component activates the device camera, decodes barcodes in real time, and triggers the product lookup flow on a successful scan.
+- Fallback: manual barcode entry field for environments where camera access is unavailable.
+
+### File Upload Convention
+
+- All file upload requests must use `Content-Type: multipart/form-data`.
+- The field name for the file binary is `file`.
+- JSON metadata (item ID, description, etc.) is sent as additional form fields alongside the binary.
+- Do **not** base64-encode files or send them as JSON — use `FormData` on the client.
 
 ## Dependency Injection
 
