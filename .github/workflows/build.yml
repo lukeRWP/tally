@@ -1,0 +1,83 @@
+name: Build & Deploy
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+jobs:
+  build-client:
+    name: Build Client
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-node
+      - run: npm ci
+        working-directory: client
+      - run: npm run build
+        working-directory: client
+        env:
+          CI: true
+      - run: tar -czf tally-client.tar.gz -C client/dist .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tally-client
+          path: tally-client.tar.gz
+          retention-days: 30
+
+  build-server:
+    name: Build Server
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-node
+      - run: npm ci
+        working-directory: server
+      - run: tar -czf tally-server.tar.gz -C server index.js package.json package-lock.json src/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tally-server
+          path: tally-server.tar.gz
+          retention-days: 30
+
+  build-db:
+    name: Package Database
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+      - run: tar -czf tally-db.tar.gz SQL/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tally-db
+          path: tally-db.tar.gz
+          retention-days: 30
+
+  deploy:
+    name: Deploy to Production
+    needs: [build-client, build-server, build-db]
+    runs-on: self-hosted
+    environment: prod
+    steps:
+      - name: Deploy via Orchestrator
+        run: |
+          RESULT=$(curl -sf -X POST \
+            "${{ vars.ORCHESTRATOR_URL }}/api/_y_/apps/tally/envs/prod/deploy" \
+            -H "Authorization: Bearer ${{ secrets.ORCHESTRATOR_API_KEY }}" \
+            -H "Content-Type: application/json" \
+            --max-time 30 \
+            -d '{"ref": "${{ github.sha }}"}')
+          OP=$(echo "$RESULT" | jq -r '.data.opId')
+          ATTEMPTS=0
+          while [ $ATTEMPTS -lt 90 ]; do
+            STATUS=$(curl -sf --max-time 10 \
+              "${{ vars.ORCHESTRATOR_URL }}/api/_x_/ops/$OP" \
+              -H "Authorization: Bearer ${{ secrets.ORCHESTRATOR_API_KEY }}" | jq -r '.data.status')
+            case "$STATUS" in
+              success) echo "Deploy succeeded"; exit 0 ;;
+              failed) echo "Deploy failed"; exit 1 ;;
+              *) ATTEMPTS=$((ATTEMPTS + 1)); sleep 10 ;;
+            esac
+          done
+          echo "::error::Deploy timed out"
+          exit 1
+        timeout-minutes: 16

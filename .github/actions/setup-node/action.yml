@@ -1,0 +1,12 @@
+name: 'Setup Node.js'
+description: 'Install Node.js and configure npm'
+inputs:
+  node-version:
+    description: 'Node.js version'
+    default: '20'
+runs:
+  using: 'composite'
+  steps:
+    - uses: actions/setup-node@v4
+      with:
+        node-version: ${{ inputs.node-version }}
