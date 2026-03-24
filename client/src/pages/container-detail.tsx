@@ -91,7 +91,7 @@ export function ContainerDetail() {
       {container.breadcrumb.length > 0 && <Breadcrumbs items={container.breadcrumb} />}
 
       {/* Header */}
-      <div>
+      <div className="animate-fade-up">
         <div className="flex items-center gap-2">
           <h1 className="text-lg font-bold text-[var(--color-text)]">{container.name}</h1>
           <Badge variant="warning">{container.type}</Badge>
@@ -103,7 +103,7 @@ export function ContainerDetail() {
       </div>
 
       {/* Action Bar */}
-      <div className="flex gap-2">
+      <div className="flex gap-2 animate-fade-up" style={{ animationDelay: '50ms' }}>
         <Button variant="outline" size="sm" onClick={() => toast('Scanning coming in Phase 2')}>
           <ScanLine className="w-4 h-4" />
           Scan Into
@@ -124,7 +124,7 @@ export function ContainerDetail() {
           ?? container.breadcrumb?.find((b) => b.type === 'property')?.id
           ?? 0;
         return propertyId > 0 ? (
-          <Card>
+          <Card animationDelay="100ms">
             <h2 className="text-sm font-semibold text-[var(--color-text)] mb-3">Tags</h2>
             <TagPicker entityType="container" entityId={container.id} propertyId={propertyId} />
           </Card>
@@ -132,8 +132,15 @@ export function ContainerDetail() {
       })()}
 
       {/* Nested Containers */}
-      <section>
-        <h2 className="text-sm font-semibold text-[var(--color-text)] mb-2">Nested Containers</h2>
+      <section className="animate-fade-up" style={{ animationDelay: '150ms' }}>
+        <div className="flex items-center justify-between mb-2">
+          <h2 className="text-sm font-semibold text-[var(--color-text)]">Nested Containers</h2>
+          {children && children.length > 0 && (
+            <span className="text-xs font-medium text-[var(--color-text-muted)] bg-[var(--color-elevated)] px-2 py-0.5 rounded-full">
+              {children.length}
+            </span>
+          )}
+        </div>
 
         {childrenLoading && (
           <div className="flex flex-col gap-2">
@@ -154,9 +161,19 @@ export function ContainerDetail() {
         )}
       </section>
 
+      {/* Divider */}
+      <div className="border-t border-[var(--color-border)]/50" />
+
       {/* Items */}
-      <section>
-        <h2 className="text-sm font-semibold text-[var(--color-text)] mb-2">Items</h2>
+      <section className="animate-fade-up" style={{ animationDelay: '200ms' }}>
+        <div className="flex items-center justify-between mb-2">
+          <h2 className="text-sm font-semibold text-[var(--color-text)]">Items</h2>
+          {items && items.length > 0 && (
+            <span className="text-xs font-medium text-[var(--color-text-muted)] bg-[var(--color-elevated)] px-2 py-0.5 rounded-full">
+              {items.length}
+            </span>
+          )}
+        </div>
 
         {itemsLoading && (
           <div className="flex flex-col gap-2">
@@ -185,7 +202,7 @@ export function ContainerDetail() {
               size="sm"
               variant="outline"
               onClick={() => { setCreateType('container'); setFabOpen(false); }}
-              className="bg-[var(--color-card)]"
+              className="bg-[var(--color-card)] shadow-lg animate-scale-in"
             >
               <Package className="w-4 h-4" />
               Add Container
@@ -194,7 +211,8 @@ export function ContainerDetail() {
               size="sm"
               variant="outline"
               onClick={() => { setCreateType('item'); setFabOpen(false); }}
-              className="bg-[var(--color-card)]"
+              className="bg-[var(--color-card)] shadow-lg animate-scale-in"
+              style={{ animationDelay: '30ms' }}
             >
               <Box className="w-4 h-4" />
               Add Item
@@ -204,9 +222,9 @@ export function ContainerDetail() {
         <Button
           size="icon"
           onClick={() => setFabOpen(!fabOpen)}
-          className="w-12 h-12 rounded-full"
+          className="w-12 h-12 rounded-full shadow-lg"
         >
-          <Plus className={`w-5 h-5 transition-transform ${fabOpen ? 'rotate-45' : ''}`} />
+          <Plus className={`w-5 h-5 transition-transform duration-200 ${fabOpen ? 'rotate-45' : ''}`} />
         </Button>
       </div>
 

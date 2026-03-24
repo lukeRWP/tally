@@ -112,7 +112,7 @@ function TagMultiSelect({
           type="button"
           onClick={() => toggle(tag.id)}
           className={cn(
-            'px-2.5 py-1 rounded-full text-xs font-medium transition-all border',
+            'px-2.5 py-1 rounded-md text-xs font-semibold transition-all duration-200 border',
             selected.includes(tag.id)
               ? 'border-transparent text-white'
               : 'border-[var(--color-border)] text-[var(--color-text-secondary)] bg-[var(--color-elevated)]',
@@ -142,45 +142,48 @@ function ReportOptionsPanel({
   const [tagIds, setTagIds] = React.useState<number[]>([]);
 
   return (
-    <div className="mt-3 pt-3 border-t border-[var(--color-border)] flex flex-col gap-3">
-      {/* Format toggle */}
+    <div className="mt-3 pt-3 border-t border-[var(--color-border)] flex flex-col gap-3 animate-fade-up">
+      {/* Format toggle -- segmented control */}
       <div>
         <p className="text-xs font-medium text-[var(--color-text-muted)] mb-1.5">Format</p>
-        <div className="flex gap-2">
-          <Button
-            size="sm"
-            variant={format === 'pdf' ? 'default' : 'outline'}
-            onClick={() => setFormat('pdf')}
-            className="flex-1"
-          >
-            PDF
-          </Button>
-          <Button
-            size="sm"
-            variant={format === 'csv' ? 'default' : 'outline'}
-            onClick={() => setFormat('csv')}
-            className="flex-1"
-          >
-            CSV
-          </Button>
+        <div className="flex gap-1 p-1 rounded-[var(--radius-md)] bg-[var(--color-elevated)]">
+          {(['pdf', 'csv'] as const).map((f) => (
+            <button
+              key={f}
+              type="button"
+              onClick={() => setFormat(f)}
+              className={cn(
+                'flex-1 px-3 py-1.5 rounded-[var(--radius-sm)] text-sm font-medium transition-all duration-200 cursor-pointer uppercase',
+                format === f
+                  ? 'bg-[var(--color-card)] text-[var(--color-primary)] shadow-sm'
+                  : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]',
+              )}
+            >
+              {f}
+            </button>
+          ))}
         </div>
       </div>
 
-      {/* Group-by for Total Value */}
+      {/* Group-by for Total Value -- segmented */}
       {report.hasGroupBy && (
         <div>
           <p className="text-xs font-medium text-[var(--color-text-muted)] mb-1.5">Group By</p>
-          <div className="flex gap-2">
+          <div className="flex gap-1 p-1 rounded-[var(--radius-md)] bg-[var(--color-elevated)]">
             {(['location', 'tag', 'condition'] as const).map((opt) => (
-              <Button
+              <button
                 key={opt}
-                size="sm"
-                variant={groupBy === opt ? 'default' : 'outline'}
+                type="button"
                 onClick={() => setGroupBy(opt)}
-                className="flex-1 capitalize"
+                className={cn(
+                  'flex-1 px-3 py-1.5 rounded-[var(--radius-sm)] text-sm font-medium transition-all duration-200 cursor-pointer capitalize',
+                  groupBy === opt
+                    ? 'bg-[var(--color-card)] text-[var(--color-primary)] shadow-sm'
+                    : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]',
+                )}
               >
                 {opt}
-              </Button>
+              </button>
             ))}
           </div>
         </div>
@@ -203,7 +206,7 @@ function ReportOptionsPanel({
         {isPending ? (
           <>
             <Loader2 className="w-4 h-4 animate-spin" />
-            Generating…
+            Generating...
           </>
         ) : (
           'Generate'
@@ -262,10 +265,10 @@ export function Reports() {
 
   return (
     <div className="flex flex-col gap-4">
-      <h1 className="text-lg font-bold text-[var(--color-text)]">Reports</h1>
+      <h1 className="text-lg font-bold text-[var(--color-text)] animate-fade-up">Reports</h1>
 
       {/* Property selector */}
-      <div>
+      <div className="animate-fade-up" style={{ animationDelay: '50ms' }}>
         <label className="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5">
           Property
         </label>
@@ -276,10 +279,10 @@ export function Reports() {
             className={cn(
               'w-full appearance-none bg-[var(--color-card)] border border-[var(--color-border)]',
               'rounded-[var(--radius-md)] px-3 py-2 pr-8 text-sm text-[var(--color-text)]',
-              'focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]',
+              'focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] transition-shadow duration-200',
             )}
           >
-            <option value={0} disabled>Select a property…</option>
+            <option value={0} disabled>Select a property...</option>
             {properties.map((p) => (
               <option key={p.id} value={p.id}>{p.name}</option>
             ))}
@@ -290,22 +293,31 @@ export function Reports() {
 
       {/* Report type grid */}
       <div className="grid grid-cols-2 gap-3">
-        {REPORT_TYPES.map((report) => {
+        {REPORT_TYPES.map((report, idx) => {
           const Icon = report.icon;
           const isExpanded = expandedReport === report.id;
 
           return (
-            <div key={report.id} className={cn('col-span-1', isExpanded && 'col-span-2')}>
+            <div
+              key={report.id}
+              className={cn(
+                'col-span-1 animate-fade-up',
+                isExpanded && 'col-span-2',
+              )}
+              style={{ animationDelay: `${(idx + 2) * 50}ms` }}
+            >
               <Card
                 className={cn(
-                  'cursor-pointer transition-all select-none',
-                  isExpanded && 'border-[var(--color-primary)]',
+                  'cursor-pointer select-none',
+                  isExpanded
+                    ? 'border-[var(--color-primary)] shadow-[0_2px_12px_rgba(0,0,0,0.08)]'
+                    : 'hover:shadow-[0_2px_8px_rgba(0,0,0,0.06)] hover:border-[var(--color-primary)]/30',
                 )}
                 onClick={() => handleCardClick(report.id)}
               >
                 <div className="flex items-start gap-3">
-                  <div className={cn('flex items-center justify-center w-9 h-9 rounded-[var(--radius-md)] shrink-0', report.iconBg)}>
-                    <Icon className={cn('w-4 h-4', report.iconColor)} />
+                  <div className={cn('flex items-center justify-center w-10 h-10 rounded-[var(--radius-lg)] shrink-0', report.iconBg)}>
+                    <Icon className={cn('w-5 h-5', report.iconColor)} />
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-semibold text-[var(--color-text)] leading-tight">{report.label}</p>

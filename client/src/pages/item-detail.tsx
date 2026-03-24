@@ -58,7 +58,7 @@ export function ItemDetail() {
   const navigate = useNavigate();
 
   const { data: item, isLoading } = useItem(id);
-  // Reuse delete mutation pattern — actual item delete not yet available, placeholder
+  // Reuse delete mutation pattern -- actual item delete not yet available, placeholder
   const _deleteProperty = useDeleteProperty();
 
   // Derive propertyId from breadcrumb returned by the item detail API
@@ -115,9 +115,9 @@ export function ItemDetail() {
       : null;
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-4 pb-24">
       {/* Header */}
-      <div>
+      <div className="animate-fade-up">
         <h1 className="text-lg font-bold text-[var(--color-text)]">{item.name}</h1>
         <p className="text-[10px] font-mono text-[var(--color-text-muted)]">{item.qrCode}</p>
         <div className="flex items-center gap-2 mt-1">
@@ -134,7 +134,7 @@ export function ItemDetail() {
 
       {/* Product Info */}
       {item.product && (
-        <Card>
+        <Card animationDelay="50ms">
           <h2 className="text-sm font-semibold text-[var(--color-text)] mb-2">Product Info</h2>
           {item.product.imageUrl && (
             <img
@@ -163,26 +163,26 @@ export function ItemDetail() {
       )}
 
       {/* Value */}
-      <Card>
-        <h2 className="text-sm font-semibold text-[var(--color-text)] mb-2">Value</h2>
-        <div className="grid grid-cols-2 gap-2 text-xs">
+      <Card animationDelay="100ms">
+        <h2 className="text-sm font-semibold text-[var(--color-text)] mb-3">Value</h2>
+        <div className="grid grid-cols-2 gap-4">
           <div>
-            <span className="text-[var(--color-text-muted)]">Purchase Price</span>
-            <p className="text-[var(--color-text)] font-medium">
+            <span className="text-xs text-[var(--color-text-muted)]">Purchase Price</span>
+            <p className="text-xl font-bold text-[var(--color-text)] mt-0.5">
               {item.purchasePrice != null ? `$${item.purchasePrice.toFixed(2)}` : '--'}
             </p>
           </div>
           <div>
-            <span className="text-[var(--color-text-muted)]">Current Value</span>
-            <p className="text-[var(--color-text)] font-medium">
+            <span className="text-xs text-[var(--color-text-muted)]">Current Value</span>
+            <p className="text-xl font-bold text-[var(--color-primary)] mt-0.5">
               {item.currentValue != null ? `$${item.currentValue.toFixed(2)}` : '--'}
             </p>
           </div>
         </div>
         {depreciation && (
-          <div className="mt-2 pt-2 border-t border-[var(--color-border)]">
+          <div className="mt-3 pt-3 border-t border-[var(--color-border)]">
             <p className="text-xs text-[var(--color-text-secondary)]">
-              Est. Value: <span className="font-medium text-[var(--color-text)]">${depreciation.currentValue.toFixed(2)}</span>
+              Est. Value: <span className="font-semibold text-[var(--color-text)]">${depreciation.currentValue.toFixed(2)}</span>
               {' '}
               <span className="text-[var(--color-text-muted)]">
                 ({depreciation.ratePercent}% annual, since {depreciation.sinceYear})
@@ -192,16 +192,16 @@ export function ItemDetail() {
         )}
       </Card>
 
-      {/* Tags */}
+      {/* Tags -- inline feel */}
       {propertyId > 0 && (
-        <Card>
-          <h2 className="text-sm font-semibold text-[var(--color-text)] mb-3">Tags</h2>
+        <div className="animate-fade-up" style={{ animationDelay: '150ms' }}>
+          <h2 className="text-sm font-semibold text-[var(--color-text)] mb-2">Tags</h2>
           <TagPicker entityType="item" entityId={item.id} propertyId={propertyId} />
-        </Card>
+        </div>
       )}
 
       {/* Dates */}
-      <Card>
+      <Card animationDelay="200ms">
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-sm font-semibold text-[var(--color-text)]">Dates</h2>
           <Button size="sm" variant="outline" onClick={() => setDateFormOpen(true)}>
@@ -218,7 +218,7 @@ export function ItemDetail() {
       </Card>
 
       {/* Accessories */}
-      <Card>
+      <Card animationDelay="250ms">
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-sm font-semibold text-[var(--color-text)]">Accessories</h2>
           <Button size="sm" variant="outline" onClick={() => setAccessoryPickerOpen(true)}>
@@ -235,7 +235,7 @@ export function ItemDetail() {
       </Card>
 
       {/* Lending */}
-      <Card>
+      <Card animationDelay="300ms">
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-sm font-semibold text-[var(--color-text)]">Lending</h2>
           {item.status === 'active' && (
@@ -254,14 +254,14 @@ export function ItemDetail() {
       </Card>
 
       {/* Files */}
-      <Card>
+      <Card animationDelay="350ms">
         <h2 className="text-sm font-semibold text-[var(--color-text)] mb-3">Files</h2>
         <FileList itemId={id} />
         <FileUpload itemId={id} />
       </Card>
 
       {/* Condition History */}
-      <Card>
+      <Card animationDelay="400ms">
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-sm font-semibold text-[var(--color-text)]">Condition History</h2>
           <Button size="sm" variant="outline" onClick={() => setConditionFormOpen(true)}>
@@ -278,32 +278,35 @@ export function ItemDetail() {
         />
       </Card>
 
-      {/* Actions */}
-      <div className="flex gap-2 flex-wrap">
-        <Button variant="outline" size="sm" className="flex-1" onClick={() => toast('Edit coming soon')}>
-          <Pencil className="w-4 h-4" />
-          Edit
-        </Button>
-        <Button variant="outline" size="sm" className="flex-1" onClick={() => toast('Move coming soon')}>
-          <ArrowRightLeft className="w-4 h-4" />
-          Move
-        </Button>
-        <Button variant="outline" size="sm" className="flex-1" onClick={() => setShareOpen(true)}>
-          <Share2 className="w-4 h-4" />
-          Share
-        </Button>
-        <Button variant="outline" size="sm" className="flex-1" onClick={() => setPrintOpen(true)}>
-          <Printer className="w-4 h-4" />
-          Print
-        </Button>
-        <Button variant="destructive" size="sm" className="flex-1" onClick={() => {
-          toast('Delete coming soon');
-          navigate(-1);
-        }}>
-          <Trash2 className="w-4 h-4" />
-          Delete
-        </Button>
+      {/* Floating Action Bar */}
+      <div className="fixed bottom-20 left-0 right-0 z-40 px-4">
+        <div className="max-w-lg mx-auto backdrop-blur-xl bg-[var(--color-card)]/90 border border-[var(--color-border)]/50 rounded-[var(--radius-lg)] shadow-[0_4px_16px_rgba(0,0,0,0.1)] p-2 flex gap-1.5 animate-slide-up">
+          <Button variant="ghost" size="sm" className="flex-1 text-xs" onClick={() => toast('Edit coming soon')}>
+            <Pencil className="w-3.5 h-3.5" />
+            Edit
+          </Button>
+          <Button variant="ghost" size="sm" className="flex-1 text-xs" onClick={() => toast('Move coming soon')}>
+            <ArrowRightLeft className="w-3.5 h-3.5" />
+            Move
+          </Button>
+          <Button variant="ghost" size="sm" className="flex-1 text-xs" onClick={() => setShareOpen(true)}>
+            <Share2 className="w-3.5 h-3.5" />
+            Share
+          </Button>
+          <Button variant="ghost" size="sm" className="flex-1 text-xs" onClick={() => setPrintOpen(true)}>
+            <Printer className="w-3.5 h-3.5" />
+            Print
+          </Button>
+          <Button variant="ghost" size="sm" className="flex-1 text-xs text-[var(--color-red)]" onClick={() => {
+            toast('Delete coming soon');
+            navigate(-1);
+          }}>
+            <Trash2 className="w-3.5 h-3.5" />
+            Delete
+          </Button>
+        </div>
       </div>
+
       <LabelPrintDialog
         entities={[{
           id: item.id,

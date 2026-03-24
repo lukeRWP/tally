@@ -6,9 +6,10 @@ import type { Property } from '@/types/inventory';
 
 interface PropertyCardProps {
   property: Property;
+  index?: number;
 }
 
-export function PropertyCard({ property }: PropertyCardProps) {
+export function PropertyCard({ property, index = 0 }: PropertyCardProps) {
   const navigate = useNavigate();
 
   const isStorage = property.name.toLowerCase().includes('storage');
@@ -16,11 +17,12 @@ export function PropertyCard({ property }: PropertyCardProps) {
 
   return (
     <Card
-      className="flex items-center gap-3 cursor-pointer active:opacity-80 transition-opacity"
+      className="flex items-center gap-3 cursor-pointer hover:shadow-[0_2px_8px_rgba(0,0,0,0.06)] hover:border-[var(--color-primary)]/30"
+      animationDelay={`${index * 50}ms`}
       onClick={() => navigate(`/property/${property.id}`)}
     >
       <div
-        className={`flex items-center justify-center w-10 h-10 rounded-[var(--radius-md)] shrink-0 ${
+        className={`flex items-center justify-center w-11 h-11 rounded-[var(--radius-lg)] shrink-0 ${
           isStorage
             ? 'bg-[var(--color-amber-bg)] text-[var(--color-amber)]'
             : 'bg-[var(--color-primary-bg)] text-[var(--color-primary)]'

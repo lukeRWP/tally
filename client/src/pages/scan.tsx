@@ -29,11 +29,11 @@ import {
 } from '@/hooks/use-inventory';
 import { cn } from '@/lib/utils';
 
-// ── Tab mode ─────────────────────────────────────────────────────────────────
+// -- Tab mode ----------------------------------------------------------------
 
 type TabMode = 'add' | 'move';
 
-// ── Add-mode state machine ────────────────────────────────────────────────────
+// -- Add-mode state machine --------------------------------------------------
 
 type ScanState =
   | 'idle'
@@ -56,7 +56,7 @@ interface DuplicateItem {
   propertyName: string;
 }
 
-// ── Move-mode state machine ───────────────────────────────────────────────────
+// -- Move-mode state machine -------------------------------------------------
 
 type MoveState =
   | 'move_idle'
@@ -83,10 +83,10 @@ const TLY_CODE_REGEX = /^TLY-[PACI]-[0-9A-Fa-f]{4}$/;
 export function Scan() {
   const navigate = useNavigate();
 
-  // ── Tab ────────────────────────────────────────────────────────────────────
+  // -- Tab ------------------------------------------------------------------
   const [tab, setTab] = useState<TabMode>('add');
 
-  // ── Add mode state ─────────────────────────────────────────────────────────
+  // -- Add mode state -------------------------------------------------------
   const [state, setState] = useState<ScanState>('idle');
   const [lookupResult, setLookupResult] = useState<LookupResult | null>(null);
   const [duplicates, setDuplicates] = useState<DuplicateItem[]>([]);
@@ -102,7 +102,7 @@ export function Scan() {
   const [quantity, setQuantity] = useState(1);
   const [condition, setCondition] = useState<'new' | 'good' | 'fair' | 'poor'>('good');
 
-  // ── Move mode state ────────────────────────────────────────────────────────
+  // -- Move mode state ------------------------------------------------------
   const [moveState, setMoveState] = useState<MoveState>('move_idle');
   const [moveItem, setMoveItem] = useState<ResolvedEntity | null>(null);
   const [moveContainer, setMoveContainer] = useState<ResolvedEntity | null>(null);
@@ -114,7 +114,7 @@ export function Scan() {
   const { data: containers } = useContainers(areaId);
   const createItem = useCreateItem();
 
-  // ── Add mode handlers ──────────────────────────────────────────────────────
+  // -- Add mode handlers ----------------------------------------------------
 
   const resetFlow = useCallback(() => {
     setState('idle');
@@ -211,7 +211,7 @@ export function Scan() {
     [navigate]
   );
 
-  // ── Move mode handlers ─────────────────────────────────────────────────────
+  // -- Move mode handlers ---------------------------------------------------
 
   const resetMoveFlow = useCallback(() => {
     setMoveState('move_idle');
@@ -245,7 +245,7 @@ export function Scan() {
               containerName: moveContainer.name,
             };
             setCompletedMoves((prev) => [newMove, ...prev]);
-            toast.success(`${entity.name} → ${moveContainer.name}`);
+            toast.success(`${entity.name} -> ${moveContainer.name}`);
             setMoveState('move_container_scanned');
           } catch (err) {
             toast.error(err instanceof Error ? err.message : 'Failed to move item');
@@ -258,7 +258,7 @@ export function Scan() {
         }
       } else if (entity.type === 'container') {
         if (moveState === 'move_item_scanned' && moveItem) {
-          // Item already scanned — complete the single move
+          // Item already scanned -- complete the single move
           setMoveState('move_completing');
           try {
             await api.patch(`/api/items/_p_/${moveItem.id}/move`, { containerId: entity.id });
@@ -269,7 +269,7 @@ export function Scan() {
               containerName: entity.name,
             };
             setCompletedMoves((prev) => [newMove, ...prev]);
-            toast.success(`${moveItem.name} → ${entity.name}`);
+            toast.success(`${moveItem.name} -> ${entity.name}`);
             setMoveItem(null);
             setMoveContainer(null);
             setMoveState('move_idle');
@@ -294,7 +294,7 @@ export function Scan() {
     moveState === 'move_item_scanned' ||
     moveState === 'move_container_scanned';
 
-  // ── Tab switch ─────────────────────────────────────────────────────────────
+  // -- Tab switch -----------------------------------------------------------
 
   const handleTabChange = useCallback((newTab: TabMode) => {
     setTab(newTab);
@@ -305,7 +305,7 @@ export function Scan() {
     }
   }, [resetFlow, resetMoveFlow]);
 
-  // ── Move mode status message ───────────────────────────────────────────────
+  // -- Move mode status message ---------------------------------------------
 
   const moveStatusMessage = (() => {
     switch (moveState) {
@@ -318,15 +318,15 @@ export function Scan() {
           ? `Now scan items to move into ${moveContainer.name}`
           : 'Now scan items to move';
       case 'move_completing':
-        return 'Moving…';
+        return 'Moving...';
     }
   })();
 
   return (
     <div className="flex flex-col gap-4 px-4 py-4 max-w-lg mx-auto">
       {/* Header */}
-      <div className="flex items-center gap-3">
-        <div className="flex items-center justify-center w-10 h-10 rounded-full bg-[var(--color-primary-bg)]">
+      <div className="flex items-center gap-3 animate-fade-up">
+        <div className="flex items-center justify-center w-11 h-11 rounded-full bg-[var(--color-primary-bg)]">
           <ScanLine className="w-5 h-5 text-[var(--color-primary)]" />
         </div>
         <div>
@@ -337,13 +337,13 @@ export function Scan() {
         </div>
       </div>
 
-      {/* Mode tabs */}
-      <div className="flex gap-1 p-1 rounded-[var(--radius-md)] bg-[var(--color-elevated)]">
+      {/* Mode tabs -- segmented control with sliding indicator */}
+      <div className="flex gap-1 p-1 rounded-[var(--radius-lg)] bg-[var(--color-elevated)] animate-fade-up" style={{ animationDelay: '50ms' }}>
         <button
           type="button"
           onClick={() => handleTabChange('add')}
           className={cn(
-            'flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded text-sm font-medium transition-colors cursor-pointer',
+            'flex-1 flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-[var(--radius-md)] text-sm font-semibold transition-all duration-200 cursor-pointer',
             tab === 'add'
               ? 'bg-[var(--color-card)] text-[var(--color-primary)] shadow-sm'
               : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]'
@@ -356,7 +356,7 @@ export function Scan() {
           type="button"
           onClick={() => handleTabChange('move')}
           className={cn(
-            'flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded text-sm font-medium transition-colors cursor-pointer',
+            'flex-1 flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-[var(--radius-md)] text-sm font-semibold transition-all duration-200 cursor-pointer',
             tab === 'move'
               ? 'bg-[var(--color-card)] text-[var(--color-amber)] shadow-sm'
               : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]'
@@ -367,10 +367,10 @@ export function Scan() {
         </button>
       </div>
 
-      {/* ── ADD MODE ────────────────────────────────────────────────────────── */}
+      {/* -- ADD MODE -------------------------------------------------------- */}
       {tab === 'add' && (
         <>
-          {/* Camera — active when idle or looking_up */}
+          {/* Camera -- active when idle or looking_up */}
           {(state === 'idle' || state === 'looking_up') && (
             <CameraScanner
               isActive={state === 'idle'}
@@ -433,7 +433,7 @@ export function Scan() {
             />
           )}
 
-          {/* Adding mode — container picker + item form */}
+          {/* Adding mode -- container picker + item form */}
           {state === 'adding' && (
             <Card className="flex flex-col gap-4">
               <div className="flex items-center gap-2">
@@ -476,7 +476,7 @@ export function Scan() {
                       setAreaId(0);
                       setContainerId(0);
                     }}
-                    className="w-full appearance-none bg-[var(--color-card)] border border-[var(--color-border)] rounded-[var(--radius-md)] px-3 py-2 text-sm text-[var(--color-text)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] focus:ring-offset-1 cursor-pointer"
+                    className="w-full appearance-none bg-[var(--color-card)] border border-[var(--color-border)] rounded-[var(--radius-md)] px-3 py-2 text-sm text-[var(--color-text)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] focus:ring-offset-1 cursor-pointer transition-shadow duration-200"
                   >
                     <option value={0}>Select property...</option>
                     {properties?.map((p) => (
@@ -502,7 +502,7 @@ export function Scan() {
                       setContainerId(0);
                     }}
                     disabled={!propertyId}
-                    className="w-full appearance-none bg-[var(--color-card)] border border-[var(--color-border)] rounded-[var(--radius-md)] px-3 py-2 text-sm text-[var(--color-text)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] focus:ring-offset-1 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                    className="w-full appearance-none bg-[var(--color-card)] border border-[var(--color-border)] rounded-[var(--radius-md)] px-3 py-2 text-sm text-[var(--color-text)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] focus:ring-offset-1 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer transition-shadow duration-200"
                   >
                     <option value={0}>Select area...</option>
                     {areas?.map((a) => (
@@ -525,7 +525,7 @@ export function Scan() {
                     value={containerId}
                     onChange={(e) => setContainerId(Number(e.target.value))}
                     disabled={!areaId}
-                    className="w-full appearance-none bg-[var(--color-card)] border border-[var(--color-border)] rounded-[var(--radius-md)] px-3 py-2 text-sm text-[var(--color-text)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] focus:ring-offset-1 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                    className="w-full appearance-none bg-[var(--color-card)] border border-[var(--color-border)] rounded-[var(--radius-md)] px-3 py-2 text-sm text-[var(--color-text)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] focus:ring-offset-1 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer transition-shadow duration-200"
                   >
                     <option value={0}>Select container...</option>
                     {containers?.map((c) => (
@@ -559,7 +559,7 @@ export function Scan() {
                     <select
                       value={condition}
                       onChange={(e) => setCondition(e.target.value as typeof condition)}
-                      className="w-full appearance-none bg-[var(--color-card)] border border-[var(--color-border)] rounded-[var(--radius-md)] px-3 py-2 text-sm text-[var(--color-text)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] focus:ring-offset-1 cursor-pointer"
+                      className="w-full appearance-none bg-[var(--color-card)] border border-[var(--color-border)] rounded-[var(--radius-md)] px-3 py-2 text-sm text-[var(--color-text)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] focus:ring-offset-1 cursor-pointer transition-shadow duration-200"
                     >
                       <option value="new">New</option>
                       <option value="good">Good</option>
@@ -596,7 +596,7 @@ export function Scan() {
           {state === 'idle' && (
             <button
               type="button"
-              className="flex items-center justify-center gap-2 w-full py-3 border border-dashed border-[var(--color-border)] rounded-[var(--radius-md)] text-sm text-[var(--color-primary)] hover:bg-[var(--color-primary-bg)] transition-colors cursor-pointer"
+              className="flex items-center justify-center gap-2 w-full py-3 border border-dashed border-[var(--color-border)] rounded-[var(--radius-lg)] text-sm font-medium text-[var(--color-primary)] hover:bg-[var(--color-primary-bg)] hover:border-[var(--color-primary)]/30 transition-all duration-200 cursor-pointer"
               onClick={handleSearchManually}
             >
               <Search className="w-4 h-4" />
@@ -606,10 +606,10 @@ export function Scan() {
         </>
       )}
 
-      {/* ── MOVE MODE ───────────────────────────────────────────────────────── */}
+      {/* -- MOVE MODE ------------------------------------------------------- */}
       {tab === 'move' && (
         <>
-          {/* Camera — active whenever in move mode (except while completing) */}
+          {/* Camera -- active whenever in move mode (except while completing) */}
           <CameraScanner
             isActive={isMoveActive}
             onBarcodeScanned={handleMoveCodeScanned}
@@ -637,23 +637,23 @@ export function Scan() {
               <MoveRight className="w-5 h-5 text-[var(--color-text-muted)] shrink-0" />
             )}
             <div className="min-w-0">
-              <p className="text-sm font-medium text-[var(--color-text)]">
+              <p className="text-base font-semibold text-[var(--color-text)]">
                 {moveStatusMessage}
               </p>
               {moveState === 'move_item_scanned' && moveItem && (
-                <p className="text-xs text-[var(--color-text-muted)] truncate mt-0.5">
+                <p className="text-sm text-[var(--color-text-muted)] truncate mt-0.5">
                   Item: {moveItem.name}
                 </p>
               )}
               {moveState === 'move_container_scanned' && moveContainer && (
-                <p className="text-xs text-[var(--color-text-muted)] truncate mt-0.5">
+                <p className="text-sm text-[var(--color-text-muted)] truncate mt-0.5">
                   Destination: {moveContainer.name}
                 </p>
               )}
             </div>
           </Card>
 
-          {/* Context panel — shown when something is in buffer */}
+          {/* Context panel -- shown when something is in buffer */}
           {(moveState === 'move_item_scanned' || moveState === 'move_container_scanned') && (
             <Card className="flex flex-col gap-3">
               <div className="flex items-center justify-between">
@@ -667,7 +667,7 @@ export function Scan() {
                     setMoveContainer(null);
                     setMoveState('move_idle');
                   }}
-                  className="text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] cursor-pointer"
+                  className="text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] cursor-pointer transition-colors duration-150"
                 >
                   Clear
                 </button>
@@ -681,7 +681,7 @@ export function Scan() {
                       {moveItem.name}
                     </p>
                     <p className="text-xs text-[var(--color-text-muted)]">
-                      item — scan a container to move it
+                      item -- scan a container to move it
                     </p>
                   </div>
                   <ArrowRight className="w-4 h-4 text-[var(--color-amber)] shrink-0" />
@@ -697,7 +697,7 @@ export function Scan() {
                       Moving to: {moveContainer.name}
                     </p>
                     <p className="text-xs text-[var(--color-text-muted)]">
-                      container — scan items to move in
+                      container -- scan items to move in
                     </p>
                   </div>
                 </div>
@@ -713,7 +713,7 @@ export function Scan() {
                   }}
                   className="border-[var(--color-amber)] text-[var(--color-amber)] hover:bg-[var(--color-amber-bg)]"
                 >
-                  Done — exit batch mode
+                  Done -- exit batch mode
                 </Button>
               )}
             </Card>
@@ -729,7 +729,7 @@ export function Scan() {
                 <button
                   type="button"
                   onClick={() => setCompletedMoves([])}
-                  className="text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] cursor-pointer"
+                  className="text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] cursor-pointer transition-colors duration-150"
                 >
                   Clear
                 </button>
@@ -738,7 +738,8 @@ export function Scan() {
                 {completedMoves.map((move, i) => (
                   <li
                     key={`${move.itemId}-${move.containerId}-${i}`}
-                    className="flex items-center gap-2 text-sm"
+                    className="flex items-center gap-2 text-sm animate-fade-up"
+                    style={{ animationDelay: `${i * 30}ms` }}
                   >
                     <CheckCircle2 className="w-4 h-4 text-[var(--color-green)] shrink-0" />
                     <span className="text-[var(--color-text)] truncate flex-1 min-w-0">
@@ -756,7 +757,7 @@ export function Scan() {
 
           {/* Reset button when idle with no history */}
           {moveState === 'move_idle' && completedMoves.length === 0 && (
-            <p className="text-center text-xs text-[var(--color-text-muted)]">
+            <p className="text-center text-sm text-[var(--color-text-muted)] py-2">
               Point the camera at a TLY QR code to start
             </p>
           )}

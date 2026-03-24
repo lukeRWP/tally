@@ -119,14 +119,14 @@ export function TagPicker({ entityType, entityId, propertyId }: TagPickerProps) 
         >
           <Plus className="w-3 h-3" />
           Add tag
-          <ChevronDown className={cn('w-3 h-3 transition-transform', dropdownOpen && 'rotate-180')} />
+          <ChevronDown className={cn('w-3 h-3 transition-transform duration-200', dropdownOpen && 'rotate-180')} />
         </Button>
 
         {dropdownOpen && (
-          <div className="absolute left-0 top-full mt-1 z-50 min-w-[200px] bg-[var(--color-card)] border border-[var(--color-border)] rounded-[var(--radius-lg)] shadow-lg p-2 flex flex-col gap-1">
+          <div className="absolute left-0 top-full mt-1 z-50 min-w-[220px] bg-[var(--color-card)] border border-[var(--color-border)] rounded-[var(--radius-lg)] shadow-[0_4px_16px_rgba(0,0,0,0.08)] p-2 flex flex-col gap-1 animate-scale-in">
             {availableTags.length > 0 ? (
               <>
-                <p className="text-[10px] uppercase tracking-wide text-[var(--color-text-muted)] px-1 mb-0.5">
+                <p className="text-[10px] uppercase tracking-wide text-[var(--color-text-muted)] px-1 mb-0.5 font-medium">
                   Apply tag
                 </p>
                 {availableTags.map((tag) => (
@@ -134,9 +134,13 @@ export function TagPicker({ entityType, entityId, propertyId }: TagPickerProps) 
                     key={tag.id}
                     type="button"
                     onClick={() => handleAddTag(tag.id)}
-                    className="flex items-center gap-2 px-2 py-1.5 rounded-[var(--radius-md)] hover:bg-[var(--color-elevated)] text-left transition-colors w-full"
+                    className="flex items-center gap-2.5 px-2 py-1.5 rounded-[var(--radius-md)] hover:bg-[var(--color-elevated)] text-left transition-all duration-150 w-full"
                   >
-                    <TagBadge tag={tag} size="sm" />
+                    <div
+                      className="w-3 h-3 rounded-sm shrink-0"
+                      style={{ backgroundColor: tag.color }}
+                    />
+                    <span className="text-sm text-[var(--color-text)]">{tag.name}</span>
                   </button>
                 ))}
                 <div className="my-1 border-t border-[var(--color-border)]" />
@@ -148,7 +152,7 @@ export function TagPicker({ entityType, entityId, propertyId }: TagPickerProps) 
             )}
 
             {/* Quick-create */}
-            <p className="text-[10px] uppercase tracking-wide text-[var(--color-text-muted)] px-1 mb-0.5">
+            <p className="text-[10px] uppercase tracking-wide text-[var(--color-text-muted)] px-1 mb-0.5 font-medium">
               Create new
             </p>
             <div className="flex flex-col gap-2 px-1">
@@ -157,16 +161,16 @@ export function TagPicker({ entityType, entityId, propertyId }: TagPickerProps) 
                 value={newTagName}
                 onChange={(e) => setNewTagName(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && handleCreateTag()}
-                className="h-7 text-xs px-2 py-1"
+                className="h-8 text-xs px-2 py-1"
               />
-              <div className="flex gap-1 flex-wrap">
+              <div className="flex gap-1.5 flex-wrap">
                 {PRESET_COLORS.map((color) => (
                   <button
                     key={color}
                     type="button"
                     onClick={() => setNewTagColor(color)}
                     className={cn(
-                      'w-5 h-5 rounded-full transition-transform hover:scale-110',
+                      'w-5 h-5 rounded-[var(--radius-sm)] transition-all duration-150 hover:scale-110',
                       newTagColor === color && 'ring-2 ring-offset-1 ring-[var(--color-primary)] scale-110',
                     )}
                     style={{ backgroundColor: color }}
@@ -180,9 +184,10 @@ export function TagPicker({ entityType, entityId, propertyId }: TagPickerProps) 
                 size="sm"
                 onClick={handleCreateTag}
                 disabled={!newTagName.trim() || createTag.isPending}
-                className="h-7 text-xs"
+                className="h-7 text-xs w-full"
               >
-                Create
+                <Plus className="w-3 h-3" />
+                Create & Apply
               </Button>
             </div>
           </div>

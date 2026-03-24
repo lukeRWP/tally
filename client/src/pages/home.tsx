@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, ScanLine, Plus, ChevronDown, Filter, Pencil, ArrowRight, Trash2, RotateCcw } from 'lucide-react';
+import { Search, ScanLine, Plus, ChevronDown, Filter, Pencil, ArrowRight, Trash2, RotateCcw, Home as HomeIcon, Package } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -14,7 +14,7 @@ import { useRecentActivity, type AuditEntry } from '@/hooks/use-notifications';
 import { toast } from '@/components/ui/toast';
 import { cn } from '@/lib/utils';
 
-// ── AllPropertyTags: fetch tags across all user properties ─────────────────
+// -- AllPropertyTags: fetch tags across all user properties --------------------
 
 function useAllPropertyTags(properties: Array<{ id: number }> | undefined): Tag[] {
   // Call hooks for up to 10 properties (hooks must not be called conditionally).
@@ -44,7 +44,7 @@ function useAllPropertyTags(properties: Array<{ id: number }> | undefined): Tag[
   });
 }
 
-// ── Pill button ────────────────────────────────────────────────────────────
+// -- Pill button -------------------------------------------------------------
 
 function PillButton({
   label,
@@ -60,7 +60,7 @@ function PillButton({
       type="button"
       onClick={onClick}
       className={cn(
-        'px-3 py-1 rounded-full text-xs font-medium transition-colors border',
+        'px-3 py-1 rounded-full text-xs font-medium transition-all duration-200 border',
         active
           ? 'bg-[var(--color-primary)] text-white border-[var(--color-primary)]'
           : 'bg-transparent text-[var(--color-text-secondary)] border-[var(--color-border)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)]',
@@ -71,7 +71,7 @@ function PillButton({
   );
 }
 
-// ── Condition options ──────────────────────────────────────────────────────
+// -- Condition options -------------------------------------------------------
 
 const CONDITIONS: Array<{ label: string; value: string | null }> = [
   { label: 'All', value: null },
@@ -87,7 +87,7 @@ const STATUSES: Array<{ label: string; value: string }> = [
   { label: 'Lent', value: 'lent' },
 ];
 
-// ── Activity feed helpers ──────────────────────────────────────────────────
+// -- Activity feed helpers ---------------------------------------------------
 
 function activityIcon(action: string) {
   switch (action) {
@@ -121,7 +121,7 @@ function activityLabel(entry: AuditEntry): string {
   return `${entry.displayName} ${entry.action} ${entry.entityType} ${name}`;
 }
 
-// ── Home page ──────────────────────────────────────────────────────────────
+// -- Home page ---------------------------------------------------------------
 
 export function Home() {
   const navigate = useNavigate();
@@ -197,19 +197,19 @@ export function Home() {
   return (
     <div className="flex flex-col gap-4">
       {/* Search */}
-      <div className="relative">
+      <div className="relative animate-fade-up">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--color-text-muted)]" />
         <Input
           placeholder="Search items..."
           value={searchInput}
           onChange={(e) => setSearchInput(e.target.value)}
-          className="pl-9 pr-12"
+          className="pl-9 pr-12 h-11 text-sm focus:shadow-[0_0_0_3px_var(--color-primary-bg)] transition-shadow duration-200"
         />
         <button
           type="button"
           onClick={() => setFiltersOpen((v) => !v)}
           className={cn(
-            'absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-0.5 text-xs transition-colors',
+            'absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-0.5 text-xs transition-colors duration-200',
             filtersOpen || hasActiveFilters
               ? 'text-[var(--color-primary)]'
               : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]',
@@ -229,7 +229,7 @@ export function Home() {
 
       {/* Filter panel */}
       {filtersOpen && (
-        <div className="flex flex-col gap-3 p-3 rounded-[var(--radius-lg)] bg-[var(--color-elevated)] border border-[var(--color-border)]">
+        <div className="flex flex-col gap-3 p-3 rounded-[var(--radius-lg)] bg-[var(--color-elevated)] border border-[var(--color-border)] animate-scale-in">
           {/* Tag filter */}
           {allTags.length > 0 && (
             <div>
@@ -251,12 +251,12 @@ export function Home() {
                     </span>
                   )}
                   <ChevronDown
-                    className={cn('w-3 h-3 transition-transform', tagDropdownOpen && 'rotate-180')}
+                    className={cn('w-3 h-3 transition-transform duration-200', tagDropdownOpen && 'rotate-180')}
                   />
                 </Button>
 
                 {tagDropdownOpen && (
-                  <div className="absolute left-0 top-full mt-1 z-50 min-w-[180px] bg-[var(--color-card)] border border-[var(--color-border)] rounded-[var(--radius-lg)] shadow-lg p-1.5 flex flex-col gap-0.5">
+                  <div className="absolute left-0 top-full mt-1 z-50 min-w-[180px] bg-[var(--color-card)] border border-[var(--color-border)] rounded-[var(--radius-lg)] shadow-[0_4px_16px_rgba(0,0,0,0.08)] p-1.5 flex flex-col gap-0.5 animate-scale-in">
                     {allTags.map((tag) => {
                       const isSelected = selectedTagIds.includes(tag.id);
                       return (
@@ -265,13 +265,17 @@ export function Home() {
                           type="button"
                           onClick={() => toggleTag(tag.id)}
                           className={cn(
-                            'flex items-center gap-2 px-2 py-1.5 rounded-[var(--radius-md)] text-left transition-colors w-full',
+                            'flex items-center gap-2 px-2 py-1.5 rounded-[var(--radius-md)] text-left transition-all duration-150 w-full',
                             isSelected
                               ? 'bg-[var(--color-primary-bg)]'
                               : 'hover:bg-[var(--color-elevated)]',
                           )}
                         >
-                          <TagBadge tag={tag} size="sm" />
+                          <div
+                            className="w-3 h-3 rounded-sm shrink-0"
+                            style={{ backgroundColor: tag.color }}
+                          />
+                          <span className="text-sm text-[var(--color-text)]">{tag.name}</span>
                           {isSelected && (
                             <span className="ml-auto text-[var(--color-primary)] text-xs font-bold">
                               ✓
@@ -333,7 +337,7 @@ export function Home() {
 
       {/* Search Results */}
       {searchQuery.length >= 1 && searchResults && searchResults.length > 0 && (
-        <section>
+        <section className="animate-fade-up">
           <h2 className="text-sm font-semibold text-[var(--color-text)] mb-2">
             Items ({searchResults.length})
           </h2>
@@ -346,26 +350,40 @@ export function Home() {
       )}
 
       {searchQuery.length >= 1 && searchResults && searchResults.length === 0 && (
-        <p className="text-sm text-[var(--color-text-muted)] text-center py-4">
-          No items found for &ldquo;{searchQuery}&rdquo;
-        </p>
+        <div className="flex flex-col items-center py-8 gap-2 animate-fade-up">
+          <Search className="w-8 h-8 text-[var(--color-text-muted)]" />
+          <p className="text-sm text-[var(--color-text-muted)] text-center">
+            No items found for &ldquo;{searchQuery}&rdquo;
+          </p>
+        </div>
       )}
 
       {/* Quick Actions */}
-      <div className="flex gap-2">
-        <Button variant="outline" size="sm" onClick={() => navigate('/scan')} className="flex-1">
+      <div className="flex gap-2 animate-fade-up" style={{ animationDelay: '50ms' }}>
+        <Button variant="outline" size="sm" onClick={() => navigate('/scan')} className="flex-1 gap-2">
           <ScanLine className="w-4 h-4" />
-          Scan
+          <div className="text-left">
+            <span className="block text-xs font-semibold">Scan</span>
+          </div>
         </Button>
-        <Button variant="outline" size="sm" onClick={() => setCreateOpen(true)} className="flex-1">
+        <Button variant="outline" size="sm" onClick={() => setCreateOpen(true)} className="flex-1 gap-2">
           <Plus className="w-4 h-4" />
-          Add Property
+          <div className="text-left">
+            <span className="block text-xs font-semibold">Add Property</span>
+          </div>
         </Button>
       </div>
 
       {/* Properties */}
-      <section>
-        <h2 className="text-sm font-semibold text-[var(--color-text)] mb-2">Your Properties</h2>
+      <section className="animate-fade-up" style={{ animationDelay: '100ms' }}>
+        <div className="flex items-center justify-between mb-2">
+          <h2 className="text-sm font-semibold text-[var(--color-text)]">Your Properties</h2>
+          {properties && properties.length > 0 && (
+            <span className="text-xs font-medium text-[var(--color-text-muted)] bg-[var(--color-elevated)] px-2 py-0.5 rounded-full">
+              {properties.length} {properties.length === 1 ? 'property' : 'properties'}
+            </span>
+          )}
+        </div>
 
         {propertiesLoading && (
           <div className="flex flex-col gap-2">
@@ -376,28 +394,38 @@ export function Home() {
         )}
 
         {properties && properties.length === 0 && (
-          <p className="text-sm text-[var(--color-text-muted)] text-center py-8">
-            No properties yet. Create one to get started.
-          </p>
+          <div className="flex flex-col items-center py-10 gap-3 animate-fade-up">
+            <div className="w-14 h-14 rounded-full bg-[var(--color-primary-bg)] flex items-center justify-center">
+              <HomeIcon className="w-7 h-7 text-[var(--color-primary)]" />
+            </div>
+            <div className="text-center">
+              <p className="text-sm font-semibold text-[var(--color-text)]">No properties yet</p>
+              <p className="text-xs text-[var(--color-text-muted)] mt-0.5">Create a property to start organizing your inventory</p>
+            </div>
+            <Button size="sm" onClick={() => setCreateOpen(true)}>
+              <Plus className="w-4 h-4" />
+              Create Property
+            </Button>
+          </div>
         )}
 
         {properties && properties.length > 0 && (
           <div className="flex flex-col gap-2">
-            {properties.map((property) => (
-              <PropertyCard key={property.id} property={property} />
+            {properties.map((property, idx) => (
+              <PropertyCard key={property.id} property={property} index={idx} />
             ))}
           </div>
         )}
       </section>
 
       {/* Recent Activity */}
-      <section>
+      <section className="animate-fade-up" style={{ animationDelay: '150ms' }}>
         <div className="flex items-center justify-between mb-2">
           <h2 className="text-sm font-semibold text-[var(--color-text)]">Recent Activity</h2>
           <button
             type="button"
             onClick={() => navigate('/notifications')}
-            className="text-xs text-[var(--color-primary)] hover:underline"
+            className="text-xs text-[var(--color-primary)] hover:underline transition-colors duration-150"
           >
             View all
           </button>
@@ -412,16 +440,25 @@ export function Home() {
         )}
 
         {!activityLoading && (!recentActivity || recentActivity.length === 0) && (
-          <p className="text-sm text-[var(--color-text-muted)] text-center py-4">
-            No recent activity
-          </p>
+          <div className="flex flex-col items-center py-6 gap-2">
+            <Package className="w-8 h-8 text-[var(--color-text-muted)]" />
+            <p className="text-sm text-[var(--color-text-muted)] text-center">
+              No recent activity
+            </p>
+          </div>
         )}
 
         {!activityLoading && recentActivity && recentActivity.length > 0 && (
-          <div className="flex flex-col gap-1.5">
-            {recentActivity.slice(0, 10).map((entry) => (
-              <div key={entry.id} className="flex items-start gap-2 text-xs">
-                <span className="flex-shrink-0 mt-0.5 text-[var(--color-text-secondary)]">
+          <div className="relative flex flex-col gap-0">
+            {/* Timeline line */}
+            <div className="absolute left-[7px] top-2 bottom-2 w-px bg-[var(--color-border)]" />
+            {recentActivity.slice(0, 10).map((entry, idx) => (
+              <div
+                key={entry.id}
+                className="flex items-start gap-3 text-xs py-1.5 relative animate-fade-up"
+                style={{ animationDelay: `${idx * 30}ms` }}
+              >
+                <span className="flex-shrink-0 mt-0.5 text-[var(--color-text-secondary)] bg-[var(--color-bg)] relative z-10 w-[15px] flex items-center justify-center">
                   {activityIcon(entry.action)}
                 </span>
                 <span className="flex-1 text-[var(--color-text-secondary)] line-clamp-1">
