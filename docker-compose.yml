@@ -1,0 +1,82 @@
+services:
+  tally-db:
+    image: mysql:8.0
+    ports:
+      - "3306:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: TALLY
+    volumes:
+      - ./SQL/init/:/docker-entrypoint-initdb.d/
+      - tally-db-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p$$MYSQL_ROOT_PASSWORD"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - tally-network
+
+  tally-server:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    ports:
+      - "2727:2727"
+    depends_on:
+      tally-db:
+        condition: service_healthy
+    env_file:
+      - .env
+    volumes:
+      - ./server:/usr/src/app
+      - server_node_modules:/usr/src/app/node_modules
+    networks:
+      - tally-network
+
+  tally-client:
+    build:
+      context: ./client
+      dockerfile: Dockerfile
+    ports:
+      - "8080:80"
+    depends_on:
+      - tally-server
+    networks:
+      - tally-network
+
+  tally-minio:
+    image: minio/minio
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY}
+    volumes:
+      - tally-minio-data:/data
+    networks:
+      - tally-network
+
+  tally-vault:
+    image: hashicorp/vault:1.17
+    ports:
+      - "8200:8200"
+    environment:
+      VAULT_DEV_ROOT_TOKEN_ID: tally-dev-token
+      VAULT_DEV_LISTEN_ADDRESS: 0.0.0.0:8200
+    cap_add:
+      - IPC_LOCK
+    networks:
+      - tally-network
+
+networks:
+  tally-network:
+    driver: bridge
+
+volumes:
+  tally-db-data:
+  tally-minio-data:
+  server_node_modules:

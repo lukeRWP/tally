@@ -1,0 +1,61 @@
+version: '3'
+
+dotenv: ['.env']
+
+tasks:
+  init:
+    desc: First-time setup
+    cmds:
+      - cp -n .env.template .env || true
+      - task: up
+
+  up:
+    desc: Build and start all services
+    cmds:
+      - docker compose up --build -d
+      - docker compose logs -f tally-server
+
+  dev:
+    desc: Start with live source mounts
+    cmds:
+      - docker compose up --build -d
+      - echo "Server running at http://localhost:2727"
+      - echo "Client running at http://localhost:8080"
+      - echo "MinIO console at http://localhost:9001"
+
+  down:
+    desc: Stop all services
+    cmds:
+      - docker compose down
+
+  restart:
+    desc: Restart services
+    cmds:
+      - docker compose restart
+
+  logs:server:
+    desc: Tail server logs
+    cmds:
+      - docker compose logs -f tally-server
+
+  logs:client:
+    desc: Tail client logs
+    cmds:
+      - docker compose logs -f tally-client
+
+  db:shell:
+    desc: Open MySQL shell
+    cmds:
+      - docker compose exec tally-db mysql -u root -p$MYSQL_ROOT_PASSWORD TALLY
+
+  db:reset:
+    desc: Reset database (destructive)
+    cmds:
+      - docker compose down -v
+      - docker compose up -d tally-db
+      - echo "Database reset. Run 'task up' to restart all services."
+
+  clean:
+    desc: Full cleanup
+    cmds:
+      - docker compose down -v --remove-orphans
