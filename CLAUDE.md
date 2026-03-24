@@ -117,6 +117,8 @@ Each feature lives in `server/src/modules/{feature}/` with three files:
 | accessories   | `/api/accessories`   | Link/unlink items as accessories                           |
 | audit         | `/api/audit`         | Change log, activity feed by property/entity/recent        |
 | notifications | `/api/notifications` | List, mark read, preferences, date-based checks            |
+| reports | `/api/reports` | Generate PDF/CSV reports (insurance, value, location, lending, activity, tags) |
+| sharing | `/api/sharing` | Time-limited share links, public read-only views |
 
 All modules are registered in `server/index.js` via:
 
@@ -136,6 +138,8 @@ require('./src/modules/dates/dates.routes')({ app, db, logger, config });
 require('./src/modules/accessories/accessories.routes')({ app, db, logger, config });
 require('./src/modules/audit/audit.routes')({ app, db, logger, config });
 require('./src/modules/notifications/notifications.routes')({ app, db, logger, config });
+require('./src/modules/reports/reports.routes')({ app, db, logger, config });
+require('./src/modules/sharing/sharing.routes')({ app, db, logger, config });
 ```
 
 ## Phase 2 Infrastructure & Integrations
@@ -365,3 +369,43 @@ This allows rapid relocation of many items without navigating away from the scan
 
 - Depreciation is calculated **client-side on demand** — no server storage of depreciation values.
 - Calculated from `purchase_price`, `purchase_date`, and a user-supplied depreciation rate/method.
+
+## Phase 5 Features
+
+### Reports
+
+- 6 report types available: **insurance** (insured items with declared values), **total value** (aggregate value by location/category), **items by location** (full inventory tree), **lending** (active and historical loans), **activity log** (audit trail export), and **tag** (items grouped by tag).
+- Reports can be exported as **PDF** (pdfkit, server-side rendered) or **CSV** (plain text, client can trigger download).
+- API: `POST /api/reports/_y_/generate` accepts `{ type, format, propertyId, filters }` and returns the file as a download response.
+- The `/reports` page lets users choose report type, output format, and optional filters before generating.
+
+### Share Links
+
+- Any item, container, area, or property can be shared via a **time-limited public link** — no authentication required for viewers.
+- `POST /api/sharing/_y_/create` generates a share token with a configurable expiry (default 7 days).
+- `GET /api/sharing/_x_/:token` resolves the token and returns a read-only view of the shared entity.
+- `DELETE /api/sharing/_d_/:token` revokes a share link immediately.
+- Share links are stored in the `share_links` table with `TOKEN`, `ENTITY_TYPE`, `ENTITY_ID`, `EXPIRES_AT`, and `CREATED_BY` columns.
+- The client renders shared content on a standalone `/share/:token` page — no nav, no auth, no sidebar.
+
+### Deployment
+
+- **Proxmox / Portainer Workloads app manifest** (`deploy/app.yml`) defines the full production stack: `tally-db`, `tally-minio`, `tally-server`, `tally-client`, `tally-nginx`.
+- Production is deployed on **VLAN 130** within the Proxmox homelab environment.
+- The manifest is production-only and is not used for local development (use `docker-compose.yml` + Taskfile for local work).
+
+### CI/CD (GitHub Actions)
+
+- **`ci.yml`** — runs on every pull request: installs dependencies, runs `tsc --noEmit`, and executes server-side unit tests. Blocks merge on failure.
+- **`build.yml`** — runs on push to `main`: builds the Docker images, pushes them to the container registry, then triggers the Portainer Workloads orchestrator to pull and redeploy the updated stack.
+- Both workflows use repository secrets for registry credentials and the PW API token.
+
+## Tally v1.0 — Complete Feature Set
+
+| Phase | Key Features |
+|-------|-------------|
+| **Phase 1** — Core Inventory | Properties, Areas, Containers (closure-table hierarchy), Items (CRUD + FULLTEXT search), React frontend with Radix UI + Tailwind v4, Microsoft Entra ID (OIDC) auth, MySQL + MinIO infrastructure, Docker Compose stack |
+| **Phase 2** — Files & Products | File upload/download (presigned MinIO URLs), Condition snapshots (photo + rating history), Product catalog with barcode lookup (Open Food Facts + UPC Database), camera barcode scanning (`html5-qrcode`) |
+| **Phase 3** — Labels & Tags | QR code generation (`TLY-{TYPE}-{HEX}` format), PDF Avery 5160 label sheets + ZPL thermal printing, QR deep-link resolution, Scan-Scan-Done move workflow, polymorphic tag system (property-scoped, works across items/containers/areas) |
+| **Phase 4** — Advanced Features | Lending (lend/return/overdue tracking), User-defined dates (warranty, service, etc.) with upcoming alerts, Accessories (item-to-item links), Audit trail (full change log), Notifications (opt-in, per-type preferences), Recycle bin (30-day soft delete), Client-side depreciation calculation |
+| **Phase 5** — Reports, Sharing & Deployment | 6 report types in PDF/CSV, Time-limited public share links (no-auth viewer page), PW app.yml deployment manifest (VLAN 130), GitHub Actions CI (`ci.yml`) + build+deploy (`build.yml`) pipeline |
