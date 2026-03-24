@@ -1,0 +1,228 @@
+const { generateCode } = require('../../utils/qr');
+
+let _db = null;
+let _logger = null;
+
+const ItemsService = {
+  // ── Initialization ─────────────────────────────────────────────────────────
+
+  init({ db, logger }) {
+    _db = db;
+    _logger = logger;
+  },
+
+  // ── Helpers ────────────────────────────────────────────────────────────────
+
+  _mapItem(row) {
+    return {
+      id: row.ID,
+      containerId: row.CONTAINER_ID,
+      productId: row.PRODUCT_ID || null,
+      name: row.NAME,
+      description: row.DESCRIPTION || null,
+      quantity: row.QUANTITY != null ? Number(row.QUANTITY) : 1,
+      qrCode: row.QR_CODE || null,
+      purchasePrice: row.PURCHASE_PRICE != null ? Number(row.PURCHASE_PRICE) : null,
+      condition: row.CONDITION || null,
+      status: row.STATUS || null,
+      depreciationEnabled: row.DEPRECIATION_ENABLED != null ? Boolean(row.DEPRECIATION_ENABLED) : false,
+      depreciationRate: row.DEPRECIATION_RATE != null ? Number(row.DEPRECIATION_RATE) : null,
+      createdAt: row.CREATED_AT,
+      updatedAt: row.UPDATED_AT,
+      deletedAt: row.DELETED_AT || null,
+      // Product fields (from LEFT JOIN)
+      productName: row.PRODUCT_NAME !== undefined ? (row.PRODUCT_NAME || null) : undefined,
+      productBrand: row.PRODUCT_BRAND !== undefined ? (row.PRODUCT_BRAND || null) : undefined,
+      productImageUrl: row.PRODUCT_IMAGE_URL !== undefined ? (row.PRODUCT_IMAGE_URL || null) : undefined,
+    };
+  },
+
+  // ── Queries ────────────────────────────────────────────────────────────────
+
+  async getByContainer(containerId) {
+    const rows = await _db.query(
+      `SELECT
+         i.*,
+         p.NAME AS PRODUCT_NAME,
+         p.BRAND AS PRODUCT_BRAND,
+         p.IMAGE_URL AS PRODUCT_IMAGE_URL
+       FROM TALLY.items i
+       LEFT JOIN TALLY.products p ON i.PRODUCT_ID = p.ID
+       WHERE i.CONTAINER_ID = ? AND i.DELETED_AT IS NULL`,
+      [containerId]
+    );
+    return rows.map(ItemsService._mapItem);
+  },
+
+  async getById(id) {
+    const rows = await _db.query(
+      `SELECT
+         i.*,
+         p.NAME AS PRODUCT_NAME,
+         p.BRAND AS PRODUCT_BRAND,
+         p.IMAGE_URL AS PRODUCT_IMAGE_URL,
+         p.DESCRIPTION AS PRODUCT_DESCRIPTION,
+         c.NAME AS CONTAINER_NAME,
+         a.ID AS AREA_ID,
+         a.NAME AS AREA_NAME,
+         a.PROPERTY_ID AS PROPERTY_ID,
+         pr.NAME AS PROPERTY_NAME
+       FROM TALLY.items i
+       LEFT JOIN TALLY.products p ON i.PRODUCT_ID = p.ID
+       JOIN TALLY.containers c ON i.CONTAINER_ID = c.ID
+       JOIN TALLY.areas a ON c.AREA_ID = a.ID
+       JOIN TALLY.properties pr ON a.PROPERTY_ID = pr.ID
+       WHERE i.ID = ?`,
+      [id]
+    );
+    if (!rows.length) return null;
+
+    const row = rows[0];
+    const item = ItemsService._mapItem(row);
+
+    // Enrich with full product data
+    if (row.PRODUCT_DESCRIPTION !== undefined) {
+      item.productDescription = row.PRODUCT_DESCRIPTION || null;
+    }
+
+    // Build breadcrumb: property → area → container
+    item.breadcrumb = [
+      { id: row.PROPERTY_ID, name: row.PROPERTY_NAME || null, type: 'property' },
+      { id: row.AREA_ID, name: row.AREA_NAME || null, type: 'area' },
+      { id: row.CONTAINER_ID, name: row.CONTAINER_NAME || null, type: 'container' },
+    ];
+
+    return item;
+  },
+
+  async create(data) {
+    let qrCode = generateCode('item');
+    try {
+      const result = await _db.query(
+        `INSERT INTO TALLY.items
+           (CONTAINER_ID, PRODUCT_ID, NAME, DESCRIPTION, QUANTITY, QR_CODE, PURCHASE_PRICE, \`CONDITION\`, STATUS)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active')`,
+        [
+          data.containerId,
+          data.productId || null,
+          data.name,
+          data.description || null,
+          data.quantity != null ? data.quantity : 1,
+          qrCode,
+          data.purchasePrice != null ? data.purchasePrice : null,
+          data.condition || 'good',
+        ]
+      );
+      return ItemsService.getById(result.insertId);
+    } catch (err) {
+      // Duplicate QR code — retry once with a new code
+      if (err.code === 'ER_DUP_ENTRY' && err.message.includes('qr_code')) {
+        qrCode = generateCode('item');
+        const result = await _db.query(
+          `INSERT INTO TALLY.items
+             (CONTAINER_ID, PRODUCT_ID, NAME, DESCRIPTION, QUANTITY, QR_CODE, PURCHASE_PRICE, \`CONDITION\`, STATUS)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active')`,
+          [
+            data.containerId,
+            data.productId || null,
+            data.name,
+            data.description || null,
+            data.quantity != null ? data.quantity : 1,
+            qrCode,
+            data.purchasePrice != null ? data.purchasePrice : null,
+            data.condition || 'good',
+          ]
+        );
+        return ItemsService.getById(result.insertId);
+      }
+      throw err;
+    }
+  },
+
+  async update(id, data) {
+    const fields = [];
+    const values = [];
+
+    if (data.name !== undefined) { fields.push('NAME = ?'); values.push(data.name); }
+    if (data.description !== undefined) { fields.push('DESCRIPTION = ?'); values.push(data.description); }
+    if (data.quantity !== undefined) { fields.push('QUANTITY = ?'); values.push(data.quantity); }
+    if (data.purchasePrice !== undefined) { fields.push('PURCHASE_PRICE = ?'); values.push(data.purchasePrice); }
+    if (data.condition !== undefined) { fields.push('`CONDITION` = ?'); values.push(data.condition); }
+    if (data.depreciationEnabled !== undefined) { fields.push('DEPRECIATION_ENABLED = ?'); values.push(data.depreciationEnabled ? 1 : 0); }
+    if (data.depreciationRate !== undefined) { fields.push('DEPRECIATION_RATE = ?'); values.push(data.depreciationRate); }
+
+    if (!fields.length) return ItemsService.getById(id);
+
+    values.push(id);
+    await _db.query(
+      `UPDATE TALLY.items SET ${fields.join(', ')} WHERE ID = ?`,
+      values
+    );
+
+    return ItemsService.getById(id);
+  },
+
+  async move(id, newContainerId) {
+    await _db.query(
+      'UPDATE TALLY.items SET CONTAINER_ID = ? WHERE ID = ?',
+      [newContainerId, id]
+    );
+    return ItemsService.getById(id);
+  },
+
+  async softDelete(id) {
+    await _db.query(
+      "UPDATE TALLY.items SET DELETED_AT = NOW(), STATUS = 'removed' WHERE ID = ?",
+      [id]
+    );
+  },
+
+  async restore(id) {
+    await _db.query(
+      "UPDATE TALLY.items SET DELETED_AT = NULL, STATUS = 'active' WHERE ID = ?",
+      [id]
+    );
+    return ItemsService.getById(id);
+  },
+
+  async search(query, userId) {
+    // Append * to each word for prefix matching in BOOLEAN MODE
+    const booleanQuery = query
+      .trim()
+      .split(/\s+/)
+      .filter(Boolean)
+      .map(word => `${word}*`)
+      .join(' ');
+
+    const rows = await _db.query(
+      `SELECT i.*, p.NAME AS PRODUCT_NAME, p.BRAND AS PRODUCT_BRAND
+       FROM TALLY.items i
+       LEFT JOIN TALLY.products p ON i.PRODUCT_ID = p.ID
+       JOIN TALLY.containers c ON i.CONTAINER_ID = c.ID
+       JOIN TALLY.areas a ON c.AREA_ID = a.ID
+       JOIN TALLY.property_members pm ON a.PROPERTY_ID = pm.PROPERTY_ID
+       WHERE pm.USER_ID = ?
+         AND i.DELETED_AT IS NULL
+         AND (MATCH(i.NAME, i.DESCRIPTION) AGAINST(? IN BOOLEAN MODE)
+              OR (p.ID IS NOT NULL AND MATCH(p.NAME, p.BRAND, p.DESCRIPTION) AGAINST(? IN BOOLEAN MODE)))
+       LIMIT 50`,
+      [userId, booleanQuery, booleanQuery]
+    );
+
+    return rows.map(ItemsService._mapItem);
+  },
+
+  async getPropertyIdForItem(itemId) {
+    const rows = await _db.query(
+      `SELECT a.PROPERTY_ID
+       FROM TALLY.areas a
+       JOIN TALLY.containers c ON c.AREA_ID = a.ID
+       JOIN TALLY.items i ON i.CONTAINER_ID = c.ID
+       WHERE i.ID = ?`,
+      [itemId]
+    );
+    return rows[0]?.PROPERTY_ID || null;
+  },
+};
+
+module.exports = ItemsService;
