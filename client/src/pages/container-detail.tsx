@@ -3,6 +3,7 @@ import { useParams } from 'react-router-dom';
 import { ScanLine, Printer, Share2, Plus, Package, Box } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Card } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Breadcrumbs } from '@/components/layout/breadcrumbs';
 import { ContainerCard } from '@/components/inventory/container-card';
@@ -16,6 +17,7 @@ import {
   useCreateItem,
 } from '@/hooks/use-inventory';
 import { toast } from '@/components/ui/toast';
+import { TagPicker } from '@/components/tags/tag-picker';
 
 export function ContainerDetail() {
   const { containerId } = useParams<{ containerId: string }>();
@@ -111,6 +113,19 @@ export function ContainerDetail() {
           Share
         </Button>
       </div>
+
+      {/* Tags */}
+      {(() => {
+        const propertyId = (container as unknown as { propertyId?: number }).propertyId
+          ?? container.breadcrumb?.find((b) => b.type === 'property')?.id
+          ?? 0;
+        return propertyId > 0 ? (
+          <Card>
+            <h2 className="text-sm font-semibold text-[var(--color-text)] mb-3">Tags</h2>
+            <TagPicker entityType="container" entityId={container.id} propertyId={propertyId} />
+          </Card>
+        ) : null;
+      })()}
 
       {/* Nested Containers */}
       <section>

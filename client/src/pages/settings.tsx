@@ -2,9 +2,15 @@ import { LogOut, Sun, Moon, Monitor } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { useAuthStore } from '@/store/auth-store';
+import { useProperties } from '@/hooks/use-inventory';
+import { TagManager } from '@/components/tags/tag-manager';
 
 export function SettingsPage() {
   const { user, theme, setTheme, logout } = useAuthStore();
+  const { data: propertiesData } = useProperties();
+  const properties = (propertiesData as unknown as { properties: { id: number; name: string }[] })?.properties
+    ?? (propertiesData as unknown as { id: number; name: string }[])
+    ?? [];
 
   return (
     <div className="flex flex-col gap-4">
@@ -69,6 +75,21 @@ export function SettingsPage() {
           </Button>
         </div>
       </Card>
+
+      {/* Tag Management */}
+      {properties.length > 0 && (
+        <Card>
+          <h2 className="text-sm font-semibold text-[var(--color-text)] mb-3">Tag Management</h2>
+          <div className="flex flex-col gap-6">
+            {properties.map((property) => (
+              <div key={property.id}>
+                <p className="text-xs font-medium text-[var(--color-text-secondary)] mb-2">{property.name}</p>
+                <TagManager propertyId={property.id} />
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
 
       {/* Logout */}
       <Button variant="destructive" onClick={logout} className="w-full">

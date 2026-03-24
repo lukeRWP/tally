@@ -11,6 +11,7 @@ import { FileList } from '@/components/files/file-list';
 import { FileUpload } from '@/components/files/file-upload';
 import { ConditionForm } from '@/components/condition/condition-form';
 import { ConditionTimeline } from '@/components/condition/condition-timeline';
+import { TagPicker } from '@/components/tags/tag-picker';
 
 const conditionVariant = {
   new: 'success',
@@ -33,6 +34,10 @@ export function ItemDetail() {
   const { data: item, isLoading } = useItem(id);
   // Reuse delete mutation pattern — actual item delete not yet available, placeholder
   const _deleteProperty = useDeleteProperty();
+
+  // Derive propertyId from breadcrumb returned by the item detail API
+  const propertyId = (item as unknown as { breadcrumb?: { id: number; type: string }[] })
+    ?.breadcrumb?.find((b) => b.type === 'property')?.id ?? 0;
 
   const [conditionFormOpen, setConditionFormOpen] = React.useState(false);
 
@@ -116,6 +121,14 @@ export function ItemDetail() {
           </div>
         </div>
       </Card>
+
+      {/* Tags */}
+      {propertyId > 0 && (
+        <Card>
+          <h2 className="text-sm font-semibold text-[var(--color-text)] mb-3">Tags</h2>
+          <TagPicker entityType="item" entityId={item.id} propertyId={propertyId} />
+        </Card>
+      )}
 
       {/* Phase 4 placeholders */}
       {['Dates', 'Accessories', 'Lending'].map((section) => (

@@ -2,12 +2,14 @@ import { useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Card } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Breadcrumbs } from '@/components/layout/breadcrumbs';
 import { ContainerCard } from '@/components/inventory/container-card';
 import { EntityForm } from '@/components/inventory/entity-form';
 import { useArea, useContainers, useCreateContainer } from '@/hooks/use-inventory';
 import { toast } from '@/components/ui/toast';
+import { TagPicker } from '@/components/tags/tag-picker';
 
 export function AreaDetail() {
   const { areaId } = useParams<{ areaId: string }>();
@@ -57,6 +59,14 @@ export function AreaDetail() {
           <p className="text-sm text-[var(--color-text-secondary)] mt-1">{area.description}</p>
         )}
       </div>
+
+      {/* Tags */}
+      {area.propertyId > 0 && (
+        <Card>
+          <h2 className="text-sm font-semibold text-[var(--color-text)] mb-3">Tags</h2>
+          <TagPicker entityType="area" entityId={area.id} propertyId={area.propertyId} />
+        </Card>
+      )}
 
       {/* Containers */}
       <div className="flex items-center justify-between">

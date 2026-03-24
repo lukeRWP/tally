@@ -54,4 +54,12 @@ export const queryKeys = {
     barcode: (barcode: string) => [...queryKeys.products.all, 'barcode', barcode] as const,
     search: (q: string) => [...queryKeys.products.all, 'search', q] as const,
   },
+  tags: {
+    all: ['tags'] as const,
+    byProperty: (propertyId: number) => [...queryKeys.tags.all, 'byProperty', propertyId] as const,
+    forEntity: (entityType: string, entityId: number) => [...queryKeys.tags.all, 'entity', entityType, entityId] as const,
+  },
+  labels: {
+    all: ['labels'] as const,
+  },
 };
