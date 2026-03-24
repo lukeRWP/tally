@@ -115,103 +115,107 @@ export function SettingsPage() {
     <div className="flex flex-col gap-4">
       <h1 className="text-lg font-bold text-[var(--color-text)] animate-fade-up">Settings</h1>
 
-      {/* Profile */}
-      <Card animationDelay="0ms">
-        <h2 className="text-sm font-semibold text-[var(--color-text)] mb-3">Profile</h2>
-        {user ? (
-          <div className="flex items-center gap-4">
-            {user.avatarUrl ? (
-              <img
-                src={user.avatarUrl}
-                alt={user.displayName}
-                className="w-14 h-14 rounded-full object-cover ring-2 ring-[var(--color-border)]"
-              />
+      {/* Desktop: 2-column layout / Mobile: single column */}
+      <div className="lg:grid lg:grid-cols-2 lg:gap-6">
+        {/* Left column */}
+        <div className="flex flex-col gap-4">
+          {/* Profile */}
+          <Card animationDelay="0ms">
+            <h2 className="text-sm font-semibold text-[var(--color-text)] mb-3">Profile</h2>
+            {user ? (
+              <div className="flex items-center gap-4">
+                {user.avatarUrl ? (
+                  <img
+                    src={user.avatarUrl}
+                    alt={user.displayName}
+                    className="w-14 h-14 rounded-full object-cover ring-2 ring-[var(--color-border)]"
+                  />
+                ) : (
+                  <div className="w-14 h-14 rounded-full bg-[var(--color-primary-bg)] flex items-center justify-center text-lg font-bold text-[var(--color-primary)]">
+                    {user.displayName.charAt(0).toUpperCase()}
+                  </div>
+                )}
+                <div>
+                  <p className="text-sm font-semibold text-[var(--color-text)]">{user.displayName}</p>
+                  <p className="text-xs text-[var(--color-text-muted)]">{user.email}</p>
+                </div>
+              </div>
             ) : (
-              <div className="w-14 h-14 rounded-full bg-[var(--color-primary-bg)] flex items-center justify-center text-lg font-bold text-[var(--color-primary)]">
-                {user.displayName.charAt(0).toUpperCase()}
-              </div>
+              <p className="text-sm text-[var(--color-text-muted)]">Not signed in</p>
             )}
-            <div>
-              <p className="text-sm font-semibold text-[var(--color-text)]">{user.displayName}</p>
-              <p className="text-xs text-[var(--color-text-muted)]">{user.email}</p>
+          </Card>
+
+          {/* Theme -- segmented control */}
+          <Card animationDelay="50ms">
+            <h2 className="text-sm font-semibold text-[var(--color-text)] mb-3">Appearance</h2>
+            <div className="flex gap-1 p-1 rounded-[var(--radius-md)] bg-[var(--color-elevated)]">
+              {themeOptions.map(({ key, icon: Icon, label }) => (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => setTheme(key)}
+                  className={cn(
+                    'flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-[var(--radius-sm)] text-sm font-medium transition-all duration-200 cursor-pointer',
+                    theme === key
+                      ? 'bg-[var(--color-card)] text-[var(--color-primary)] shadow-sm'
+                      : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]',
+                  )}
+                >
+                  <Icon className="w-4 h-4" />
+                  {label}
+                </button>
+              ))}
             </div>
-          </div>
-        ) : (
-          <p className="text-sm text-[var(--color-text-muted)]">Not signed in</p>
-        )}
-      </Card>
+          </Card>
 
-      {/* Theme -- segmented control */}
-      <Card animationDelay="50ms">
-        <h2 className="text-sm font-semibold text-[var(--color-text)] mb-3">Appearance</h2>
-        <div className="flex gap-1 p-1 rounded-[var(--radius-md)] bg-[var(--color-elevated)]">
-          {themeOptions.map(({ key, icon: Icon, label }) => (
+          {/* Recycle Bin */}
+          <Card animationDelay="350ms">
+            <h2 className="text-sm font-semibold text-[var(--color-text)] mb-3">Data</h2>
             <button
-              key={key}
               type="button"
-              onClick={() => setTheme(key)}
-              className={cn(
-                'flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-[var(--radius-sm)] text-sm font-medium transition-all duration-200 cursor-pointer',
-                theme === key
-                  ? 'bg-[var(--color-card)] text-[var(--color-primary)] shadow-sm'
-                  : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]',
-              )}
+              onClick={() => navigate('/recycle-bin')}
+              className="flex items-center gap-2 text-sm text-[var(--color-text)] hover:text-[var(--color-primary)] transition-all duration-200 py-1"
             >
-              <Icon className="w-4 h-4" />
-              {label}
+              <Trash2 className="w-4 h-4" />
+              Recycle Bin
             </button>
-          ))}
+          </Card>
         </div>
-      </Card>
 
-      {/* Divider */}
-      <div className="border-t border-[var(--color-border)]/50" />
-
-      {/* Tag Management */}
-      {properties.length > 0 && (
-        <Card animationDelay="100ms">
-          <h2 className="text-sm font-semibold text-[var(--color-text)] mb-3 flex items-center gap-2">
-            <Tags className="w-4 h-4 text-[var(--color-primary)]" />
-            Tag Management
-          </h2>
-          <div className="flex flex-col gap-6">
-            {properties.map((property) => (
-              <div key={property.id}>
-                <p className="text-xs font-semibold text-[var(--color-text-secondary)] mb-2 uppercase tracking-wide">{property.name}</p>
-                <TagManager propertyId={property.id} />
+        {/* Right column */}
+        <div className="flex flex-col gap-4 mt-4 lg:mt-0">
+          {/* Tag Management */}
+          {properties.length > 0 && (
+            <Card animationDelay="100ms">
+              <h2 className="text-sm font-semibold text-[var(--color-text)] mb-3 flex items-center gap-2">
+                <Tags className="w-4 h-4 text-[var(--color-primary)]" />
+                Tag Management
+              </h2>
+              <div className="flex flex-col gap-6">
+                {properties.map((property) => (
+                  <div key={property.id}>
+                    <p className="text-xs font-semibold text-[var(--color-text-secondary)] mb-2 uppercase tracking-wide">{property.name}</p>
+                    <TagManager propertyId={property.id} />
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
-        </Card>
-      )}
+            </Card>
+          )}
 
-      {/* Notifications */}
-      <Card animationDelay="200ms">
-        <h2 className="text-sm font-semibold text-[var(--color-text)] mb-3">Notifications</h2>
-        <NotificationPrefs />
-      </Card>
+          {/* Notifications */}
+          <Card animationDelay="200ms">
+            <h2 className="text-sm font-semibold text-[var(--color-text)] mb-3">Notifications</h2>
+            <NotificationPrefs />
+          </Card>
 
-      {/* Share Links */}
-      <ShareLinksSection />
+          {/* Share Links */}
+          <ShareLinksSection />
+        </div>
+      </div>
 
-      {/* Divider */}
+      {/* Logout -- full width below */}
       <div className="border-t border-[var(--color-border)]/50" />
-
-      {/* Recycle Bin */}
-      <Card animationDelay="350ms">
-        <h2 className="text-sm font-semibold text-[var(--color-text)] mb-3">Data</h2>
-        <button
-          type="button"
-          onClick={() => navigate('/recycle-bin')}
-          className="flex items-center gap-2 text-sm text-[var(--color-text)] hover:text-[var(--color-primary)] transition-all duration-200 py-1"
-        >
-          <Trash2 className="w-4 h-4" />
-          Recycle Bin
-        </button>
-      </Card>
-
-      {/* Logout */}
-      <Button variant="destructive" onClick={logout} className="w-full animate-fade-up" style={{ animationDelay: '400ms' }}>
+      <Button variant="destructive" onClick={logout} className="w-full lg:max-w-xs animate-fade-up" style={{ animationDelay: '400ms' }}>
         <LogOut className="w-4 h-4" />
         Sign Out
       </Button>

@@ -100,7 +100,7 @@ export function AreaDetail() {
       )}
 
       {containers && containers.length > 0 && (
-        <div className="flex flex-col gap-2">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           {containers.map((container) => (
             <ContainerCard key={container.id} container={container} />
           ))}

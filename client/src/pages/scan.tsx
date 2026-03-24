@@ -323,7 +323,7 @@ export function Scan() {
   })();
 
   return (
-    <div className="flex flex-col gap-4 px-4 py-4 max-w-lg mx-auto">
+    <div className="flex flex-col gap-4 px-4 py-4 max-w-lg mx-auto lg:max-w-md">
       {/* Header */}
       <div className="flex items-center gap-3 animate-fade-up">
         <div className="flex items-center justify-center w-11 h-11 rounded-full bg-[var(--color-primary-bg)]">

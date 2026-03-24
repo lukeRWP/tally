@@ -341,7 +341,7 @@ export function Home() {
           <h2 className="text-sm font-semibold text-[var(--color-text)] mb-2">
             Items ({searchResults.length})
           </h2>
-          <div className="flex flex-col gap-2">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             {searchResults.map((item) => (
               <ItemCard key={item.id} item={item} />
             ))}
@@ -359,7 +359,7 @@ export function Home() {
       )}
 
       {/* Quick Actions */}
-      <div className="flex gap-2 animate-fade-up" style={{ animationDelay: '50ms' }}>
+      <div className="flex gap-2 md:grid md:grid-cols-4 animate-fade-up" style={{ animationDelay: '50ms' }}>
         <Button variant="outline" size="sm" onClick={() => navigate('/scan')} className="flex-1 gap-2">
           <ScanLine className="w-4 h-4" />
           <div className="text-left">
@@ -410,7 +410,7 @@ export function Home() {
         )}
 
         {properties && properties.length > 0 && (
-          <div className="flex flex-col gap-2">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             {properties.map((property, idx) => (
               <PropertyCard key={property.id} property={property} index={idx} />
             ))}

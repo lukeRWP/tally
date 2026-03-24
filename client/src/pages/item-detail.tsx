@@ -115,7 +115,7 @@ export function ItemDetail() {
       : null;
 
   return (
-    <div className="flex flex-col gap-4 pb-24">
+    <div className="flex flex-col gap-4 pb-24 lg:pb-8">
       {/* Header */}
       <div className="animate-fade-up">
         <h1 className="text-lg font-bold text-[var(--color-text)]">{item.name}</h1>
@@ -132,155 +132,164 @@ export function ItemDetail() {
         )}
       </div>
 
-      {/* Product Info */}
-      {item.product && (
-        <Card animationDelay="50ms">
-          <h2 className="text-sm font-semibold text-[var(--color-text)] mb-2">Product Info</h2>
-          {item.product.imageUrl && (
-            <img
-              src={item.product.imageUrl}
-              alt={item.product.name}
-              className="w-full h-32 object-contain rounded-[var(--radius-md)] mb-2 bg-[var(--color-elevated)]"
-            />
+      {/* Desktop: 2-column layout / Mobile: single column */}
+      <div className="lg:grid lg:grid-cols-3 lg:gap-6">
+        {/* Left column (main info) */}
+        <div className="lg:col-span-2 flex flex-col gap-4">
+          {/* Product Info */}
+          {item.product && (
+            <Card animationDelay="50ms">
+              <h2 className="text-sm font-semibold text-[var(--color-text)] mb-2">Product Info</h2>
+              {item.product.imageUrl && (
+                <img
+                  src={item.product.imageUrl}
+                  alt={item.product.name}
+                  className="w-full h-32 object-contain rounded-[var(--radius-md)] mb-2 bg-[var(--color-elevated)]"
+                />
+              )}
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                <div>
+                  <span className="text-[var(--color-text-muted)]">Brand</span>
+                  <p className="text-[var(--color-text)] font-medium">{item.product.brand}</p>
+                </div>
+                <div>
+                  <span className="text-[var(--color-text-muted)]">Category</span>
+                  <p className="text-[var(--color-text)] font-medium">{item.product.category}</p>
+                </div>
+                {item.product.retailPrice != null && (
+                  <div>
+                    <span className="text-[var(--color-text-muted)]">Retail Price</span>
+                    <p className="text-[var(--color-text)] font-medium">${item.product.retailPrice.toFixed(2)}</p>
+                  </div>
+                )}
+              </div>
+            </Card>
           )}
-          <div className="grid grid-cols-2 gap-2 text-xs">
-            <div>
-              <span className="text-[var(--color-text-muted)]">Brand</span>
-              <p className="text-[var(--color-text)] font-medium">{item.product.brand}</p>
+
+          {/* Dates */}
+          <Card animationDelay="200ms">
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-sm font-semibold text-[var(--color-text)]">Dates</h2>
+              <Button size="sm" variant="outline" onClick={() => setDateFormOpen(true)}>
+                <CalendarPlus className="w-3.5 h-3.5" />
+                Add Date
+              </Button>
             </div>
-            <div>
-              <span className="text-[var(--color-text-muted)]">Category</span>
-              <p className="text-[var(--color-text)] font-medium">{item.product.category}</p>
+            <DateList itemId={id} />
+            <DateForm
+              itemId={id}
+              isOpen={dateFormOpen}
+              onOpenChange={setDateFormOpen}
+            />
+          </Card>
+
+          {/* Accessories */}
+          <Card animationDelay="250ms">
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-sm font-semibold text-[var(--color-text)]">Accessories</h2>
+              <Button size="sm" variant="outline" onClick={() => setAccessoryPickerOpen(true)}>
+                <Link className="w-3.5 h-3.5" />
+                Link
+              </Button>
             </div>
-            {item.product.retailPrice != null && (
+            <AccessoryList itemId={id} />
+            <AccessoryPicker
+              itemId={id}
+              isOpen={accessoryPickerOpen}
+              onOpenChange={setAccessoryPickerOpen}
+            />
+          </Card>
+
+          {/* Lending */}
+          <Card animationDelay="300ms">
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-sm font-semibold text-[var(--color-text)]">Lending</h2>
+              {item.status === 'active' && (
+                <Button size="sm" variant="outline" onClick={() => setLendFormOpen(true)}>
+                  <HandCoins className="w-3.5 h-3.5" />
+                  Lend
+                </Button>
+              )}
+            </div>
+            <LendingList itemId={id} itemName={item.name} />
+            <LendForm
+              itemId={id}
+              isOpen={lendFormOpen}
+              onOpenChange={setLendFormOpen}
+            />
+          </Card>
+        </div>
+
+        {/* Right column (sidebar) */}
+        <div className="lg:col-span-1 flex flex-col gap-4 mt-4 lg:mt-0">
+          {/* Value */}
+          <Card animationDelay="100ms">
+            <h2 className="text-sm font-semibold text-[var(--color-text)] mb-3">Value</h2>
+            <div className="grid grid-cols-2 lg:grid-cols-1 gap-4">
               <div>
-                <span className="text-[var(--color-text-muted)]">Retail Price</span>
-                <p className="text-[var(--color-text)] font-medium">${item.product.retailPrice.toFixed(2)}</p>
+                <span className="text-xs text-[var(--color-text-muted)]">Purchase Price</span>
+                <p className="text-xl font-bold text-[var(--color-text)] mt-0.5">
+                  {item.purchasePrice != null ? `$${item.purchasePrice.toFixed(2)}` : '--'}
+                </p>
+              </div>
+              <div>
+                <span className="text-xs text-[var(--color-text-muted)]">Current Value</span>
+                <p className="text-xl font-bold text-[var(--color-primary)] mt-0.5">
+                  {item.currentValue != null ? `$${item.currentValue.toFixed(2)}` : '--'}
+                </p>
+              </div>
+            </div>
+            {depreciation && (
+              <div className="mt-3 pt-3 border-t border-[var(--color-border)]">
+                <p className="text-xs text-[var(--color-text-secondary)]">
+                  Est. Value: <span className="font-semibold text-[var(--color-text)]">${depreciation.currentValue.toFixed(2)}</span>
+                  {' '}
+                  <span className="text-[var(--color-text-muted)]">
+                    ({depreciation.ratePercent}% annual, since {depreciation.sinceYear})
+                  </span>
+                </p>
               </div>
             )}
-          </div>
-        </Card>
-      )}
+          </Card>
 
-      {/* Value */}
-      <Card animationDelay="100ms">
-        <h2 className="text-sm font-semibold text-[var(--color-text)] mb-3">Value</h2>
-        <div className="grid grid-cols-2 gap-4">
-          <div>
-            <span className="text-xs text-[var(--color-text-muted)]">Purchase Price</span>
-            <p className="text-xl font-bold text-[var(--color-text)] mt-0.5">
-              {item.purchasePrice != null ? `$${item.purchasePrice.toFixed(2)}` : '--'}
-            </p>
-          </div>
-          <div>
-            <span className="text-xs text-[var(--color-text-muted)]">Current Value</span>
-            <p className="text-xl font-bold text-[var(--color-primary)] mt-0.5">
-              {item.currentValue != null ? `$${item.currentValue.toFixed(2)}` : '--'}
-            </p>
-          </div>
-        </div>
-        {depreciation && (
-          <div className="mt-3 pt-3 border-t border-[var(--color-border)]">
-            <p className="text-xs text-[var(--color-text-secondary)]">
-              Est. Value: <span className="font-semibold text-[var(--color-text)]">${depreciation.currentValue.toFixed(2)}</span>
-              {' '}
-              <span className="text-[var(--color-text-muted)]">
-                ({depreciation.ratePercent}% annual, since {depreciation.sinceYear})
-              </span>
-            </p>
-          </div>
-        )}
-      </Card>
-
-      {/* Tags -- inline feel */}
-      {propertyId > 0 && (
-        <div className="animate-fade-up" style={{ animationDelay: '150ms' }}>
-          <h2 className="text-sm font-semibold text-[var(--color-text)] mb-2">Tags</h2>
-          <TagPicker entityType="item" entityId={item.id} propertyId={propertyId} />
-        </div>
-      )}
-
-      {/* Dates */}
-      <Card animationDelay="200ms">
-        <div className="flex items-center justify-between mb-3">
-          <h2 className="text-sm font-semibold text-[var(--color-text)]">Dates</h2>
-          <Button size="sm" variant="outline" onClick={() => setDateFormOpen(true)}>
-            <CalendarPlus className="w-3.5 h-3.5" />
-            Add Date
-          </Button>
-        </div>
-        <DateList itemId={id} />
-        <DateForm
-          itemId={id}
-          isOpen={dateFormOpen}
-          onOpenChange={setDateFormOpen}
-        />
-      </Card>
-
-      {/* Accessories */}
-      <Card animationDelay="250ms">
-        <div className="flex items-center justify-between mb-3">
-          <h2 className="text-sm font-semibold text-[var(--color-text)]">Accessories</h2>
-          <Button size="sm" variant="outline" onClick={() => setAccessoryPickerOpen(true)}>
-            <Link className="w-3.5 h-3.5" />
-            Link
-          </Button>
-        </div>
-        <AccessoryList itemId={id} />
-        <AccessoryPicker
-          itemId={id}
-          isOpen={accessoryPickerOpen}
-          onOpenChange={setAccessoryPickerOpen}
-        />
-      </Card>
-
-      {/* Lending */}
-      <Card animationDelay="300ms">
-        <div className="flex items-center justify-between mb-3">
-          <h2 className="text-sm font-semibold text-[var(--color-text)]">Lending</h2>
-          {item.status === 'active' && (
-            <Button size="sm" variant="outline" onClick={() => setLendFormOpen(true)}>
-              <HandCoins className="w-3.5 h-3.5" />
-              Lend
-            </Button>
+          {/* Tags */}
+          {propertyId > 0 && (
+            <div className="animate-fade-up" style={{ animationDelay: '150ms' }}>
+              <h2 className="text-sm font-semibold text-[var(--color-text)] mb-2">Tags</h2>
+              <TagPicker entityType="item" entityId={item.id} propertyId={propertyId} />
+            </div>
           )}
-        </div>
-        <LendingList itemId={id} itemName={item.name} />
-        <LendForm
-          itemId={id}
-          isOpen={lendFormOpen}
-          onOpenChange={setLendFormOpen}
-        />
-      </Card>
 
-      {/* Files */}
-      <Card animationDelay="350ms">
-        <h2 className="text-sm font-semibold text-[var(--color-text)] mb-3">Files</h2>
-        <FileList itemId={id} />
-        <FileUpload itemId={id} />
-      </Card>
+          {/* Files */}
+          <Card animationDelay="350ms">
+            <h2 className="text-sm font-semibold text-[var(--color-text)] mb-3">Files</h2>
+            <FileList itemId={id} />
+            <FileUpload itemId={id} />
+          </Card>
 
-      {/* Condition History */}
-      <Card animationDelay="400ms">
-        <div className="flex items-center justify-between mb-3">
-          <h2 className="text-sm font-semibold text-[var(--color-text)]">Condition History</h2>
-          <Button size="sm" variant="outline" onClick={() => setConditionFormOpen(true)}>
-            <Plus className="w-3.5 h-3.5" />
-            Record
-          </Button>
+          {/* Condition History */}
+          <Card animationDelay="400ms">
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-sm font-semibold text-[var(--color-text)]">Condition History</h2>
+              <Button size="sm" variant="outline" onClick={() => setConditionFormOpen(true)}>
+                <Plus className="w-3.5 h-3.5" />
+                Record
+              </Button>
+            </div>
+            <ConditionTimeline itemId={id} />
+            <ConditionForm
+              itemId={id}
+              isOpen={conditionFormOpen}
+              onOpenChange={setConditionFormOpen}
+              onComplete={() => {}}
+            />
+          </Card>
         </div>
-        <ConditionTimeline itemId={id} />
-        <ConditionForm
-          itemId={id}
-          isOpen={conditionFormOpen}
-          onOpenChange={setConditionFormOpen}
-          onComplete={() => {}}
-        />
-      </Card>
+      </div>
 
       {/* Floating Action Bar */}
-      <div className="fixed bottom-20 left-0 right-0 z-40 px-4">
-        <div className="max-w-lg mx-auto backdrop-blur-xl bg-[var(--color-card)]/90 border border-[var(--color-border)]/50 rounded-[var(--radius-lg)] shadow-[0_4px_16px_rgba(0,0,0,0.1)] p-2 flex gap-1.5 animate-slide-up">
+      <div className="fixed bottom-20 lg:bottom-4 left-0 right-0 z-40 px-4 lg:ml-56">
+        <div className="max-w-lg lg:max-w-[800px] mx-auto backdrop-blur-xl bg-[var(--color-card)]/90 border border-[var(--color-border)]/50 rounded-[var(--radius-lg)] shadow-[0_4px_16px_rgba(0,0,0,0.1)] p-2 flex gap-1.5 animate-slide-up">
           <Button variant="ghost" size="sm" className="flex-1 text-xs" onClick={() => toast('Edit coming soon')}>
             <Pencil className="w-3.5 h-3.5" />
             Edit

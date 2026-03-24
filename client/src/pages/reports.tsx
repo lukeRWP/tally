@@ -292,7 +292,7 @@ export function Reports() {
       </div>
 
       {/* Report type grid */}
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
         {REPORT_TYPES.map((report, idx) => {
           const Icon = report.icon;
           const isExpanded = expandedReport === report.id;
@@ -302,7 +302,7 @@ export function Reports() {
               key={report.id}
               className={cn(
                 'col-span-1 animate-fade-up',
-                isExpanded && 'col-span-2',
+                isExpanded && 'col-span-2 lg:col-span-3',
               )}
               style={{ animationDelay: `${(idx + 2) * 50}ms` }}
             >

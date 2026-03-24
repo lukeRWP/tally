@@ -153,7 +153,7 @@ export function ContainerDetail() {
         )}
 
         {children && children.length > 0 && (
-          <div className="flex flex-col gap-2">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             {children.map((child) => (
               <ContainerCard key={child.id} container={child} />
             ))}
@@ -186,7 +186,7 @@ export function ContainerDetail() {
         )}
 
         {items && items.length > 0 && (
-          <div className="flex flex-col gap-2">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             {items.map((item) => (
               <ItemCard key={item.id} item={item} />
             ))}
@@ -195,7 +195,7 @@ export function ContainerDetail() {
       </section>
 
       {/* FAB */}
-      <div className="fixed bottom-24 right-4 flex flex-col items-end gap-2 z-40">
+      <div className="fixed bottom-24 lg:bottom-8 right-4 lg:right-8 flex flex-col items-end gap-2 z-40">
         {fabOpen && (
           <>
             <Button
