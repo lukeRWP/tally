@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, ScanLine, Plus, ChevronDown, Filter } from 'lucide-react';
+import { Search, ScanLine, Plus, ChevronDown, Filter, Pencil, ArrowRight, Trash2, RotateCcw } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -10,6 +10,7 @@ import { EntityForm } from '@/components/inventory/entity-form';
 import { TagBadge } from '@/components/tags/tag-badge';
 import { useProperties, useCreateProperty, useSearchItems, type SearchFilters } from '@/hooks/use-inventory';
 import { usePropertyTags, type Tag } from '@/hooks/use-tags';
+import { useRecentActivity, type AuditEntry } from '@/hooks/use-notifications';
 import { toast } from '@/components/ui/toast';
 import { cn } from '@/lib/utils';
 
@@ -86,6 +87,40 @@ const STATUSES: Array<{ label: string; value: string }> = [
   { label: 'Lent', value: 'lent' },
 ];
 
+// ── Activity feed helpers ──────────────────────────────────────────────────
+
+function activityIcon(action: string) {
+  switch (action) {
+    case 'created':
+      return <Plus className="w-3.5 h-3.5" />;
+    case 'updated':
+      return <Pencil className="w-3.5 h-3.5" />;
+    case 'moved':
+      return <ArrowRight className="w-3.5 h-3.5" />;
+    case 'deleted':
+      return <Trash2 className="w-3.5 h-3.5" />;
+    case 'restored':
+      return <RotateCcw className="w-3.5 h-3.5" />;
+    default:
+      return <Pencil className="w-3.5 h-3.5" />;
+  }
+}
+
+function activityRelativeTime(dateStr: string): string {
+  const now = Date.now();
+  const then = new Date(dateStr).getTime();
+  const diff = Math.floor((now - then) / 1000);
+  if (diff < 60) return 'just now';
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+  return `${Math.floor(diff / 86400)}d ago`;
+}
+
+function activityLabel(entry: AuditEntry): string {
+  const name = typeof entry.changes?.name === 'string' ? entry.changes.name : entry.entityType;
+  return `${entry.displayName} ${entry.action} ${entry.entityType} ${name}`;
+}
+
 // ── Home page ──────────────────────────────────────────────────────────────
 
 export function Home() {
@@ -109,6 +144,7 @@ export function Home() {
   const { data: properties, isLoading: propertiesLoading } = useProperties();
   const createProperty = useCreateProperty();
   const allTags = useAllPropertyTags(properties);
+  const { data: recentActivity, isLoading: activityLoading } = useRecentActivity();
 
   // Build filters for search
   const filters: SearchFilters = {
@@ -349,6 +385,52 @@ export function Home() {
           <div className="flex flex-col gap-2">
             {properties.map((property) => (
               <PropertyCard key={property.id} property={property} />
+            ))}
+          </div>
+        )}
+      </section>
+
+      {/* Recent Activity */}
+      <section>
+        <div className="flex items-center justify-between mb-2">
+          <h2 className="text-sm font-semibold text-[var(--color-text)]">Recent Activity</h2>
+          <button
+            type="button"
+            onClick={() => navigate('/notifications')}
+            className="text-xs text-[var(--color-primary)] hover:underline"
+          >
+            View all
+          </button>
+        </div>
+
+        {activityLoading && (
+          <div className="flex flex-col gap-2">
+            {[1, 2, 3].map((i) => (
+              <Skeleton key={i} className="h-10 w-full" />
+            ))}
+          </div>
+        )}
+
+        {!activityLoading && (!recentActivity || recentActivity.length === 0) && (
+          <p className="text-sm text-[var(--color-text-muted)] text-center py-4">
+            No recent activity
+          </p>
+        )}
+
+        {!activityLoading && recentActivity && recentActivity.length > 0 && (
+          <div className="flex flex-col gap-1.5">
+            {recentActivity.slice(0, 10).map((entry) => (
+              <div key={entry.id} className="flex items-start gap-2 text-xs">
+                <span className="flex-shrink-0 mt-0.5 text-[var(--color-text-secondary)]">
+                  {activityIcon(entry.action)}
+                </span>
+                <span className="flex-1 text-[var(--color-text-secondary)] line-clamp-1">
+                  {activityLabel(entry)}
+                </span>
+                <span className="flex-shrink-0 text-[var(--color-text-muted)]">
+                  {activityRelativeTime(entry.createdAt)}
+                </span>
+              </div>
             ))}
           </div>
         )}

@@ -14,6 +14,8 @@ import { ItemDetail } from '@/pages/item-detail';
 import { Scan } from '@/pages/scan';
 import { Reports } from '@/pages/reports';
 import { SettingsPage } from '@/pages/settings';
+import { NotificationListPage } from '@/pages/notifications';
+import { RecycleBin } from '@/pages/recycle-bin';
 
 export function App() {
   return (
@@ -31,6 +33,8 @@ export function App() {
         <Route path="/scan" element={<Scan />} />
         <Route path="/reports" element={<Reports />} />
         <Route path="/settings" element={<SettingsPage />} />
+        <Route path="/notifications" element={<NotificationListPage />} />
+        <Route path="/recycle-bin" element={<RecycleBin />} />
       </Route>
       <Route path="*" element={<Navigate to="/" />} />
     </Routes>

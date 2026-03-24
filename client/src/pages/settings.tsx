@@ -1,11 +1,14 @@
-import { LogOut, Sun, Moon, Monitor } from 'lucide-react';
+import { LogOut, Sun, Moon, Monitor, Trash2 } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { useAuthStore } from '@/store/auth-store';
 import { useProperties } from '@/hooks/use-inventory';
 import { TagManager } from '@/components/tags/tag-manager';
+import { NotificationPrefs } from '@/components/notifications/notification-prefs';
 
 export function SettingsPage() {
+  const navigate = useNavigate();
   const { user, theme, setTheme, logout } = useAuthStore();
   const { data: propertiesData } = useProperties();
   const properties = (propertiesData as unknown as { properties: { id: number; name: string }[] })?.properties
@@ -90,6 +93,25 @@ export function SettingsPage() {
           </div>
         </Card>
       )}
+
+      {/* Notifications */}
+      <Card>
+        <h2 className="text-sm font-semibold text-[var(--color-text)] mb-3">Notifications</h2>
+        <NotificationPrefs />
+      </Card>
+
+      {/* Recycle Bin */}
+      <Card>
+        <h2 className="text-sm font-semibold text-[var(--color-text)] mb-3">Data</h2>
+        <button
+          type="button"
+          onClick={() => navigate('/recycle-bin')}
+          className="flex items-center gap-2 text-sm text-[var(--color-text)] hover:text-[var(--color-primary)] transition-colors"
+        >
+          <Trash2 className="w-4 h-4" />
+          Recycle Bin
+        </button>
+      </Card>
 
       {/* Logout */}
       <Button variant="destructive" onClick={logout} className="w-full">

@@ -62,6 +62,17 @@ export const queryKeys = {
   labels: {
     all: ['labels'] as const,
   },
+  notifications: {
+    all: ['notifications'] as const,
+    list: () => [...queryKeys.notifications.all, 'list'] as const,
+    unreadCount: () => [...queryKeys.notifications.all, 'unreadCount'] as const,
+    preferences: () => [...queryKeys.notifications.all, 'preferences'] as const,
+  },
+  audit: {
+    all: ['audit'] as const,
+    byProperty: (propertyId: number) => [...queryKeys.audit.all, 'byProperty', propertyId] as const,
+    recent: () => [...queryKeys.audit.all, 'recent'] as const,
+  },
   lending: {
     all: ['lending'] as const,
     byItem: (itemId: number) => [...queryKeys.lending.all, 'byItem', itemId] as const,
