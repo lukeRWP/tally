@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, ScanLine, Plus, ChevronDown, Filter, Pencil, ArrowRight, Trash2, RotateCcw, Home as HomeIcon, Package } from 'lucide-react';
+import { Search, ScanLine, Plus, ChevronDown, Filter, Pencil, ArrowRight, Trash2, RotateCcw, Home as HomeIcon, Package, CircleDot } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -11,6 +11,7 @@ import { TagBadge } from '@/components/tags/tag-badge';
 import { useProperties, useCreateProperty, useSearchItems, type SearchFilters } from '@/hooks/use-inventory';
 import { usePropertyTags, type Tag } from '@/hooks/use-tags';
 import { useRecentActivity, type AuditEntry } from '@/hooks/use-notifications';
+import { useAuthStore } from '@/store/auth-store';
 import { toast } from '@/components/ui/toast';
 import { cn } from '@/lib/utils';
 
@@ -87,7 +88,33 @@ const STATUSES: Array<{ label: string; value: string }> = [
   { label: 'Lent', value: 'lent' },
 ];
 
+// -- Greeting helper ---------------------------------------------------------
+
+function getGreeting(): string {
+  const hour = new Date().getHours();
+  if (hour < 12) return 'Good morning';
+  if (hour < 17) return 'Good afternoon';
+  return 'Good evening';
+}
+
 // -- Activity feed helpers ---------------------------------------------------
+
+function activityDotColor(action: string): string {
+  switch (action) {
+    case 'created':
+      return 'bg-[var(--color-green)]';
+    case 'updated':
+      return 'bg-[var(--color-primary)]';
+    case 'moved':
+      return 'bg-[var(--color-amber)]';
+    case 'deleted':
+      return 'bg-[var(--color-red)]';
+    case 'restored':
+      return 'bg-[var(--color-purple)]';
+    default:
+      return 'bg-[var(--color-text-muted)]';
+  }
+}
 
 function activityIcon(action: string) {
   switch (action) {
@@ -116,15 +143,31 @@ function activityRelativeTime(dateStr: string): string {
   return `${Math.floor(diff / 86400)}d ago`;
 }
 
-function activityLabel(entry: AuditEntry): string {
+function activityDayLabel(dateStr: string): string {
+  const d = new Date(dateStr);
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const entry = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const diffDays = Math.floor((today.getTime() - entry.getTime()) / 86400000);
+  if (diffDays === 0) return 'Today';
+  if (diffDays === 1) return 'Yesterday';
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
+function activityLabel(entry: AuditEntry): React.ReactNode {
   const name = typeof entry.changes?.name === 'string' ? entry.changes.name : entry.entityType;
-  return `${entry.displayName} ${entry.action} ${entry.entityType} ${name}`;
+  return (
+    <span>
+      {entry.displayName} {entry.action} {entry.entityType} <span className="font-semibold text-[var(--color-text)]">{name}</span>
+    </span>
+  );
 }
 
 // -- Home page ---------------------------------------------------------------
 
 export function Home() {
   const navigate = useNavigate();
+  const { user } = useAuthStore();
   const [searchInput, setSearchInput] = React.useState('');
   const [searchQuery, setSearchQuery] = React.useState('');
   const [createOpen, setCreateOpen] = React.useState(false);
@@ -194,16 +237,67 @@ export function Home() {
   const hasActiveFilters =
     selectedTagIds.length > 0 || selectedCondition !== null || selectedStatus !== 'active';
 
+  // Compute stats from properties
+  const totalItems = properties?.reduce((sum, p) => sum + p.itemCount, 0) ?? 0;
+  const totalContainers = properties?.reduce((sum, p) => sum + p.containerCount, 0) ?? 0;
+  const totalAreas = properties?.reduce((sum, p) => sum + p.areaCount, 0) ?? 0;
+
+  // Find the most-populated property
+  const maxItemPropertyId = properties && properties.length > 0
+    ? properties.reduce((max, p) => (p.itemCount > max.itemCount ? p : max), properties[0]).id
+    : -1;
+
+  // Group activity by day
+  const activityEntries = recentActivity?.slice(0, 10) ?? [];
+  const activityByDay: Array<{ label: string; entries: typeof activityEntries }> = [];
+  let lastDayLabel = '';
+  for (const entry of activityEntries) {
+    const dayLabel = activityDayLabel(entry.createdAt);
+    if (dayLabel !== lastDayLabel) {
+      activityByDay.push({ label: dayLabel, entries: [] });
+      lastDayLabel = dayLabel;
+    }
+    activityByDay[activityByDay.length - 1].entries.push(entry);
+  }
+
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-5">
+      {/* Hero Greeting */}
+      <div className="animate-fade-up">
+        <h1 className="text-2xl font-extrabold text-[var(--color-text)] tracking-tight">
+          {getGreeting()}, {user?.displayName?.split(' ')[0] ?? 'there'}
+        </h1>
+        <p className="text-sm text-[var(--color-text-muted)] mt-0.5">
+          Here is your inventory at a glance.
+        </p>
+
+        {/* Stat chips */}
+        {properties && properties.length > 0 && (
+          <div className="flex gap-2 mt-3 overflow-x-auto pb-1 -mx-1 px-1">
+            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[var(--color-primary-bg)] text-[var(--color-primary)] text-xs font-semibold whitespace-nowrap shrink-0">
+              <Package className="w-3.5 h-3.5" />
+              {totalItems} items
+            </div>
+            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[var(--color-amber-bg)] text-[var(--color-amber)] text-xs font-semibold whitespace-nowrap shrink-0">
+              <CircleDot className="w-3.5 h-3.5" />
+              {totalContainers} containers
+            </div>
+            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[var(--color-purple-bg)] text-[var(--color-purple)] text-xs font-semibold whitespace-nowrap shrink-0">
+              <HomeIcon className="w-3.5 h-3.5" />
+              {totalAreas} areas
+            </div>
+          </div>
+        )}
+      </div>
+
       {/* Search */}
-      <div className="relative animate-fade-up">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--color-text-muted)]" />
+      <div className="relative animate-fade-up" style={{ animationDelay: '30ms' }}>
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4.5 h-4.5 text-[var(--color-text-muted)]" />
         <Input
           placeholder="Search items..."
           value={searchInput}
           onChange={(e) => setSearchInput(e.target.value)}
-          className="pl-9 pr-12 h-11 text-sm focus:shadow-[0_0_0_3px_var(--color-primary-bg)] transition-shadow duration-200"
+          className="pl-10 pr-12 h-12 text-base focus:shadow-[inset_0_0_0_2px_var(--color-primary)] transition-shadow duration-200"
         />
         <button
           type="button"
@@ -359,17 +453,28 @@ export function Home() {
       )}
 
       {/* Quick Actions */}
-      <div className="flex gap-2 md:grid md:grid-cols-4 animate-fade-up" style={{ animationDelay: '50ms' }}>
-        <Button variant="outline" size="sm" onClick={() => navigate('/scan')} className="flex-1 gap-2">
-          <ScanLine className="w-4 h-4" />
+      <div className="flex gap-3 animate-fade-up" style={{ animationDelay: '50ms' }}>
+        <Button
+          size="sm"
+          onClick={() => navigate('/scan')}
+          className="flex-1 gap-2 h-11 text-sm font-semibold"
+        >
+          <ScanLine className="w-4.5 h-4.5" />
           <div className="text-left">
-            <span className="block text-xs font-semibold">Scan</span>
+            <span className="block text-sm font-semibold leading-tight">Scan</span>
+            <span className="block text-[10px] font-normal opacity-70 leading-tight">Scan barcode</span>
           </div>
         </Button>
-        <Button variant="outline" size="sm" onClick={() => setCreateOpen(true)} className="flex-1 gap-2">
-          <Plus className="w-4 h-4" />
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => setCreateOpen(true)}
+          className="flex-1 gap-2 h-11 text-sm font-semibold"
+        >
+          <Plus className="w-4.5 h-4.5" />
           <div className="text-left">
-            <span className="block text-xs font-semibold">Add Property</span>
+            <span className="block text-sm font-semibold leading-tight">Add Property</span>
+            <span className="block text-[10px] font-normal text-[var(--color-text-muted)] leading-tight">New location</span>
           </div>
         </Button>
       </div>
@@ -412,7 +517,14 @@ export function Home() {
         {properties && properties.length > 0 && (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             {properties.map((property, idx) => (
-              <PropertyCard key={property.id} property={property} index={idx} />
+              <div
+                key={property.id}
+                className={cn(
+                  property.id === maxItemPropertyId && 'border-l-[3px] border-l-[var(--color-primary)] rounded-l-sm',
+                )}
+              >
+                <PropertyCard property={property} index={idx} />
+              </div>
             ))}
           </div>
         )}
@@ -449,24 +561,39 @@ export function Home() {
         )}
 
         {!activityLoading && recentActivity && recentActivity.length > 0 && (
-          <div className="relative flex flex-col gap-0">
-            {/* Timeline line */}
-            <div className="absolute left-[7px] top-2 bottom-2 w-px bg-[var(--color-border)]" />
-            {recentActivity.slice(0, 10).map((entry, idx) => (
-              <div
-                key={entry.id}
-                className="flex items-start gap-3 text-xs py-1.5 relative animate-fade-up"
-                style={{ animationDelay: `${idx * 30}ms` }}
-              >
-                <span className="flex-shrink-0 mt-0.5 text-[var(--color-text-secondary)] bg-[var(--color-bg)] relative z-10 w-[15px] flex items-center justify-center">
-                  {activityIcon(entry.action)}
-                </span>
-                <span className="flex-1 text-[var(--color-text-secondary)] line-clamp-1">
-                  {activityLabel(entry)}
-                </span>
-                <span className="flex-shrink-0 text-[var(--color-text-muted)]">
-                  {activityRelativeTime(entry.createdAt)}
-                </span>
+          <div className="flex flex-col gap-0">
+            {activityByDay.map((group, gIdx) => (
+              <div key={group.label}>
+                {/* Day divider */}
+                <div className={cn(
+                  'flex items-center gap-2 py-1.5',
+                  gIdx > 0 && 'mt-2',
+                )}>
+                  <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">
+                    {group.label}
+                  </span>
+                  <div className="flex-1 h-px bg-[var(--color-border)]" />
+                </div>
+
+                {group.entries.map((entry, idx) => (
+                  <div
+                    key={entry.id}
+                    className="flex items-start gap-3 text-xs py-1.5 animate-fade-up"
+                    style={{ animationDelay: `${idx * 30}ms` }}
+                  >
+                    {/* Colored dot */}
+                    <span className={cn(
+                      'flex-shrink-0 mt-1.5 w-2 h-2 rounded-full',
+                      activityDotColor(entry.action),
+                    )} />
+                    <span className="flex-1 text-[var(--color-text-secondary)] line-clamp-1">
+                      {activityLabel(entry)}
+                    </span>
+                    <span className="flex-shrink-0 text-[var(--color-text-muted)]">
+                      {activityRelativeTime(entry.createdAt)}
+                    </span>
+                  </div>
+                ))}
               </div>
             ))}
           </div>

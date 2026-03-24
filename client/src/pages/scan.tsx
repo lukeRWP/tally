@@ -324,47 +324,48 @@ export function Scan() {
 
   return (
     <div className="flex flex-col gap-4 px-4 py-4 max-w-lg mx-auto lg:max-w-md">
-      {/* Header */}
-      <div className="flex items-center gap-3 animate-fade-up">
-        <div className="flex items-center justify-center w-11 h-11 rounded-full bg-[var(--color-primary-bg)]">
-          <ScanLine className="w-5 h-5 text-[var(--color-primary)]" />
+      {/* Mode tabs + Manual search -- compact top bar */}
+      <div className="flex flex-col gap-2 animate-fade-up">
+        <div className="flex gap-1 p-1 rounded-[var(--radius-lg)] bg-[var(--color-elevated)]">
+          <button
+            type="button"
+            onClick={() => handleTabChange('add')}
+            className={cn(
+              'flex-1 flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-[var(--radius-md)] text-sm font-semibold transition-all duration-200 cursor-pointer',
+              tab === 'add'
+                ? 'bg-[var(--color-card)] text-[var(--color-primary)] shadow-sm'
+                : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]'
+            )}
+          >
+            <Plus className="w-4 h-4" />
+            Add Item
+          </button>
+          <button
+            type="button"
+            onClick={() => handleTabChange('move')}
+            className={cn(
+              'flex-1 flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-[var(--radius-md)] text-sm font-semibold transition-all duration-200 cursor-pointer',
+              tab === 'move'
+                ? 'bg-[var(--color-card)] text-[var(--color-amber)] shadow-sm'
+                : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]'
+            )}
+          >
+            <MoveRight className="w-4 h-4" />
+            Move Item
+          </button>
         </div>
-        <div>
-          <h1 className="text-lg font-bold text-[var(--color-text)]">Scanner</h1>
-          <p className="text-xs text-[var(--color-text-muted)]">
-            Scan barcodes to look up and add items
-          </p>
-        </div>
-      </div>
 
-      {/* Mode tabs -- segmented control with sliding indicator */}
-      <div className="flex gap-1 p-1 rounded-[var(--radius-lg)] bg-[var(--color-elevated)] animate-fade-up" style={{ animationDelay: '50ms' }}>
-        <button
-          type="button"
-          onClick={() => handleTabChange('add')}
-          className={cn(
-            'flex-1 flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-[var(--radius-md)] text-sm font-semibold transition-all duration-200 cursor-pointer',
-            tab === 'add'
-              ? 'bg-[var(--color-card)] text-[var(--color-primary)] shadow-sm'
-              : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]'
-          )}
-        >
-          <Plus className="w-4 h-4" />
-          Add Item
-        </button>
-        <button
-          type="button"
-          onClick={() => handleTabChange('move')}
-          className={cn(
-            'flex-1 flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-[var(--radius-md)] text-sm font-semibold transition-all duration-200 cursor-pointer',
-            tab === 'move'
-              ? 'bg-[var(--color-card)] text-[var(--color-amber)] shadow-sm'
-              : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]'
-          )}
-        >
-          <MoveRight className="w-4 h-4" />
-          Move Item
-        </button>
+        {/* Manual search alternative -- above camera for add mode */}
+        {tab === 'add' && state === 'idle' && (
+          <button
+            type="button"
+            className="flex items-center justify-center gap-2 w-full py-2.5 rounded-[var(--radius-lg)] text-sm font-medium text-[var(--color-primary)] bg-[var(--color-primary-bg)] hover:bg-[var(--color-primary-bg)]/80 transition-all duration-200 cursor-pointer"
+            onClick={handleSearchManually}
+          >
+            <Search className="w-4 h-4" />
+            Search products manually
+          </button>
+        )}
       </div>
 
       {/* -- ADD MODE -------------------------------------------------------- */}
@@ -372,11 +373,32 @@ export function Scan() {
         <>
           {/* Camera -- active when idle or looking_up */}
           {(state === 'idle' || state === 'looking_up') && (
-            <CameraScanner
-              isActive={state === 'idle'}
-              onBarcodeScanned={handleBarcodeScanned}
-              onClose={() => navigate(-1)}
-            />
+            <div className="relative animate-fade-up" style={{ animationDelay: '50ms' }}>
+              {/* Camera with corner brackets */}
+              <div className="relative rounded-2xl overflow-hidden">
+                <CameraScanner
+                  isActive={state === 'idle'}
+                  onBarcodeScanned={handleBarcodeScanned}
+                  onClose={() => navigate(-1)}
+                />
+                {/* Corner bracket overlays */}
+                <div className="absolute top-3 left-3 w-6 h-6 border-t-[3px] border-l-[3px] border-[var(--color-primary)] rounded-tl-sm pointer-events-none" />
+                <div className="absolute top-3 right-3 w-6 h-6 border-t-[3px] border-r-[3px] border-[var(--color-primary)] rounded-tr-sm pointer-events-none" />
+                <div className="absolute bottom-3 left-3 w-6 h-6 border-b-[3px] border-l-[3px] border-[var(--color-primary)] rounded-bl-sm pointer-events-none" />
+                <div className="absolute bottom-3 right-3 w-6 h-6 border-b-[3px] border-r-[3px] border-[var(--color-primary)] rounded-br-sm pointer-events-none" />
+              </div>
+
+              {/* Scanning status below camera */}
+              <div className="flex items-center justify-center gap-2 mt-3">
+                <span className="relative flex h-2.5 w-2.5">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[var(--color-primary)] opacity-75" />
+                  <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-[var(--color-primary)]" />
+                </span>
+                <p className="text-sm font-medium text-[var(--color-text-secondary)]">
+                  {state === 'looking_up' ? 'Looking up barcode...' : 'Scanning for barcodes'}
+                </p>
+              </div>
+            </div>
           )}
 
           {/* Loading overlay */}
@@ -591,18 +613,6 @@ export function Scan() {
               </div>
             </Card>
           )}
-
-          {/* Quick actions when idle */}
-          {state === 'idle' && (
-            <button
-              type="button"
-              className="flex items-center justify-center gap-2 w-full py-3 border border-dashed border-[var(--color-border)] rounded-[var(--radius-lg)] text-sm font-medium text-[var(--color-primary)] hover:bg-[var(--color-primary-bg)] hover:border-[var(--color-primary)]/30 transition-all duration-200 cursor-pointer"
-              onClick={handleSearchManually}
-            >
-              <Search className="w-4 h-4" />
-              Search products manually
-            </button>
-          )}
         </>
       )}
 
@@ -610,48 +620,35 @@ export function Scan() {
       {tab === 'move' && (
         <>
           {/* Camera -- active whenever in move mode (except while completing) */}
-          <CameraScanner
-            isActive={isMoveActive}
-            onBarcodeScanned={handleMoveCodeScanned}
-            onClose={() => navigate(-1)}
-          />
+          <div className="relative rounded-2xl overflow-hidden animate-fade-up" style={{ animationDelay: '50ms' }}>
+            <CameraScanner
+              isActive={isMoveActive}
+              onBarcodeScanned={handleMoveCodeScanned}
+              onClose={() => navigate(-1)}
+            />
+            {/* Corner bracket overlays */}
+            <div className="absolute top-3 left-3 w-6 h-6 border-t-[3px] border-l-[3px] border-[var(--color-amber)] rounded-tl-sm pointer-events-none" />
+            <div className="absolute top-3 right-3 w-6 h-6 border-t-[3px] border-r-[3px] border-[var(--color-amber)] rounded-tr-sm pointer-events-none" />
+            <div className="absolute bottom-3 left-3 w-6 h-6 border-b-[3px] border-l-[3px] border-[var(--color-amber)] rounded-bl-sm pointer-events-none" />
+            <div className="absolute bottom-3 right-3 w-6 h-6 border-b-[3px] border-r-[3px] border-[var(--color-amber)] rounded-br-sm pointer-events-none" />
+          </div>
 
-          {/* Status banner */}
-          <Card className={cn(
-            'flex items-center gap-3 border',
-            moveState === 'move_completing'
-              ? 'border-[var(--color-amber)] bg-[var(--color-amber-bg)]'
-              : moveState === 'move_container_scanned'
-                ? 'border-[var(--color-amber)] bg-[var(--color-amber-bg)]'
-                : moveState === 'move_item_scanned'
-                  ? 'border-[var(--color-amber)] bg-[var(--color-amber-bg)]'
-                  : 'border-[var(--color-border)]'
-          )}>
-            {moveState === 'move_completing' ? (
-              <Loader2 className="w-5 h-5 text-[var(--color-amber)] animate-spin shrink-0" />
-            ) : moveState === 'move_container_scanned' ? (
-              <Package className="w-5 h-5 text-[var(--color-amber)] shrink-0" />
-            ) : moveState === 'move_item_scanned' ? (
-              <Box className="w-5 h-5 text-[var(--color-amber)] shrink-0" />
-            ) : (
-              <MoveRight className="w-5 h-5 text-[var(--color-text-muted)] shrink-0" />
-            )}
-            <div className="min-w-0">
-              <p className="text-base font-semibold text-[var(--color-text)]">
-                {moveStatusMessage}
-              </p>
-              {moveState === 'move_item_scanned' && moveItem && (
-                <p className="text-sm text-[var(--color-text-muted)] truncate mt-0.5">
-                  Item: {moveItem.name}
-                </p>
-              )}
-              {moveState === 'move_container_scanned' && moveContainer && (
-                <p className="text-sm text-[var(--color-text-muted)] truncate mt-0.5">
-                  Destination: {moveContainer.name}
-                </p>
-              )}
-            </div>
-          </Card>
+          {/* Status banner below camera */}
+          <div className="flex items-center justify-center gap-2 mt-1 mb-1">
+            <span className="relative flex h-2.5 w-2.5">
+              <span className={cn(
+                'animate-ping absolute inline-flex h-full w-full rounded-full opacity-75',
+                moveState === 'move_idle' ? 'bg-[var(--color-text-muted)]' : 'bg-[var(--color-amber)]'
+              )} />
+              <span className={cn(
+                'relative inline-flex rounded-full h-2.5 w-2.5',
+                moveState === 'move_idle' ? 'bg-[var(--color-text-muted)]' : 'bg-[var(--color-amber)]'
+              )} />
+            </span>
+            <p className="text-sm font-medium text-[var(--color-text-secondary)]">
+              {moveStatusMessage}
+            </p>
+          </div>
 
           {/* Context panel -- shown when something is in buffer */}
           {(moveState === 'move_item_scanned' || moveState === 'move_container_scanned') && (

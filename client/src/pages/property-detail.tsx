@@ -1,12 +1,13 @@
 import { useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { MapPin, Plus } from 'lucide-react';
+import { MapPin, Plus, LayoutGrid, Package, Box } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { AreaCard } from '@/components/inventory/area-card';
 import { EntityForm } from '@/components/inventory/entity-form';
 import { useProperty, useAreas, useCreateArea } from '@/hooks/use-inventory';
 import { toast } from '@/components/ui/toast';
+import { cn } from '@/lib/utils';
 
 export function PropertyDetail() {
   const { propertyId } = useParams<{ propertyId: string }>();
@@ -27,7 +28,7 @@ export function PropertyDetail() {
   if (propertyLoading) {
     return (
       <div className="flex flex-col gap-3">
-        <Skeleton className="h-8 w-48" />
+        <Skeleton className="h-24 w-full" />
         <Skeleton className="h-4 w-32" />
         <Skeleton className="h-20 w-full" />
         <Skeleton className="h-20 w-full" />
@@ -41,19 +42,35 @@ export function PropertyDetail() {
 
   return (
     <div className="flex flex-col gap-4">
-      {/* Header */}
-      <div>
-        <h1 className="text-lg font-bold text-[var(--color-text)]">{property.name}</h1>
-        <p className="text-[10px] font-mono text-[var(--color-text-muted)]">{property.qrCode}</p>
+      {/* Hero Header Band */}
+      <div className="bg-[var(--color-primary-bg)] -mx-4 -mt-4 px-4 pt-5 pb-4 rounded-b-2xl animate-fade-up">
+        <h1 className="text-2xl font-extrabold text-[var(--color-text)] tracking-tight">{property.name}</h1>
+        <p className="text-[10px] font-mono text-[var(--color-text-muted)] mt-0.5">{property.qrCode}</p>
         {property.address && (
-          <div className="flex items-center gap-1 mt-1">
-            <MapPin className="w-3 h-3 text-[var(--color-text-muted)]" />
-            <span className="text-xs text-[var(--color-text-muted)]">{property.address}</span>
+          <div className="flex items-center gap-1 mt-1.5">
+            <MapPin className="w-3.5 h-3.5 text-[var(--color-primary)]" />
+            <span className="text-xs text-[var(--color-text-secondary)]">{property.address}</span>
           </div>
         )}
         {property.description && (
-          <p className="text-sm text-[var(--color-text-secondary)] mt-1">{property.description}</p>
+          <p className="text-sm text-[var(--color-text-secondary)] mt-2">{property.description}</p>
         )}
+
+        {/* Stats row */}
+        <div className="flex gap-2 mt-3">
+          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-[var(--color-card)] text-xs font-semibold text-[var(--color-text-secondary)]">
+            <LayoutGrid className="w-3 h-3 text-[var(--color-primary)]" />
+            {property.areaCount} {property.areaCount === 1 ? 'area' : 'areas'}
+          </div>
+          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-[var(--color-card)] text-xs font-semibold text-[var(--color-text-secondary)]">
+            <Package className="w-3 h-3 text-[var(--color-amber)]" />
+            {property.containerCount} containers
+          </div>
+          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-[var(--color-card)] text-xs font-semibold text-[var(--color-text-secondary)]">
+            <Box className="w-3 h-3 text-[var(--color-purple)]" />
+            {property.itemCount} items
+          </div>
+        </div>
       </div>
 
       {/* Areas */}
@@ -81,8 +98,18 @@ export function PropertyDetail() {
 
       {areas && areas.length > 0 && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          {areas.map((area) => (
-            <AreaCard key={area.id} area={area} />
+          {areas.map((area, idx) => (
+            <div
+              key={area.id}
+              className={cn(
+                'border-l-[3px] rounded-l-sm',
+                idx % 2 === 0
+                  ? 'border-l-[var(--color-primary)]'
+                  : 'border-l-[var(--color-amber)]',
+              )}
+            >
+              <AreaCard area={area} />
+            </div>
           ))}
         </div>
       )}

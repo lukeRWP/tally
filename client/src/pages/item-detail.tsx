@@ -1,6 +1,9 @@
 import * as React from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Pencil, ArrowRightLeft, Trash2, Plus, Printer, Link, CalendarPlus, HandCoins, Share2 } from 'lucide-react';
+import {
+  Pencil, ArrowRightLeft, Trash2, Plus, Printer, Link, CalendarPlus, HandCoins, Share2,
+  ChevronRight, ChevronDown, MoreHorizontal, Upload,
+} from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { LabelPrintDialog } from '@/components/labels/label-print-dialog';
 import { Badge } from '@/components/ui/badge';
@@ -20,20 +23,18 @@ import { AccessoryPicker } from '@/components/accessories/accessory-picker';
 import { LendingList } from '@/components/lending/lending-list';
 import { LendForm } from '@/components/lending/lend-form';
 import { useItemDates } from '@/hooks/use-dates';
+import { useItemFiles } from '@/hooks/use-files';
+import { useAccessories } from '@/hooks/use-accessories';
+import { useLendingHistory } from '@/hooks/use-lending';
 import { ShareDialog } from '@/components/sharing/share-dialog';
+import { cn } from '@/lib/utils';
 
-const conditionVariant = {
-  new: 'success',
-  good: 'default',
-  fair: 'warning',
-  poor: 'danger',
-} as const;
-
-const statusVariant = {
-  active: 'success',
-  removed: 'danger',
-  lent: 'info',
-} as const;
+const conditionColor: Record<string, string> = {
+  new: 'bg-[var(--color-green)]',
+  good: 'bg-[var(--color-primary)]',
+  fair: 'bg-[var(--color-amber)]',
+  poor: 'bg-[var(--color-red)]',
+};
 
 function computeDepreciation(
   purchasePrice: number,
@@ -50,6 +51,118 @@ function computeDepreciation(
   const sinceYear = new Date(since).getFullYear().toString();
   const ratePercent = Math.round(depreciationRate * 100);
   return { currentValue: Math.max(0, currentValue), ratePercent, sinceYear };
+}
+
+// -- Collapsible Section -------------------------------------------------------
+
+function CollapsibleSection({
+  title,
+  icon,
+  defaultOpen,
+  action,
+  children,
+  animationDelay,
+}: {
+  title: string;
+  icon?: React.ReactNode;
+  defaultOpen: boolean;
+  action?: React.ReactNode;
+  children: React.ReactNode;
+  animationDelay?: string;
+}) {
+  const [open, setOpen] = React.useState(defaultOpen);
+
+  return (
+    <Card animationDelay={animationDelay}>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex items-center w-full gap-2 text-left cursor-pointer"
+      >
+        {icon}
+        <h2 className="text-sm font-semibold text-[var(--color-text)] flex-1">{title}</h2>
+        {open ? (
+          <ChevronDown className="w-4 h-4 text-[var(--color-text-muted)] transition-transform duration-200" />
+        ) : (
+          <ChevronRight className="w-4 h-4 text-[var(--color-text-muted)] transition-transform duration-200" />
+        )}
+      </button>
+      {open && (
+        <div className="mt-3 animate-fade-up">
+          {action && <div className="flex justify-end mb-2">{action}</div>}
+          {children}
+        </div>
+      )}
+    </Card>
+  );
+}
+
+// -- Overflow menu --------------------------------------------------------------
+
+function OverflowMenu({
+  onShare,
+  onPrint,
+  onDelete,
+}: {
+  onShare: () => void;
+  onPrint: () => void;
+  onDelete: () => void;
+}) {
+  const [open, setOpen] = React.useState(false);
+  const ref = React.useRef<HTMLDivElement>(null);
+
+  React.useEffect(() => {
+    if (!open) return;
+    function handleClick(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [open]);
+
+  return (
+    <div className="relative" ref={ref}>
+      <Button
+        variant="ghost"
+        size="sm"
+        className="text-xs w-9 h-9 p-0"
+        onClick={() => setOpen((v) => !v)}
+      >
+        <MoreHorizontal className="w-4 h-4" />
+      </Button>
+      {open && (
+        <div className="absolute right-0 top-full mt-1 z-50 min-w-[140px] bg-[var(--color-card)] border border-[var(--color-border)] rounded-[var(--radius-lg)] shadow-[0_4px_16px_rgba(0,0,0,0.08)] p-1 flex flex-col gap-0.5 animate-scale-in">
+          <button
+            type="button"
+            onClick={() => { onShare(); setOpen(false); }}
+            className="flex items-center gap-2 px-3 py-2 text-xs text-[var(--color-text)] hover:bg-[var(--color-elevated)] rounded-[var(--radius-md)] transition-colors w-full text-left"
+          >
+            <Share2 className="w-3.5 h-3.5" />
+            Share
+          </button>
+          <button
+            type="button"
+            onClick={() => { onPrint(); setOpen(false); }}
+            className="flex items-center gap-2 px-3 py-2 text-xs text-[var(--color-text)] hover:bg-[var(--color-elevated)] rounded-[var(--radius-md)] transition-colors w-full text-left"
+          >
+            <Printer className="w-3.5 h-3.5" />
+            Print Label
+          </button>
+          <div className="border-t border-[var(--color-border)] my-0.5" />
+          <button
+            type="button"
+            onClick={() => { onDelete(); setOpen(false); }}
+            className="flex items-center gap-2 px-3 py-2 text-xs text-[var(--color-red)] hover:bg-[var(--color-red-bg)] rounded-[var(--radius-md)] transition-colors w-full text-left"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+            Delete
+          </button>
+        </div>
+      )}
+    </div>
+  );
 }
 
 export function ItemDetail() {
@@ -74,6 +187,15 @@ export function ItemDetail() {
 
   // Fetch item dates for depreciation calculation
   const { data: itemDates } = useItemDates(id);
+  // Fetch files & accessories & lending to determine if sections have data
+  const { data: itemFiles } = useItemFiles(id);
+  const { data: accessories } = useAccessories(id);
+  const { data: lendingHistory } = useLendingHistory(id);
+
+  const hasFiles = (itemFiles?.length ?? 0) > 0;
+  const hasDates = (itemDates?.length ?? 0) > 0;
+  const hasAccessories = (accessories?.length ?? 0) > 0;
+  const hasLending = (lendingHistory?.length ?? 0) > 0;
 
   if (isLoading) {
     return (
@@ -116,20 +238,59 @@ export function ItemDetail() {
 
   return (
     <div className="flex flex-col gap-4 pb-24 lg:pb-8">
-      {/* Header */}
+      {/* Hero Section */}
       <div className="animate-fade-up">
-        <h1 className="text-lg font-bold text-[var(--color-text)]">{item.name}</h1>
-        <p className="text-[10px] font-mono text-[var(--color-text-muted)]">{item.qrCode}</p>
-        <div className="flex items-center gap-2 mt-1">
-          <Badge variant={conditionVariant[item.condition]}>{item.condition}</Badge>
-          <Badge variant={statusVariant[item.status]}>{item.status}</Badge>
+        <h1 className="text-2xl font-extrabold text-[var(--color-text)] tracking-tight">{item.name}</h1>
+
+        {/* Condition indicator strip */}
+        <div className="flex items-center gap-3 mt-2">
+          {/* Colored condition circle */}
+          <div className="flex items-center gap-1.5">
+            <span className={cn('w-3 h-3 rounded-full', conditionColor[item.condition] ?? 'bg-[var(--color-text-muted)]')} />
+            <span className="text-xs font-medium text-[var(--color-text-secondary)] capitalize">{item.condition}</span>
+          </div>
+          <span className="text-[var(--color-border)]">|</span>
+          <span className="text-xs font-medium text-[var(--color-text-secondary)] capitalize">{item.status}</span>
           {item.quantity > 1 && (
-            <Badge variant="info">Qty: {item.quantity}</Badge>
+            <>
+              <span className="text-[var(--color-border)]">|</span>
+              <span className="text-xs font-medium text-[var(--color-text-secondary)]">Qty: {item.quantity}</span>
+            </>
           )}
+          <span className="text-[var(--color-border)]">|</span>
+          <span className="text-[10px] font-mono text-[var(--color-text-muted)]">{item.qrCode}</span>
         </div>
+
         {item.description && (
           <p className="text-sm text-[var(--color-text-secondary)] mt-2">{item.description}</p>
         )}
+
+        {/* Inline Tags */}
+        {propertyId > 0 && (
+          <div className="mt-3">
+            <TagPicker entityType="item" entityId={item.id} propertyId={propertyId} />
+          </div>
+        )}
+      </div>
+
+      {/* Primary Action Row */}
+      <div className="flex gap-2 animate-fade-up" style={{ animationDelay: '50ms' }}>
+        <Button variant="outline" size="sm" className="flex-1 text-xs" onClick={() => toast('Edit coming soon')}>
+          <Pencil className="w-3.5 h-3.5" />
+          Edit
+        </Button>
+        <Button variant="outline" size="sm" className="flex-1 text-xs" onClick={() => toast('Move coming soon')}>
+          <ArrowRightLeft className="w-3.5 h-3.5" />
+          Move
+        </Button>
+        <OverflowMenu
+          onShare={() => setShareOpen(true)}
+          onPrint={() => setPrintOpen(true)}
+          onDelete={() => {
+            toast('Delete coming soon');
+            navigate(-1);
+          }}
+        />
       </div>
 
       {/* Desktop: 2-column layout / Mobile: single column */}
@@ -166,58 +327,67 @@ export function ItemDetail() {
             </Card>
           )}
 
-          {/* Dates */}
-          <Card animationDelay="200ms">
-            <div className="flex items-center justify-between mb-3">
-              <h2 className="text-sm font-semibold text-[var(--color-text)]">Dates</h2>
+          {/* Dates -- collapsible, default open if has data */}
+          <CollapsibleSection
+            title="Dates"
+            defaultOpen={hasDates}
+            animationDelay="200ms"
+            action={
               <Button size="sm" variant="outline" onClick={() => setDateFormOpen(true)}>
                 <CalendarPlus className="w-3.5 h-3.5" />
                 Add Date
               </Button>
-            </div>
+            }
+          >
             <DateList itemId={id} />
             <DateForm
               itemId={id}
               isOpen={dateFormOpen}
               onOpenChange={setDateFormOpen}
             />
-          </Card>
+          </CollapsibleSection>
 
-          {/* Accessories */}
-          <Card animationDelay="250ms">
-            <div className="flex items-center justify-between mb-3">
-              <h2 className="text-sm font-semibold text-[var(--color-text)]">Accessories</h2>
+          {/* Accessories -- collapsible, default open if has data */}
+          <CollapsibleSection
+            title="Accessories"
+            defaultOpen={hasAccessories}
+            animationDelay="250ms"
+            action={
               <Button size="sm" variant="outline" onClick={() => setAccessoryPickerOpen(true)}>
                 <Link className="w-3.5 h-3.5" />
                 Link
               </Button>
-            </div>
+            }
+          >
             <AccessoryList itemId={id} />
             <AccessoryPicker
               itemId={id}
               isOpen={accessoryPickerOpen}
               onOpenChange={setAccessoryPickerOpen}
             />
-          </Card>
+          </CollapsibleSection>
 
-          {/* Lending */}
-          <Card animationDelay="300ms">
-            <div className="flex items-center justify-between mb-3">
-              <h2 className="text-sm font-semibold text-[var(--color-text)]">Lending</h2>
-              {item.status === 'active' && (
+          {/* Lending -- collapsible, default open if has data */}
+          <CollapsibleSection
+            title="Lending"
+            defaultOpen={hasLending}
+            animationDelay="300ms"
+            action={
+              item.status === 'active' ? (
                 <Button size="sm" variant="outline" onClick={() => setLendFormOpen(true)}>
                   <HandCoins className="w-3.5 h-3.5" />
                   Lend
                 </Button>
-              )}
-            </div>
+              ) : undefined
+            }
+          >
             <LendingList itemId={id} itemName={item.name} />
             <LendForm
               itemId={id}
               isOpen={lendFormOpen}
               onOpenChange={setLendFormOpen}
             />
-          </Card>
+          </CollapsibleSection>
         </div>
 
         {/* Right column (sidebar) */}
@@ -225,20 +395,27 @@ export function ItemDetail() {
           {/* Value */}
           <Card animationDelay="100ms">
             <h2 className="text-sm font-semibold text-[var(--color-text)] mb-3">Value</h2>
-            <div className="grid grid-cols-2 lg:grid-cols-1 gap-4">
+            {item.purchasePrice != null ? (
               <div>
-                <span className="text-xs text-[var(--color-text-muted)]">Purchase Price</span>
-                <p className="text-xl font-bold text-[var(--color-text)] mt-0.5">
-                  {item.purchasePrice != null ? `$${item.purchasePrice.toFixed(2)}` : '--'}
-                </p>
+                <div>
+                  <span className="text-xs text-[var(--color-text-muted)]">Purchase Price</span>
+                  <p className="text-3xl font-extrabold text-[var(--color-text)] mt-0.5 tracking-tight">
+                    <span className="text-[var(--color-text-muted)] text-xl">$</span>
+                    {item.purchasePrice.toFixed(2)}
+                  </p>
+                </div>
+                {item.currentValue != null && item.currentValue !== item.purchasePrice && (
+                  <div className="mt-3 pt-3 border-t border-[var(--color-border)]">
+                    <span className="text-xs text-[var(--color-text-muted)]">Current Value</span>
+                    <p className="text-xl font-bold text-[var(--color-primary)] mt-0.5">
+                      ${item.currentValue.toFixed(2)}
+                    </p>
+                  </div>
+                )}
               </div>
-              <div>
-                <span className="text-xs text-[var(--color-text-muted)]">Current Value</span>
-                <p className="text-xl font-bold text-[var(--color-primary)] mt-0.5">
-                  {item.currentValue != null ? `$${item.currentValue.toFixed(2)}` : '--'}
-                </p>
-              </div>
-            </div>
+            ) : (
+              <p className="text-sm text-[var(--color-text-muted)]">No price recorded</p>
+            )}
             {depreciation && (
               <div className="mt-3 pt-3 border-t border-[var(--color-border)]">
                 <p className="text-xs text-[var(--color-text-secondary)]">
@@ -252,19 +429,25 @@ export function ItemDetail() {
             )}
           </Card>
 
-          {/* Tags */}
-          {propertyId > 0 && (
-            <div className="animate-fade-up" style={{ animationDelay: '150ms' }}>
-              <h2 className="text-sm font-semibold text-[var(--color-text)] mb-2">Tags</h2>
-              <TagPicker entityType="item" entityId={item.id} propertyId={propertyId} />
-            </div>
-          )}
-
-          {/* Files */}
+          {/* Files -- dashed dropzone when empty */}
           <Card animationDelay="350ms">
             <h2 className="text-sm font-semibold text-[var(--color-text)] mb-3">Files</h2>
-            <FileList itemId={id} />
-            <FileUpload itemId={id} />
+            {hasFiles ? (
+              <>
+                <FileList itemId={id} />
+                <div className="mt-3">
+                  <FileUpload itemId={id} />
+                </div>
+              </>
+            ) : (
+              <div className="border-2 border-dashed border-[var(--color-border)] rounded-lg p-6 text-center">
+                <Upload className="w-6 h-6 text-[var(--color-text-muted)] mx-auto mb-2" />
+                <p className="text-xs text-[var(--color-text-muted)] mb-3">
+                  No files attached yet
+                </p>
+                <FileUpload itemId={id} />
+              </div>
+            )}
           </Card>
 
           {/* Condition History */}
@@ -284,35 +467,6 @@ export function ItemDetail() {
               onComplete={() => {}}
             />
           </Card>
-        </div>
-      </div>
-
-      {/* Floating Action Bar */}
-      <div className="fixed bottom-20 lg:bottom-4 left-0 right-0 z-40 px-4 lg:ml-56">
-        <div className="max-w-lg lg:max-w-[800px] mx-auto backdrop-blur-xl bg-[var(--color-card)]/90 border border-[var(--color-border)]/50 rounded-[var(--radius-lg)] shadow-[0_4px_16px_rgba(0,0,0,0.1)] p-2 flex gap-1.5 animate-slide-up">
-          <Button variant="ghost" size="sm" className="flex-1 text-xs" onClick={() => toast('Edit coming soon')}>
-            <Pencil className="w-3.5 h-3.5" />
-            Edit
-          </Button>
-          <Button variant="ghost" size="sm" className="flex-1 text-xs" onClick={() => toast('Move coming soon')}>
-            <ArrowRightLeft className="w-3.5 h-3.5" />
-            Move
-          </Button>
-          <Button variant="ghost" size="sm" className="flex-1 text-xs" onClick={() => setShareOpen(true)}>
-            <Share2 className="w-3.5 h-3.5" />
-            Share
-          </Button>
-          <Button variant="ghost" size="sm" className="flex-1 text-xs" onClick={() => setPrintOpen(true)}>
-            <Printer className="w-3.5 h-3.5" />
-            Print
-          </Button>
-          <Button variant="ghost" size="sm" className="flex-1 text-xs text-[var(--color-red)]" onClick={() => {
-            toast('Delete coming soon');
-            navigate(-1);
-          }}>
-            <Trash2 className="w-3.5 h-3.5" />
-            Delete
-          </Button>
         </div>
       </div>
 

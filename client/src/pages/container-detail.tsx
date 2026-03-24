@@ -20,6 +20,7 @@ import { toast } from '@/components/ui/toast';
 import { TagPicker } from '@/components/tags/tag-picker';
 import { LabelPrintDialog } from '@/components/labels/label-print-dialog';
 import { ShareDialog } from '@/components/sharing/share-dialog';
+import { cn } from '@/lib/utils';
 
 export function ContainerDetail() {
   const { containerId } = useParams<{ containerId: string }>();
@@ -85,6 +86,12 @@ export function ContainerDetail() {
     return <p className="text-sm text-[var(--color-text-muted)] text-center py-8">Container not found.</p>;
   }
 
+  const propertyId = (container as unknown as { propertyId?: number }).propertyId
+    ?? container.breadcrumb?.find((b) => b.type === 'property')?.id
+    ?? 0;
+
+  const hasTags = propertyId > 0;
+
   return (
     <div className="flex flex-col gap-4 pb-16">
       {/* Breadcrumbs */}
@@ -102,41 +109,47 @@ export function ContainerDetail() {
         )}
       </div>
 
-      {/* Action Bar */}
+      {/* Action Bar -- compact circular icon buttons */}
       <div className="flex gap-2 animate-fade-up" style={{ animationDelay: '50ms' }}>
-        <Button variant="outline" size="sm" onClick={() => toast('Scanning coming in Phase 2')}>
+        <button
+          type="button"
+          onClick={() => toast('Scanning coming in Phase 2')}
+          className="w-9 h-9 rounded-full border border-[var(--color-border)] bg-[var(--color-card)] flex items-center justify-center text-[var(--color-text-secondary)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)] transition-all duration-200"
+          title="Scan Into"
+        >
           <ScanLine className="w-4 h-4" />
-          Scan Into
-        </Button>
-        <Button variant="outline" size="sm" onClick={() => setPrintOpen(true)}>
+        </button>
+        <button
+          type="button"
+          onClick={() => setPrintOpen(true)}
+          className="w-9 h-9 rounded-full border border-[var(--color-border)] bg-[var(--color-card)] flex items-center justify-center text-[var(--color-text-secondary)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)] transition-all duration-200"
+          title="Print Label"
+        >
           <Printer className="w-4 h-4" />
-          Print
-        </Button>
-        <Button variant="outline" size="sm" onClick={() => setShareOpen(true)}>
+        </button>
+        <button
+          type="button"
+          onClick={() => setShareOpen(true)}
+          className="w-9 h-9 rounded-full border border-[var(--color-border)] bg-[var(--color-card)] flex items-center justify-center text-[var(--color-text-secondary)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)] transition-all duration-200"
+          title="Share"
+        >
           <Share2 className="w-4 h-4" />
-          Share
-        </Button>
+        </button>
       </div>
 
-      {/* Tags */}
-      {(() => {
-        const propertyId = (container as unknown as { propertyId?: number }).propertyId
-          ?? container.breadcrumb?.find((b) => b.type === 'property')?.id
-          ?? 0;
-        return propertyId > 0 ? (
-          <Card animationDelay="100ms">
-            <h2 className="text-sm font-semibold text-[var(--color-text)] mb-3">Tags</h2>
-            <TagPicker entityType="container" entityId={container.id} propertyId={propertyId} />
-          </Card>
-        ) : null;
-      })()}
+      {/* Tags -- collapsed single line when empty */}
+      {hasTags && (
+        <div className="animate-fade-up" style={{ animationDelay: '100ms' }}>
+          <TagPicker entityType="container" entityId={container.id} propertyId={propertyId} />
+        </div>
+      )}
 
       {/* Nested Containers */}
       <section className="animate-fade-up" style={{ animationDelay: '150ms' }}>
-        <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center gap-2 mb-2">
           <h2 className="text-sm font-semibold text-[var(--color-text)]">Nested Containers</h2>
           {children && children.length > 0 && (
-            <span className="text-xs font-medium text-[var(--color-text-muted)] bg-[var(--color-elevated)] px-2 py-0.5 rounded-full">
+            <span className="bg-[var(--color-primary-bg)] text-[var(--color-primary)] w-6 h-6 rounded-full inline-flex items-center justify-center text-xs font-bold">
               {children.length}
             </span>
           )}
@@ -155,7 +168,9 @@ export function ContainerDetail() {
         {children && children.length > 0 && (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             {children.map((child) => (
-              <ContainerCard key={child.id} container={child} />
+              <div key={child.id} className="border-l-[3px] border-l-[var(--color-amber)] rounded-l-sm">
+                <ContainerCard container={child} />
+              </div>
             ))}
           </div>
         )}
@@ -166,10 +181,10 @@ export function ContainerDetail() {
 
       {/* Items */}
       <section className="animate-fade-up" style={{ animationDelay: '200ms' }}>
-        <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center gap-2 mb-2">
           <h2 className="text-sm font-semibold text-[var(--color-text)]">Items</h2>
           {items && items.length > 0 && (
-            <span className="text-xs font-medium text-[var(--color-text-muted)] bg-[var(--color-elevated)] px-2 py-0.5 rounded-full">
+            <span className="bg-[var(--color-primary-bg)] text-[var(--color-primary)] w-6 h-6 rounded-full inline-flex items-center justify-center text-xs font-bold">
               {items.length}
             </span>
           )}

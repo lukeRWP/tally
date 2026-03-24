@@ -1,11 +1,12 @@
-import { LogOut, Sun, Moon, Monitor, Trash2, Link2, Copy, Tags } from 'lucide-react';
+import * as React from 'react';
+import { LogOut, Sun, Moon, Monitor, Trash2, Link2, Copy, Tags, ChevronRight, ChevronDown } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { useAuthStore } from '@/store/auth-store';
 import { useProperties } from '@/hooks/use-inventory';
 import { TagManager } from '@/components/tags/tag-manager';
-import { NotificationPrefs } from '@/components/notifications/notification-prefs';
+import { NotificationPrefsRedesigned } from '@/components/notifications/notification-prefs-redesigned';
 import { useMyShareLinks, useRevokeShareLink } from '@/hooks/use-sharing';
 import { toast } from '@/components/ui/toast';
 import { cn } from '@/lib/utils';
@@ -17,6 +18,42 @@ function formatDate(dateStr: string) {
     day: 'numeric',
   });
 }
+
+// -- Collapsible Settings Section -----------------------------------------------
+
+function CollapsibleSettingsSection({
+  title,
+  defaultOpen = true,
+  children,
+  animationDelay,
+}: {
+  title: string;
+  defaultOpen?: boolean;
+  children: React.ReactNode;
+  animationDelay?: string;
+}) {
+  const [open, setOpen] = React.useState(defaultOpen);
+
+  return (
+    <Card animationDelay={animationDelay}>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex items-center w-full gap-2 text-left cursor-pointer"
+      >
+        <h2 className="text-sm font-semibold text-[var(--color-text)] flex-1">{title}</h2>
+        {open ? (
+          <ChevronDown className="w-4 h-4 text-[var(--color-text-muted)]" />
+        ) : (
+          <ChevronRight className="w-4 h-4 text-[var(--color-text-muted)]" />
+        )}
+      </button>
+      {open && <div className="mt-3">{children}</div>}
+    </Card>
+  );
+}
+
+// -- Share Links Section --------------------------------------------------------
 
 function ShareLinksSection() {
   const { data: links, isLoading } = useMyShareLinks();
@@ -97,6 +134,8 @@ function ShareLinksSection() {
   );
 }
 
+// -- Settings Page Main ---------------------------------------------------------
+
 export function SettingsPage() {
   const navigate = useNavigate();
   const { user, theme, setTheme, logout } = useAuthStore();
@@ -104,6 +143,16 @@ export function SettingsPage() {
   const properties = (propertiesData as unknown as { properties: { id: number; name: string }[] })?.properties
     ?? (propertiesData as unknown as { id: number; name: string }[])
     ?? [];
+
+  // Tag management -- property selector
+  const [selectedTagPropertyId, setSelectedTagPropertyId] = React.useState<number>(0);
+
+  // Auto-select first property
+  React.useEffect(() => {
+    if (!selectedTagPropertyId && properties.length > 0) {
+      setSelectedTagPropertyId(properties[0].id);
+    }
+  }, [properties, selectedTagPropertyId]);
 
   const themeOptions = [
     { key: 'light' as const, icon: Sun, label: 'Light' },
@@ -113,15 +162,14 @@ export function SettingsPage() {
 
   return (
     <div className="flex flex-col gap-4">
-      <h1 className="text-lg font-bold text-[var(--color-text)] animate-fade-up">Settings</h1>
+      <h1 className="text-2xl font-extrabold text-[var(--color-text)] tracking-tight animate-fade-up">Settings</h1>
 
       {/* Desktop: 2-column layout / Mobile: single column */}
       <div className="lg:grid lg:grid-cols-2 lg:gap-6">
         {/* Left column */}
         <div className="flex flex-col gap-4">
-          {/* Profile */}
-          <Card animationDelay="0ms">
-            <h2 className="text-sm font-semibold text-[var(--color-text)] mb-3">Profile</h2>
+          {/* Profile -- collapsed by default */}
+          <CollapsibleSettingsSection title="Profile" defaultOpen={false} animationDelay="0ms">
             {user ? (
               <div className="flex items-center gap-4">
                 {user.avatarUrl ? (
@@ -143,9 +191,9 @@ export function SettingsPage() {
             ) : (
               <p className="text-sm text-[var(--color-text-muted)]">Not signed in</p>
             )}
-          </Card>
+          </CollapsibleSettingsSection>
 
-          {/* Theme -- segmented control */}
+          {/* Theme -- expanded by default */}
           <Card animationDelay="50ms">
             <h2 className="text-sm font-semibold text-[var(--color-text)] mb-3">Appearance</h2>
             <div className="flex gap-1 p-1 rounded-[var(--radius-md)] bg-[var(--color-elevated)]">
@@ -168,9 +216,8 @@ export function SettingsPage() {
             </div>
           </Card>
 
-          {/* Recycle Bin */}
-          <Card animationDelay="350ms">
-            <h2 className="text-sm font-semibold text-[var(--color-text)] mb-3">Data</h2>
+          {/* Data -- collapsed by default */}
+          <CollapsibleSettingsSection title="Data" defaultOpen={false} animationDelay="350ms">
             <button
               type="button"
               onClick={() => navigate('/recycle-bin')}
@@ -179,33 +226,49 @@ export function SettingsPage() {
               <Trash2 className="w-4 h-4" />
               Recycle Bin
             </button>
-          </Card>
+          </CollapsibleSettingsSection>
         </div>
 
         {/* Right column */}
         <div className="flex flex-col gap-4 mt-4 lg:mt-0">
-          {/* Tag Management */}
+          {/* Tag Management with property pill selector */}
           {properties.length > 0 && (
             <Card animationDelay="100ms">
               <h2 className="text-sm font-semibold text-[var(--color-text)] mb-3 flex items-center gap-2">
                 <Tags className="w-4 h-4 text-[var(--color-primary)]" />
                 Tag Management
               </h2>
-              <div className="flex flex-col gap-6">
+
+              {/* Property pill bar */}
+              <div className="flex gap-1.5 mb-4 overflow-x-auto pb-1 -mx-1 px-1">
                 {properties.map((property) => (
-                  <div key={property.id}>
-                    <p className="text-xs font-semibold text-[var(--color-text-secondary)] mb-2 uppercase tracking-wide">{property.name}</p>
-                    <TagManager propertyId={property.id} />
-                  </div>
+                  <button
+                    key={property.id}
+                    type="button"
+                    onClick={() => setSelectedTagPropertyId(property.id)}
+                    className={cn(
+                      'px-3 py-1 rounded-full text-xs font-medium whitespace-nowrap transition-all duration-200 shrink-0 border',
+                      selectedTagPropertyId === property.id
+                        ? 'bg-[var(--color-primary)] text-white border-[var(--color-primary)]'
+                        : 'bg-transparent text-[var(--color-text-secondary)] border-[var(--color-border)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)]',
+                    )}
+                  >
+                    {property.name}
+                  </button>
                 ))}
               </div>
+
+              {/* Show only selected property's tags */}
+              {selectedTagPropertyId > 0 && (
+                <TagManager propertyId={selectedTagPropertyId} />
+              )}
             </Card>
           )}
 
-          {/* Notifications */}
+          {/* Notifications with toggle switches */}
           <Card animationDelay="200ms">
             <h2 className="text-sm font-semibold text-[var(--color-text)] mb-3">Notifications</h2>
-            <NotificationPrefs />
+            <NotificationPrefsRedesigned />
           </Card>
 
           {/* Share Links */}

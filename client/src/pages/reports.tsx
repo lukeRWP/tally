@@ -24,6 +24,7 @@ interface ReportType {
   icon: React.ElementType;
   iconColor: string;
   iconBg: string;
+  borderColor: string;
   hasGroupBy?: boolean;
   hasTagSelect?: boolean;
 }
@@ -36,6 +37,7 @@ const REPORT_TYPES: ReportType[] = [
     icon: FileText,
     iconColor: 'text-[var(--color-primary)]',
     iconBg: 'bg-[var(--color-primary-bg)]',
+    borderColor: 'border-l-[var(--color-primary)]',
   },
   {
     id: 'total-value',
@@ -44,6 +46,7 @@ const REPORT_TYPES: ReportType[] = [
     icon: DollarSign,
     iconColor: 'text-[var(--color-green)]',
     iconBg: 'bg-[var(--color-green-bg)]',
+    borderColor: 'border-l-[var(--color-green)]',
     hasGroupBy: true,
   },
   {
@@ -53,6 +56,7 @@ const REPORT_TYPES: ReportType[] = [
     icon: Layers,
     iconColor: 'text-[var(--color-purple)]',
     iconBg: 'bg-[var(--color-purple-bg)]',
+    borderColor: 'border-l-[var(--color-purple)]',
   },
   {
     id: 'lending',
@@ -61,6 +65,7 @@ const REPORT_TYPES: ReportType[] = [
     icon: HandCoins,
     iconColor: 'text-[var(--color-amber)]',
     iconBg: 'bg-[var(--color-amber-bg)]',
+    borderColor: 'border-l-[var(--color-amber)]',
   },
   {
     id: 'activity',
@@ -69,6 +74,7 @@ const REPORT_TYPES: ReportType[] = [
     icon: History,
     iconColor: 'text-[var(--color-text-secondary)]',
     iconBg: 'bg-[var(--color-elevated)]',
+    borderColor: 'border-l-[var(--color-text-muted)]',
   },
   {
     id: 'tags',
@@ -77,7 +83,7 @@ const REPORT_TYPES: ReportType[] = [
     icon: Tag,
     iconColor: 'text-[var(--color-red)]',
     iconBg: 'bg-[var(--color-red-bg)]',
-    hasTagSelect: true,
+    borderColor: 'border-l-[var(--color-red)]',
   },
 ];
 
@@ -263,37 +269,93 @@ export function Reports() {
     );
   }
 
+  // Insurance report is the featured one
+  const insuranceReport = REPORT_TYPES.find((r) => r.id === 'insurance')!;
+  const otherReports = REPORT_TYPES.filter((r) => r.id !== 'insurance');
+  const isInsuranceExpanded = expandedReport === 'insurance';
+
   return (
     <div className="flex flex-col gap-4">
-      <h1 className="text-lg font-bold text-[var(--color-text)] animate-fade-up">Reports</h1>
+      <h1 className="text-2xl font-extrabold text-[var(--color-text)] tracking-tight animate-fade-up">Reports</h1>
 
-      {/* Property selector */}
+      {/* Property selector -- pill style */}
       <div className="animate-fade-up" style={{ animationDelay: '50ms' }}>
-        <label className="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5">
-          Property
-        </label>
-        <div className="relative">
-          <select
-            value={propertyId}
-            onChange={(e) => setPropertyId(Number(e.target.value))}
-            className={cn(
-              'w-full appearance-none bg-[var(--color-card)] border border-[var(--color-border)]',
-              'rounded-[var(--radius-md)] px-3 py-2 pr-8 text-sm text-[var(--color-text)]',
-              'focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] transition-shadow duration-200',
-            )}
-          >
-            <option value={0} disabled>Select a property...</option>
-            {properties.map((p) => (
-              <option key={p.id} value={p.id}>{p.name}</option>
-            ))}
-          </select>
-          <ChevronDown className="absolute right-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--color-text-muted)] pointer-events-none" />
+        <div className="flex gap-1.5 overflow-x-auto pb-1 -mx-1 px-1">
+          {properties.map((p) => (
+            <button
+              key={p.id}
+              type="button"
+              onClick={() => setPropertyId(p.id)}
+              className={cn(
+                'px-3.5 py-1.5 rounded-full text-sm font-medium whitespace-nowrap transition-all duration-200 shrink-0 border',
+                propertyId === p.id
+                  ? 'bg-[var(--color-primary)] text-white border-[var(--color-primary)]'
+                  : 'bg-[var(--color-card)] text-[var(--color-text-secondary)] border-[var(--color-border)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)]',
+              )}
+            >
+              {p.name}
+            </button>
+          ))}
+          {properties.length === 0 && (
+            <p className="text-xs text-[var(--color-text-muted)] py-1">No properties available.</p>
+          )}
         </div>
       </div>
 
-      {/* Report type grid */}
+      {/* Featured report -- Insurance Summary, full width */}
+      <div className="animate-fade-up" style={{ animationDelay: '100ms' }}>
+        <Card
+          className={cn(
+            'cursor-pointer select-none border-l-[3px]',
+            insuranceReport.borderColor,
+            isInsuranceExpanded
+              ? 'border-[var(--color-primary)] shadow-[0_2px_12px_rgba(0,0,0,0.08)]'
+              : 'hover:shadow-[0_2px_8px_rgba(0,0,0,0.06)] hover:border-[var(--color-primary)]/30',
+          )}
+          onClick={() => handleCardClick('insurance')}
+        >
+          <div className="flex items-start gap-3">
+            <div className={cn('flex items-center justify-center w-12 h-12 rounded-[var(--radius-lg)] shrink-0', insuranceReport.iconBg)}>
+              <FileText className={cn('w-6 h-6', insuranceReport.iconColor)} />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-base font-bold text-[var(--color-text)] leading-tight">{insuranceReport.label}</p>
+              <p className="text-sm text-[var(--color-text-muted)] mt-0.5 leading-snug">{insuranceReport.description}</p>
+              {!isInsuranceExpanded && propertyId > 0 && (
+                <Button
+                  size="sm"
+                  className="mt-2"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleCardClick('insurance');
+                  }}
+                >
+                  Generate
+                </Button>
+              )}
+            </div>
+          </div>
+
+          {isInsuranceExpanded && propertyId > 0 && (
+            <ReportOptionsPanel
+              report={insuranceReport}
+              propertyId={propertyId}
+              onGenerate={(format, groupBy, tagIds) => handleGenerate(insuranceReport, format, groupBy, tagIds)}
+              isPending={generateReport.isPending}
+            />
+          )}
+
+          {isInsuranceExpanded && !propertyId && (
+            <p className="mt-3 pt-3 border-t border-[var(--color-border)] text-xs text-[var(--color-text-muted)]">
+              Select a property above to configure this report.
+            </p>
+          )}
+        </Card>
+      </div>
+
+      {/* Other reports -- 2-column grid with colored left borders */}
       <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
-        {REPORT_TYPES.map((report, idx) => {
+        {otherReports.map((report, idx) => {
           const Icon = report.icon;
           const isExpanded = expandedReport === report.id;
 
@@ -304,11 +366,12 @@ export function Reports() {
                 'col-span-1 animate-fade-up',
                 isExpanded && 'col-span-2 lg:col-span-3',
               )}
-              style={{ animationDelay: `${(idx + 2) * 50}ms` }}
+              style={{ animationDelay: `${(idx + 3) * 50}ms` }}
             >
               <Card
                 className={cn(
-                  'cursor-pointer select-none',
+                  'cursor-pointer select-none border-l-[3px]',
+                  report.borderColor,
                   isExpanded
                     ? 'border-[var(--color-primary)] shadow-[0_2px_12px_rgba(0,0,0,0.08)]'
                     : 'hover:shadow-[0_2px_8px_rgba(0,0,0,0.06)] hover:border-[var(--color-primary)]/30',
