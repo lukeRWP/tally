@@ -35,6 +35,7 @@ export function ItemCard({ item }: ItemCardProps) {
             src={item.product.imageUrl}
             alt={item.name}
             className="w-10 h-10 rounded-[var(--radius-md)] object-cover"
+            loading="lazy"
           />
         ) : (
           <Image className="w-5 h-5" />
