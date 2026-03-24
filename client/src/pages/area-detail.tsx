@@ -46,12 +46,14 @@ export function AreaDetail() {
     return <p className="text-sm text-[var(--color-text-muted)] text-center py-8">Area not found.</p>;
   }
 
-  const breadcrumb = 'breadcrumb' in area ? area.breadcrumb : [];
+  const breadcrumbItems = area.propertyId && (area as unknown as { propertyName?: string }).propertyName
+    ? [{ id: area.propertyId, name: (area as unknown as { propertyName: string }).propertyName, type: 'property' as const }]
+    : [];
 
   return (
     <div className="flex flex-col gap-4">
       {/* Breadcrumbs */}
-      {breadcrumb.length > 0 && <Breadcrumbs items={breadcrumb} />}
+      <Breadcrumbs items={breadcrumbItems} />
 
       {/* Header */}
       <div>
@@ -120,7 +122,7 @@ export function AreaDetail() {
           name: area.name,
           qrCode: area.qrCode,
           type: 'area',
-          breadcrumb: (breadcrumb as { name: string }[]).map((b) => b.name).join(' > '),
+          breadcrumb: breadcrumbItems.map((b) => b.name).join(' > '),
         }]}
         entityType="area"
         isOpen={printOpen}

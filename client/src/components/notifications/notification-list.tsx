@@ -140,7 +140,7 @@ export function NotificationList() {
   const hasUnread = items.some((n) => n.readAt === null);
 
   return (
-    <div className="flex flex-col gap-3">
+    <div className="flex flex-col gap-3 max-w-2xl mx-auto">
       {/* Header row */}
       <div className="flex items-center justify-between">
         <h2 className="text-lg font-bold text-[var(--color-text)]">Notifications</h2>

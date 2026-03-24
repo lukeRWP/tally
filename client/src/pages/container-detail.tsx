@@ -92,10 +92,26 @@ export function ContainerDetail() {
 
   const hasTags = propertyId > 0;
 
+  // Build full breadcrumb: property > area > ancestor containers
+  const breadcrumbItems: import('@/types/inventory').BreadcrumbItem[] = [];
+  const ext = container as unknown as { propertyId?: number; propertyName?: string; areaName?: string };
+  if (ext.propertyId && ext.propertyName) {
+    breadcrumbItems.push({ id: ext.propertyId, name: ext.propertyName, type: 'property' });
+  }
+  if (container.areaId && ext.areaName) {
+    breadcrumbItems.push({ id: container.areaId, name: ext.areaName, type: 'area' });
+  }
+  // Ancestor containers from the closure table (already ordered top-down)
+  if (container.breadcrumb?.length > 0) {
+    for (const bc of container.breadcrumb) {
+      breadcrumbItems.push({ id: bc.id, name: bc.name, type: 'container' });
+    }
+  }
+
   return (
     <div className="flex flex-col gap-4 pb-16">
       {/* Breadcrumbs */}
-      {container.breadcrumb.length > 0 && <Breadcrumbs items={container.breadcrumb} />}
+      <Breadcrumbs items={breadcrumbItems} />
 
       {/* Header */}
       <div className="animate-fade-up">
@@ -210,7 +226,7 @@ export function ContainerDetail() {
       </section>
 
       {/* FAB */}
-      <div className="fixed bottom-24 lg:bottom-8 right-4 lg:right-8 flex flex-col items-end gap-2 z-40">
+      <div className="fixed bottom-24 lg:bottom-8 right-4 lg:right-8 flex flex-col items-end gap-2 z-30">
         {fabOpen && (
           <>
             <Button

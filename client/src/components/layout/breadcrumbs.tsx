@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import { ChevronRight } from 'lucide-react';
+import { Home, ChevronRight } from 'lucide-react';
 import type { BreadcrumbItem } from '@/types/inventory';
 
 interface BreadcrumbsProps {
@@ -19,9 +19,15 @@ function getPath(item: BreadcrumbItem): string {
 export function Breadcrumbs({ items }: BreadcrumbsProps) {
   return (
     <nav className="flex items-center gap-1 text-xs text-[var(--color-text-muted)] mb-3 overflow-x-auto">
-      {items.map((item, i) => (
+      <span className="flex items-center gap-1 whitespace-nowrap">
+        <Link to="/" className="hover:text-[var(--color-text-secondary)] transition-colors flex items-center gap-1">
+          <Home className="w-3 h-3" />
+          Home
+        </Link>
+      </span>
+      {items.map((item) => (
         <span key={`${item.type}-${item.id}`} className="flex items-center gap-1 whitespace-nowrap">
-          {i > 0 && <ChevronRight className="w-3 h-3" />}
+          <ChevronRight className="w-3 h-3" />
           <Link to={getPath(item)} className="hover:text-[var(--color-text-secondary)] transition-colors">
             {item.name}
           </Link>

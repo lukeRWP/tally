@@ -1,7 +1,8 @@
 import { useNavigate } from 'react-router-dom';
-import { Image, ChevronRight } from 'lucide-react';
+import { ChevronRight } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { getItemIcon } from '@/lib/item-icons';
 import type { Item } from '@/types/inventory';
 
 interface ItemCardProps {
@@ -23,6 +24,7 @@ const statusVariant = {
 
 export function ItemCard({ item }: ItemCardProps) {
   const navigate = useNavigate();
+  const FallbackIcon = getItemIcon(item.name);
 
   return (
     <Card
@@ -38,7 +40,7 @@ export function ItemCard({ item }: ItemCardProps) {
             loading="lazy"
           />
         ) : (
-          <Image className="w-5 h-5" />
+          <FallbackIcon className="w-5 h-5" />
         )}
       </div>
 

@@ -11,6 +11,7 @@ import { Card } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useItem, useDeleteProperty } from '@/hooks/use-inventory';
 import { toast } from '@/components/ui/toast';
+import { Breadcrumbs } from '@/components/layout/breadcrumbs';
 import { FileList } from '@/components/files/file-list';
 import { FileUpload } from '@/components/files/file-upload';
 import { ConditionForm } from '@/components/condition/condition-form';
@@ -236,8 +237,15 @@ export function ItemDetail() {
         )
       : null;
 
+  // Breadcrumb from API
+  const breadcrumbItems = (item as unknown as { breadcrumb?: import('@/types/inventory').BreadcrumbItem[] })
+    ?.breadcrumb ?? [];
+
   return (
     <div className="flex flex-col gap-4 pb-24 lg:pb-8">
+      {/* Breadcrumbs */}
+      <Breadcrumbs items={breadcrumbItems} />
+
       {/* Hero Section */}
       <div className="animate-fade-up">
         <h1 className="text-2xl font-extrabold text-[var(--color-text)] tracking-tight">{item.name}</h1>

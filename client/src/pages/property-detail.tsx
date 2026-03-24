@@ -3,6 +3,7 @@ import { useParams } from 'react-router-dom';
 import { MapPin, Plus, LayoutGrid, Package, Box } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Breadcrumbs } from '@/components/layout/breadcrumbs';
 import { AreaCard } from '@/components/inventory/area-card';
 import { EntityForm } from '@/components/inventory/entity-form';
 import { useProperty, useAreas, useCreateArea } from '@/hooks/use-inventory';
@@ -42,6 +43,9 @@ export function PropertyDetail() {
 
   return (
     <div className="flex flex-col gap-4">
+      {/* Breadcrumbs */}
+      <Breadcrumbs items={[]} />
+
       {/* Hero Header Band */}
       <div className="bg-[var(--color-primary-bg)] -mx-4 -mt-4 px-4 pt-5 pb-4 rounded-b-2xl animate-fade-up">
         <h1 className="text-2xl font-extrabold text-[var(--color-text)] tracking-tight">{property.name}</h1>
