@@ -80,6 +80,7 @@ require('./src/modules/lending/lending.routes')({ app, db, logger, config });
 require('./src/modules/dates/dates.routes')({ app, db, logger, config });
 require('./src/modules/accessories/accessories.routes')({ app, db, logger, config });
 require('./src/modules/audit/audit.routes')({ app, db, logger, config });
+require('./src/modules/notifications/notifications.routes')({ app, db, logger, config });
 
 // ── Error Handler (must be last) ────────────────────────────────────────────
 
