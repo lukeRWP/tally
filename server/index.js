@@ -62,7 +62,7 @@ app.get('/health/live', async (req, res) => {
 });
 
 // ── Module Routes ───────────────────────────────────────────────────────────
-// Auth routes will be registered here (Task 6)
+require('./src/modules/auth/auth.routes')({ app, db, logger, config });
 // Inventory routes will be registered here (Tasks 7-10)
 
 // ── Error Handler (must be last) ────────────────────────────────────────────
