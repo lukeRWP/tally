@@ -32,8 +32,9 @@ export function useCheckDuplicate() {
 export function useSearchProducts(query: string) {
   return useQuery({
     queryKey: queryKeys.products.search(query),
-    queryFn: () => api.get<unknown[]>(`/api/products/_x_/search?q=${encodeURIComponent(query)}`),
+    queryFn: () => api.get<{ products: unknown[] }>(`/api/products/_x_/search?q=${encodeURIComponent(query)}`),
     enabled: query.length >= 2,
+    select: (data) => data.products,
   });
 }
 

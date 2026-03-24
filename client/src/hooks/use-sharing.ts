@@ -14,7 +14,8 @@ interface ShareLink {
 export function useMyShareLinks() {
   return useQuery({
     queryKey: ['sharing', 'my-links'],
-    queryFn: () => api.get<ShareLink[]>('/api/sharing/_x_/my-links'),
+    queryFn: () => api.get<{ links: ShareLink[] }>('/api/sharing/_x_/my-links'),
+    select: (data) => data.links,
   });
 }
 

@@ -17,17 +17,19 @@ export function useNotifications(options?: { unreadOnly?: boolean }) {
   return useQuery({
     queryKey: [...queryKeys.notifications.list(), options],
     queryFn: () =>
-      api.get<Notification[]>(
+      api.get<{ notifications: Notification[] }>(
         `/api/notifications/_x_/list?unreadOnly=${options?.unreadOnly || false}`,
       ),
+    select: (data) => data.notifications,
   });
 }
 
 export function useUnreadCount() {
   return useQuery({
     queryKey: queryKeys.notifications.unreadCount(),
-    queryFn: () => api.get<number>('/api/notifications/_x_/unread-count'),
-    refetchInterval: 60000, // Poll every minute
+    queryFn: () => api.get<{ count: number }>('/api/notifications/_x_/unread-count'),
+    select: (data) => data.count,
+    refetchInterval: 60000,
   });
 }
 
@@ -60,7 +62,8 @@ export function useDismissNotification() {
 export function useNotificationPreferences() {
   return useQuery({
     queryKey: queryKeys.notifications.preferences(),
-    queryFn: () => api.get<Record<string, boolean>>('/api/notifications/_x_/preferences'),
+    queryFn: () => api.get<{ preferences: Record<string, boolean> }>('/api/notifications/_x_/preferences'),
+    select: (data) => data.preferences,
   });
 }
 
@@ -86,6 +89,7 @@ export interface AuditEntry {
 export function useRecentActivity() {
   return useQuery({
     queryKey: queryKeys.audit.recent(),
-    queryFn: () => api.get<AuditEntry[]>('/api/audit/_x_/recent'),
+    queryFn: () => api.get<{ entries: AuditEntry[] }>('/api/audit/_x_/recent'),
+    select: (data) => data.entries,
   });
 }
