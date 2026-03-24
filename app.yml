@@ -1,0 +1,88 @@
+name: tally
+displayName: "Tally Home Inventory"
+repo: "git@github.com:lukeRWP/tally.git"
+vaultPrefix: "secret/apps/tally"
+
+ansibleGroups:
+  client: tally_clients
+  server: tally_servers
+  database: tally_databases
+  storage: tally_storage
+
+build:
+  env: { NODE_ENV: development }
+  components:
+    client:
+      dir: client
+      install: "npm ci"
+      build: "npm run build"
+      tarball:
+        name: "client.tar.gz"
+        from: "dist"
+        args: "-C dist ."
+    server:
+      dir: server
+      install: "npm ci"
+      tarball:
+        name: "server.tar.gz"
+        includes: [index.js, package.json, package-lock.json, src/]
+
+databases:
+  list:
+    - TALLY
+  schemaPrefix: "TALLY"
+  adminDb: "TALLY"
+  envVars:
+    TALLY_DB: TALLY
+
+vmTemplate:
+  roles:
+    client:
+      - common
+      - node-exporter
+      - nodejs
+      - nginx
+      - app-client
+    server:
+      - common
+      - node-exporter
+      - nodejs
+      - app-server
+    database:
+      - common
+      - node-exporter
+      - mysql
+    storage:
+      - common
+      - node-exporter
+      - minio
+  healthChecks:
+    server:
+      path: "/health/live"
+      port: 2727
+    storage:
+      path: "/minio/health/live"
+      port: 9000
+      scheme: https
+    database:
+      type: tcp
+      port: 3306
+    client:
+      path: "/"
+      port: 443
+      scheme: https
+
+environments:
+  prod:
+    vlan: 130
+    cidr: "10.0.130.0/24"
+    gateway: "10.0.130.1"
+    terraformWorkspace: "prod"
+    hosts:
+      client: { ip: "10.0.130.10", proxmoxNode: "prx002" }
+      server: { ip: "10.0.130.11", proxmoxNode: "prx002" }
+      database: { ip: "10.0.130.12", proxmoxNode: "prx002" }
+      storage: { ip: "10.0.130.13", proxmoxNode: "prx002" }
+    pipeline:
+      autoDeployBranch: "master"
+      requiresApproval: false
