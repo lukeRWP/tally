@@ -110,8 +110,13 @@ Each feature lives in `server/src/modules/{feature}/` with three files:
 | products    | `/api/products`   | Barcode lookup, catalog CRUD, duplicate check, text search |
 | files       | `/api/files`      | Upload, download (presigned URLs), list by item, delete    |
 | conditions  | `/api/conditions` | Create snapshot (photo + rating), history by item, delete  |
-| tags        | `/api/tags`       | Tag CRUD, polymorphic entity tagging                       |
-| labels      | `/api/labels`     | QR generation, PDF/ZPL label printing, code resolution     |
+| tags          | `/api/tags`          | Tag CRUD, polymorphic entity tagging                       |
+| labels        | `/api/labels`        | QR generation, PDF/ZPL label printing, code resolution     |
+| lending       | `/api/lending`       | Lend, return, history, overdue tracking                    |
+| dates         | `/api/dates`         | User-defined date types per item, upcoming dates           |
+| accessories   | `/api/accessories`   | Link/unlink items as accessories                           |
+| audit         | `/api/audit`         | Change log, activity feed by property/entity/recent        |
+| notifications | `/api/notifications` | List, mark read, preferences, date-based checks            |
 
 All modules are registered in `server/index.js` via:
 
@@ -126,6 +131,11 @@ require('./src/modules/files/condition.routes')({ app, db, logger, config });
 require('./src/modules/products/products.routes')({ app, db, logger, config });
 require('./src/modules/tags/tags.routes')({ app, db, logger, config });
 require('./src/modules/labels/labels.routes')({ app, db, logger, config });
+require('./src/modules/lending/lending.routes')({ app, db, logger, config });
+require('./src/modules/dates/dates.routes')({ app, db, logger, config });
+require('./src/modules/accessories/accessories.routes')({ app, db, logger, config });
+require('./src/modules/audit/audit.routes')({ app, db, logger, config });
+require('./src/modules/notifications/notifications.routes')({ app, db, logger, config });
 ```
 
 ## Phase 2 Infrastructure & Integrations
@@ -305,3 +315,53 @@ This allows rapid relocation of many items without navigating away from the scan
 - Tags can be attached to any entity type (`item`, `container`, `area`) via the `entity_tags` join table (`ENTITY_TYPE` + `ENTITY_ID` columns).
 - API: `GET /api/tags/_x_/property/:propertyId` lists all tags for a property; `POST /api/tags/_y_/entity` attaches a tag to an entity; `DELETE /api/tags/_d_/entity` removes it.
 - The search endpoint (`GET /api/items/_x_/search`) accepts an optional `tagIds` query parameter (comma-separated) to filter results to items that have all specified tags.
+
+## Phase 4 Features
+
+### Lending
+
+- Lending an item changes its `STATUS` to `'lent'`; returning it sets `STATUS` back to `'active'`.
+- `POST /api/lending/_y_/lend` creates a loan record; `POST /api/lending/_y_/return/:loanId` closes it.
+- `GET /api/lending/_x_/overdue` lists all loans past their due date across a property.
+- Full loan history is available per item via `GET /api/lending/_x_/item/:itemId`.
+
+### User-Defined Dates
+
+- Each item can have any number of named date entries (e.g. "Warranty expiry", "Last service").
+- Date types are user-defined strings — no fixed schema enumeration.
+- `GET /api/dates/_x_/upcoming` returns items with dates falling within a configurable look-ahead window.
+
+### Accessories
+
+- Items can be linked as accessories of other items (many-to-many, within the same property).
+- `POST /api/accessories/_y_/link` and `DELETE /api/accessories/_d_/unlink` manage the relationship.
+- Accessory links are property-scoped — cross-property links are not permitted.
+
+### Audit Trail
+
+- All CRUD operations on core entities (properties, areas, containers, items) write an entry to the `audit_log` table automatically.
+- `GET /api/audit/_x_/property/:propertyId` returns the full change log for a property.
+- `GET /api/audit/_x_/entity/:entityType/:entityId` returns the history for a single entity.
+- `GET /api/audit/_x_/recent` returns the most recent activity across all accessible properties.
+
+### Notifications
+
+- Notifications are opt-in per type — all notification types are **off by default**.
+- Preferences are stored per user per property in `notification_preferences`.
+- `GET /api/notifications/_x_/list` returns unread notifications for the current user.
+- `POST /api/notifications/_y_/mark-read` marks one or all notifications as read.
+- `GET /api/notifications/_x_/preferences` and `PUT /api/notifications/_u_/preferences` manage per-type opt-in settings.
+- Date-based notifications (e.g. upcoming warranty expiry) are triggered by `GET /api/notifications/_x_/check-dates` and respect the user's preferences.
+
+### Recycle Bin
+
+- Soft-deleted items are retained for 30 days before permanent purge.
+- `GET /api/items/_x_/deleted` lists all soft-deleted items for a property.
+- `POST /api/items/_y_/:id/restore` recovers a soft-deleted item.
+- `DELETE /api/items/_d_/:id/purge` permanently removes a soft-deleted item immediately.
+- Automatic purge of items older than 30 days is handled server-side.
+
+### Depreciation
+
+- Depreciation is calculated **client-side on demand** — no server storage of depreciation values.
+- Calculated from `purchase_price`, `purchase_date`, and a user-supplied depreciation rate/method.
