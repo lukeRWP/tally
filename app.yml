@@ -78,10 +78,11 @@ environments:
     cidr: "10.0.130.0/24"
     gateway: "10.0.130.1"
     terraformWorkspace: "prod"
+    domain: "tally.razorwire-productions.com"
     hosts:
-      client: { ip: "10.0.130.10", proxmoxNode: "prx002" }
+      client: { ip: "10.0.130.10", externalIp: "10.0.3.40", proxmoxNode: "prx001" }
       server: { ip: "10.0.130.11", proxmoxNode: "prx002" }
-      database: { ip: "10.0.130.12", proxmoxNode: "prx002" }
+      database: { ip: "10.0.130.12", proxmoxNode: "prx001" }
       storage: { ip: "10.0.130.13", proxmoxNode: "prx002" }
     pipeline:
       autoDeployBranch: "master"
