@@ -180,6 +180,9 @@ export function Home() {
   // Filter panel visibility (collapsible on mobile)
   const [filtersOpen, setFiltersOpen] = React.useState(false);
 
+  // Activity feed collapsed/expanded
+  const [activityExpanded, setActivityExpanded] = React.useState(false);
+
   // Tag dropdown
   const [tagDropdownOpen, setTagDropdownOpen] = React.useState(false);
   const tagDropdownRef = React.useRef<HTMLDivElement>(null);
@@ -533,7 +536,17 @@ export function Home() {
       {/* Recent Activity */}
       <section className="animate-fade-up" style={{ animationDelay: '150ms' }}>
         <div className="flex items-center justify-between mb-2">
-          <h2 className="text-sm font-semibold text-[var(--color-text)]">Recent Activity</h2>
+          <button
+            type="button"
+            onClick={() => setActivityExpanded(!activityExpanded)}
+            className="flex items-center gap-2"
+          >
+            <h2 className="text-sm font-semibold text-[var(--color-text)]">Recent Activity</h2>
+            <ChevronDown className={cn(
+              "w-4 h-4 text-[var(--color-text-muted)] transition-transform duration-200",
+              activityExpanded && "rotate-180"
+            )} />
+          </button>
           <button
             type="button"
             onClick={() => navigate('/notifications')}
@@ -560,44 +573,79 @@ export function Home() {
           </div>
         )}
 
-        {!activityLoading && recentActivity && recentActivity.length > 0 && (
-          <div className="flex flex-col gap-0">
-            {activityByDay.map((group, gIdx) => (
-              <div key={group.label}>
-                {/* Day divider */}
-                <div className={cn(
-                  'flex items-center gap-2 py-1.5',
-                  gIdx > 0 && 'mt-2',
-                )}>
-                  <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">
-                    {group.label}
-                  </span>
-                  <div className="flex-1 h-px bg-[var(--color-border)]" />
-                </div>
+        {!activityLoading && recentActivity && recentActivity.length > 0 && (() => {
+          // Flatten entries for slicing when collapsed
+          const visibleEntries = activityExpanded ? activityEntries : activityEntries.slice(0, 3);
+          const visibleByDay: Array<{ label: string; entries: typeof activityEntries }> = [];
+          let lastDay = '';
+          for (const entry of visibleEntries) {
+            const dayLabel = activityDayLabel(entry.createdAt);
+            if (dayLabel !== lastDay) {
+              visibleByDay.push({ label: dayLabel, entries: [] });
+              lastDay = dayLabel;
+            }
+            visibleByDay[visibleByDay.length - 1].entries.push(entry);
+          }
 
-                {group.entries.map((entry, idx) => (
-                  <div
-                    key={entry.id}
-                    className="flex items-start gap-3 text-xs py-1.5 animate-fade-up"
-                    style={{ animationDelay: `${idx * 30}ms` }}
-                  >
-                    {/* Colored dot */}
-                    <span className={cn(
-                      'flex-shrink-0 mt-1.5 w-2 h-2 rounded-full',
-                      activityDotColor(entry.action),
-                    )} />
-                    <span className="flex-1 text-[var(--color-text-secondary)] line-clamp-1">
-                      {activityLabel(entry)}
+          return (
+            <div className="flex flex-col gap-0">
+              {visibleByDay.map((group, gIdx) => (
+                <div key={group.label}>
+                  {/* Day divider */}
+                  <div className={cn(
+                    'flex items-center gap-2 py-1.5',
+                    gIdx > 0 && 'mt-2',
+                  )}>
+                    <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">
+                      {group.label}
                     </span>
-                    <span className="flex-shrink-0 text-[var(--color-text-muted)]">
-                      {activityRelativeTime(entry.createdAt)}
-                    </span>
+                    <div className="flex-1 h-px bg-[var(--color-border)]" />
                   </div>
-                ))}
-              </div>
-            ))}
-          </div>
-        )}
+
+                  {group.entries.map((entry, idx) => (
+                    <div
+                      key={entry.id}
+                      className="flex items-start gap-3 text-xs py-1.5 animate-fade-up"
+                      style={{ animationDelay: `${idx * 30}ms` }}
+                    >
+                      {/* Colored dot */}
+                      <span className={cn(
+                        'flex-shrink-0 mt-1.5 w-2 h-2 rounded-full',
+                        activityDotColor(entry.action),
+                      )} />
+                      <span className="flex-1 text-[var(--color-text-secondary)] line-clamp-1">
+                        {activityLabel(entry)}
+                      </span>
+                      <span className="flex-shrink-0 text-[var(--color-text-muted)]">
+                        {activityRelativeTime(entry.createdAt)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              ))}
+
+              {!activityExpanded && activityEntries.length > 3 && (
+                <button
+                  type="button"
+                  onClick={() => setActivityExpanded(true)}
+                  className="text-xs text-[var(--color-primary)] mt-2 text-left hover:underline"
+                >
+                  Show {activityEntries.length - 3} more
+                </button>
+              )}
+
+              {activityExpanded && activityEntries.length > 3 && (
+                <button
+                  type="button"
+                  onClick={() => setActivityExpanded(false)}
+                  className="text-xs text-[var(--color-primary)] mt-2 text-left hover:underline"
+                >
+                  Show less
+                </button>
+              )}
+            </div>
+          );
+        })()}
       </section>
 
       <EntityForm

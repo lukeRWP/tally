@@ -1,5 +1,6 @@
 const { generateCode } = require('../../utils/qr');
 const AuditService = require('../audit/audit.service');
+const AreasService = require('./areas.service');
 
 let _db = null;
 let _logger = null;
@@ -155,12 +156,30 @@ const PropertiesService = {
     return PropertiesService.getById(id);
   },
 
-  async softDelete(id, userId) {
+  async cascadeDelete(propertyId, userId) {
+    // 1. Find all areas in this property
+    const areas = await _db.query(
+      'SELECT ID FROM TALLY.areas WHERE PROPERTY_ID = ? AND DELETED_AT IS NULL',
+      [propertyId]
+    );
+
+    // 2. For each area, cascade delete
+    for (const area of areas) {
+      await AreasService.cascadeDelete(area.ID, userId);
+    }
+
+    // 3. Soft-delete the property
     await _db.query(
       'UPDATE TALLY.properties SET DELETED_AT = NOW() WHERE ID = ?',
-      [id]
+      [propertyId]
     );
-    AuditService.logChange(userId, 'property', id, 'deleted', {}, id);
+
+    // 4. Log the audit
+    AuditService.logChange(userId, 'property', propertyId, 'deleted', {}, propertyId);
+  },
+
+  async softDelete(id, userId) {
+    await PropertiesService.cascadeDelete(id, userId);
   },
 
   async restore(id, userId) {

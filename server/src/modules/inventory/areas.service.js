@@ -113,13 +113,60 @@ const AreasService = {
     return AreasService.getById(id);
   },
 
-  async softDelete(id, userId) {
-    const propertyId = await AreasService.getPropertyIdForArea(id);
+  async cascadeDelete(areaId, userId) {
+    const propertyId = await AreasService.getPropertyIdForArea(areaId);
+
+    // 1. Find all containers in this area
+    const containers = await _db.query(
+      'SELECT ID FROM TALLY.containers WHERE AREA_ID = ? AND DELETED_AT IS NULL',
+      [areaId]
+    );
+
+    // 2. For each container, soft-delete all items inside and clean up
+    for (const container of containers) {
+      const items = await _db.query(
+        'SELECT ID FROM TALLY.items WHERE CONTAINER_ID = ? AND DELETED_AT IS NULL',
+        [container.ID]
+      );
+
+      for (const item of items) {
+        // Return active lending
+        await _db.query(
+          'UPDATE TALLY.item_lending SET RETURNED_AT = NOW() WHERE ITEM_ID = ? AND RETURNED_AT IS NULL',
+          [item.ID]
+        );
+        // Soft-delete the item
+        await _db.query(
+          "UPDATE TALLY.items SET DELETED_AT = NOW(), STATUS = 'removed' WHERE ID = ?",
+          [item.ID]
+        );
+      }
+
+      // Remove closure table entries for this container
+      await _db.query(
+        'DELETE FROM TALLY.container_paths WHERE ANCESTOR_ID = ? OR DESCENDANT_ID = ?',
+        [container.ID, container.ID]
+      );
+
+      // Soft-delete the container
+      await _db.query(
+        'UPDATE TALLY.containers SET DELETED_AT = NOW() WHERE ID = ?',
+        [container.ID]
+      );
+    }
+
+    // 3. Soft-delete the area
     await _db.query(
       'UPDATE TALLY.areas SET DELETED_AT = NOW() WHERE ID = ?',
-      [id]
+      [areaId]
     );
-    AuditService.logChange(userId, 'area', id, 'deleted', {}, propertyId);
+
+    // 4. Audit
+    AuditService.logChange(userId, 'area', areaId, 'deleted', {}, propertyId);
+  },
+
+  async softDelete(id, userId) {
+    await AreasService.cascadeDelete(id, userId);
   },
 
   async getPropertyIdForArea(areaId) {

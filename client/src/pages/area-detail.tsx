@@ -1,13 +1,13 @@
 import { useState } from 'react';
-import { useParams } from 'react-router-dom';
-import { Plus, Printer } from 'lucide-react';
+import { useParams, useNavigate } from 'react-router-dom';
+import { Plus, Printer, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Breadcrumbs } from '@/components/layout/breadcrumbs';
 import { ContainerCard } from '@/components/inventory/container-card';
 import { EntityForm } from '@/components/inventory/entity-form';
-import { useArea, useContainers, useCreateContainer } from '@/hooks/use-inventory';
+import { useArea, useContainers, useCreateContainer, useDeleteArea } from '@/hooks/use-inventory';
 import { toast } from '@/components/ui/toast';
 import { TagPicker } from '@/components/tags/tag-picker';
 import { LabelPrintDialog } from '@/components/labels/label-print-dialog';
@@ -16,11 +16,29 @@ export function AreaDetail() {
   const { areaId } = useParams<{ areaId: string }>();
   const id = Number(areaId);
 
+  const navigate = useNavigate();
   const [createOpen, setCreateOpen] = useState(false);
   const [printOpen, setPrintOpen] = useState(false);
   const { data: area, isLoading: areaLoading } = useArea(id);
   const { data: containers, isLoading: containersLoading } = useContainers(id);
   const createContainer = useCreateContainer();
+  const deleteArea = useDeleteArea();
+
+  function handleDeleteArea() {
+    const containerCount = area?.containerCount ?? 0;
+    const itemCount = area?.itemCount ?? 0;
+    const confirmed = window.confirm(
+      `This will delete the area and all ${containerCount} ${containerCount === 1 ? 'container' : 'containers'} and ${itemCount} ${itemCount === 1 ? 'item' : 'items'} inside it. This action moves everything to the recycle bin.`
+    );
+    if (!confirmed) return;
+    deleteArea.mutate(id, {
+      onSuccess: () => {
+        toast('Area deleted');
+        navigate(area?.propertyId ? `/properties/${area.propertyId}` : '/');
+      },
+      onError: (err) => toast(err.message),
+    });
+  }
 
   function handleCreateContainer(data: Record<string, unknown>) {
     createContainer.mutate(
@@ -59,10 +77,22 @@ export function AreaDetail() {
       <div>
         <div className="flex items-center justify-between gap-2">
           <h1 className="text-lg font-bold text-[var(--color-text)]">{area.name}</h1>
-          <Button variant="outline" size="sm" onClick={() => setPrintOpen(true)}>
-            <Printer className="w-4 h-4" />
-            Print Label
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" onClick={() => setPrintOpen(true)}>
+              <Printer className="w-4 h-4" />
+              Print Label
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleDeleteArea}
+              disabled={deleteArea.isPending}
+              className="text-[var(--color-red)] border-[var(--color-red)] hover:bg-[var(--color-red-bg)]"
+            >
+              <Trash2 className="w-4 h-4" />
+              Delete
+            </Button>
+          </div>
         </div>
         <p className="text-[10px] font-mono text-[var(--color-text-muted)]">{area.qrCode}</p>
         {area.description && (

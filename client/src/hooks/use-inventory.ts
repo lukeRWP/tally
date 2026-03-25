@@ -80,6 +80,17 @@ export function useArea(id: number) {
   });
 }
 
+export function useDeleteArea() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) => api.del(`/api/areas/_d_/${id}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.areas.all });
+      qc.invalidateQueries({ queryKey: queryKeys.properties.all });
+    },
+  });
+}
+
 export function useCreateArea() {
   const qc = useQueryClient();
   return useMutation({
