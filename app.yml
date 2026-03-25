@@ -1,6 +1,6 @@
 name: tally
 displayName: "Tally Home Inventory"
-repo: "git@github.com:lukeRWP/tally.git"
+repo: "https://github.com/lukeRWP/tally.git"
 vaultPrefix: "secret/apps/tally"
 
 ansibleGroups:
