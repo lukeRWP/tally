@@ -74,16 +74,16 @@ vmTemplate:
 
 environments:
   prod:
-    vlan: 130
-    cidr: "10.0.130.0/24"
-    gateway: "10.0.130.1"
+    vlan: 120
+    cidr: "10.0.120.0/24"
+    gateway: "10.0.120.1"
     terraformWorkspace: "prod"
     domain: "tally.razorwire-productions.com"
     hosts:
-      client: { ip: "10.0.130.10", proxmoxNode: "prx001" }
-      server: { ip: "10.0.130.11", proxmoxNode: "prx002" }
-      database: { ip: "10.0.130.12", proxmoxNode: "prx001" }
-      storage: { ip: "10.0.130.13", proxmoxNode: "prx002" }
+      client: { ip: "10.0.120.20", proxmoxNode: "prx001" }
+      server: { ip: "10.0.120.21", proxmoxNode: "prx002" }
+      database: { ip: "10.0.120.22", proxmoxNode: "prx001" }
+      storage: { ip: "10.0.120.23", proxmoxNode: "prx002" }
     pipeline:
       autoDeployBranch: "master"
       requiresApproval: false
