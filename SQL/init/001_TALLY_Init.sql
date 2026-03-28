@@ -327,7 +327,17 @@ CREATE TABLE IF NOT EXISTS share_links (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ============================================================
--- 20. sessions
+-- 20. oauth_state (PKCE state storage — shared across cluster workers)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS oauth_state (
+    STATE_KEY      VARCHAR(64)  NOT NULL PRIMARY KEY,
+    CODE_VERIFIER  VARCHAR(128) NOT NULL,
+    EXPIRES_AT     DATETIME     NOT NULL,
+    CREATED_AT     DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ============================================================
+-- 21. sessions
 -- ============================================================
 CREATE TABLE IF NOT EXISTS sessions (
     ID         INT         NOT NULL AUTO_INCREMENT,

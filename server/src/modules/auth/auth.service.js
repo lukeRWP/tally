@@ -1,10 +1,6 @@
 const crypto = require('crypto');
 const { v4: uuidv4 } = require('uuid');
-const NodeCache = require('node-cache');
 const { createRemoteJWKSet, jwtVerify } = require('jose');
-
-// State → codeVerifier cache: 5 minute TTL
-const stateCache = new NodeCache({ stdTTL: 300, checkperiod: 60 });
 
 // Singleton service state
 let _db = null;
@@ -65,7 +61,10 @@ const AuthService = {
       const fakeCode = 'bypass-code';
       const callbackUrl = `${_config.clientUrl}/api/auth/_x_/oauth/callback?code=${fakeCode}&state=${fakeState}`;
       // Store a fake verifier so exchangeCode can find it
-      stateCache.set(fakeState, 'bypass-verifier');
+      await _db.query(
+        'INSERT INTO TALLY.oauth_state (STATE_KEY, CODE_VERIFIER, EXPIRES_AT) VALUES (?, ?, DATE_ADD(NOW(), INTERVAL 5 MINUTE))',
+        ['bypass-state', 'bypass-verifier']
+      );
       return { url: callbackUrl, state: fakeState };
     }
 
@@ -77,7 +76,11 @@ const AuthService = {
       .update(codeVerifier)
       .digest('base64url');
 
-    stateCache.set(state, codeVerifier);
+    // Store state→verifier in DB (shared across all cluster workers)
+    await _db.query(
+      'INSERT INTO TALLY.oauth_state (STATE_KEY, CODE_VERIFIER, EXPIRES_AT) VALUES (?, ?, DATE_ADD(NOW(), INTERVAL 5 MINUTE))',
+      [state, codeVerifier]
+    );
 
     const params = new URLSearchParams({
       client_id: _config.auth.entraClientId,
@@ -98,11 +101,16 @@ const AuthService = {
       return AuthService._devProfile();
     }
 
-    const codeVerifier = stateCache.get(state);
-    if (!codeVerifier) {
+    // Retrieve and delete state from DB (atomic — works across cluster workers)
+    const rows = await _db.query(
+      'SELECT CODE_VERIFIER FROM TALLY.oauth_state WHERE STATE_KEY = ? AND EXPIRES_AT > NOW()',
+      [state]
+    );
+    if (!rows.length) {
       throw new Error('Invalid or expired state parameter');
     }
-    stateCache.del(state);
+    const codeVerifier = rows[0].CODE_VERIFIER;
+    await _db.query('DELETE FROM TALLY.oauth_state WHERE STATE_KEY = ?', [state]);
 
     // Exchange code for tokens
     const tokenRes = await fetch(
