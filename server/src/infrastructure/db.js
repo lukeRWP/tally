@@ -30,7 +30,20 @@ function buildPoolConfig() {
   };
 
   if (sslEnabled) {
-    cfg.ssl = { rejectUnauthorized: true };
+    const fs = require('fs');
+    const path = require('path');
+    const sslPath = process.env.MYSQL_SSL_PATH || '';
+    const sslOpts = { rejectUnauthorized: false };
+
+    if (sslPath && fs.existsSync(path.join(sslPath, 'ca.pem'))) {
+      sslOpts.ca = fs.readFileSync(path.join(sslPath, 'ca.pem'));
+      if (fs.existsSync(path.join(sslPath, 'client-cert.pem'))) {
+        sslOpts.cert = fs.readFileSync(path.join(sslPath, 'client-cert.pem'));
+        sslOpts.key = fs.readFileSync(path.join(sslPath, 'client-key.pem'));
+      }
+    }
+
+    cfg.ssl = sslOpts;
   }
 
   return cfg;
