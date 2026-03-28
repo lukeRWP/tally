@@ -11,8 +11,8 @@ module.exports = function authRoutes({ app, db, logger, config }) {
   });
 
   // GET /api/auth/_x_/oauth/init — start OAuth flow
-  app.get('/api/auth/_x_/oauth/init', (req, res) => {
-    const { url } = AuthService.getAuthorizationUrl();
+  app.get('/api/auth/_x_/oauth/init', async (req, res) => {
+    const { url } = await AuthService.getAuthorizationUrl();
     res.redirect(url);
   });
 

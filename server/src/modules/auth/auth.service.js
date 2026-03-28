@@ -54,7 +54,7 @@ const AuthService = {
 
   // ── OAuth / PKCE ─────────────────────────────────────────────────────────
 
-  getAuthorizationUrl() {
+  async getAuthorizationUrl() {
     if (_config.auth.bypassAuth) {
       // Return a fake redirect straight to the callback with a fake code+state
       const fakeState = 'bypass-state';
