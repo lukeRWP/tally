@@ -15,6 +15,7 @@ const logger = require('./src/utils/logger');
 const errorHandler = require('./src/middleware/error-handler');
 
 const app = express();
+app.set('trust proxy', 1); // Trust first proxy (Nginx)
 
 // ── Middleware ──────────────────────────────────────────────────────────────
 
