@@ -59,6 +59,7 @@ const config = Object.freeze({
 
   auth: {
     entraClientId: process.env.ENTRA_CLIENT_ID,
+    entraClientSecret: process.env.ENTRA_CLIENT_SECRET,
     entraTenantId: process.env.ENTRA_TENANT_ID,
     bypassAuth: process.env.BYPASS_AUTH === 'true',
     cookieSecret: process.env.COOKIE_SECRET,

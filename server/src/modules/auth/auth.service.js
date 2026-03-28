@@ -113,6 +113,7 @@ const AuthService = {
         body: new URLSearchParams({
           grant_type: 'authorization_code',
           client_id: _config.auth.entraClientId,
+          client_secret: _config.auth.entraClientSecret,
           code,
           redirect_uri: `${_config.clientUrl}/api/auth/_x_/oauth/callback`,
           code_verifier: codeVerifier,
