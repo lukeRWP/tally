@@ -32,13 +32,15 @@ if (missing.required.length > 0) {
   }
 }
 
-if (missing.entra.length > 0) {
+if (missing.entra.length > 0 && process.env.BYPASS_AUTH !== 'true') {
   const msg = `Missing Entra environment variables: ${missing.entra.join(', ')}. Auth will not work unless BYPASS_AUTH=true.`;
   if (isProduction) {
     throw new Error(msg);
   } else {
     console.warn(`[config] WARNING: ${msg}`);
   }
+} else if (missing.entra.length > 0) {
+  console.warn(`[config] WARNING: Entra vars missing but BYPASS_AUTH=true — skipping auth check`);
 }
 
 const config = Object.freeze({
