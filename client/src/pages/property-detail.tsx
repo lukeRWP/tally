@@ -80,7 +80,7 @@ export function PropertyDetail() {
             Delete
           </Button>
         </div>
-        <p className="text-[10px] font-mono text-[var(--color-text-muted)] mt-0.5">{property.qrCode}</p>
+        <p className="text-[11px] font-mono text-[var(--color-text-muted)] mt-0.5">{property.qrCode}</p>
         {property.address && (
           <div className="flex items-center gap-1 mt-1.5">
             <MapPin className="w-3.5 h-3.5 text-[var(--color-primary)]" />
@@ -92,7 +92,7 @@ export function PropertyDetail() {
         )}
 
         {/* Stats row */}
-        <div className="flex gap-2 mt-3">
+        <div className="flex flex-wrap gap-2 mt-3">
           <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-[var(--color-card)] text-xs font-semibold text-[var(--color-text-secondary)]">
             <LayoutGrid className="w-3 h-3 text-[var(--color-primary)]" />
             {property.areaCount} {property.areaCount === 1 ? 'area' : 'areas'}

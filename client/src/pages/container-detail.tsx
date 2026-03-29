@@ -120,7 +120,7 @@ export function ContainerDetail() {
           <h1 className="text-lg font-bold text-[var(--color-text)]">{container.name}</h1>
           <Badge variant="warning">{container.type}</Badge>
         </div>
-        <p className="text-[10px] font-mono text-[var(--color-text-muted)]">{container.qrCode}</p>
+        <p className="text-[11px] font-mono text-[var(--color-text-muted)]">{container.qrCode}</p>
         {container.description && (
           <p className="text-sm text-[var(--color-text-secondary)] mt-1">{container.description}</p>
         )}
@@ -135,7 +135,7 @@ export function ContainerDetail() {
               navigate(`/scan?containerId=${id}&areaId=${container.areaId}&propertyId=${container.breadcrumb?.[0]?.id || ''}`);
             }
           }}
-          className="w-9 h-9 rounded-full border border-[var(--color-border)] bg-[var(--color-card)] flex items-center justify-center text-[var(--color-text-secondary)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)] transition-all duration-200"
+          className="w-11 h-11 rounded-full border border-[var(--color-border)] bg-[var(--color-card)] flex items-center justify-center text-[var(--color-text-secondary)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)] transition-all duration-200"
           title="Scan Into"
         >
           <ScanLine className="w-4 h-4" />
@@ -143,7 +143,7 @@ export function ContainerDetail() {
         <button
           type="button"
           onClick={() => setPrintOpen(true)}
-          className="w-9 h-9 rounded-full border border-[var(--color-border)] bg-[var(--color-card)] flex items-center justify-center text-[var(--color-text-secondary)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)] transition-all duration-200"
+          className="w-11 h-11 rounded-full border border-[var(--color-border)] bg-[var(--color-card)] flex items-center justify-center text-[var(--color-text-secondary)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)] transition-all duration-200"
           title="Print Label"
         >
           <Printer className="w-4 h-4" />
@@ -151,7 +151,7 @@ export function ContainerDetail() {
         <button
           type="button"
           onClick={() => setShareOpen(true)}
-          className="w-9 h-9 rounded-full border border-[var(--color-border)] bg-[var(--color-card)] flex items-center justify-center text-[var(--color-text-secondary)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)] transition-all duration-200"
+          className="w-11 h-11 rounded-full border border-[var(--color-border)] bg-[var(--color-card)] flex items-center justify-center text-[var(--color-text-secondary)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)] transition-all duration-200"
           title="Share"
         >
           <Share2 className="w-4 h-4" />
@@ -231,7 +231,7 @@ export function ContainerDetail() {
       </section>
 
       {/* FAB */}
-      <div className="fixed bottom-24 lg:bottom-8 right-4 lg:right-8 flex flex-col items-end gap-2 z-30">
+      <div className="fixed bottom-[calc(6rem+env(safe-area-inset-bottom))] lg:bottom-8 right-4 lg:right-8 flex flex-col items-end gap-2 z-30">
         {fabOpen && (
           <>
             <Button

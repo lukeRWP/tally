@@ -93,8 +93,8 @@ export const DialogContent = React.forwardRef<
         {children}
         <RadixDialog.Close
           className={cn(
-            'absolute top-4 right-4',
-            'text-[var(--color-text-muted)] hover:text-[var(--color-text)]',
+            'absolute top-3 right-3 w-8 h-8 flex items-center justify-center rounded-full',
+            'text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-elevated)]',
             'transition-colors cursor-pointer'
           )}
         >

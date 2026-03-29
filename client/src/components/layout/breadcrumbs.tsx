@@ -6,7 +6,6 @@ interface BreadcrumbsProps {
   items: BreadcrumbItem[];
 }
 
-// Map type to route prefix
 function getPath(item: BreadcrumbItem): string {
   switch (item.type) {
     case 'property': return `/property/${item.id}`;
@@ -18,17 +17,15 @@ function getPath(item: BreadcrumbItem): string {
 
 export function Breadcrumbs({ items }: BreadcrumbsProps) {
   return (
-    <nav className="flex items-center gap-1 text-xs text-[var(--color-text-muted)] mb-3 overflow-x-auto">
-      <span className="flex items-center gap-1 whitespace-nowrap">
-        <Link to="/" className="hover:text-[var(--color-text-secondary)] transition-colors flex items-center gap-1">
-          <Home className="w-3 h-3" />
-          Home
-        </Link>
-      </span>
+    <nav className="flex items-center gap-1 text-xs text-[var(--color-text-muted)] mb-3 overflow-x-auto min-h-[44px] -my-2 py-2">
+      <Link to="/" className="hover:text-[var(--color-text-secondary)] transition-colors flex items-center gap-1 shrink-0 py-2">
+        <Home className="w-3 h-3" />
+        Home
+      </Link>
       {items.map((item) => (
-        <span key={`${item.type}-${item.id}`} className="flex items-center gap-1 whitespace-nowrap">
-          <ChevronRight className="w-3 h-3" />
-          <Link to={getPath(item)} className="hover:text-[var(--color-text-secondary)] transition-colors">
+        <span key={`${item.type}-${item.id}`} className="flex items-center gap-1 shrink-0">
+          <ChevronRight className="w-3 h-3 shrink-0" />
+          <Link to={getPath(item)} className="hover:text-[var(--color-text-secondary)] transition-colors py-2 max-w-[120px] truncate">
             {item.name}
           </Link>
         </span>

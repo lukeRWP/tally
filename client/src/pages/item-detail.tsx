@@ -251,22 +251,17 @@ export function ItemDetail() {
         <h1 className="text-2xl font-extrabold text-[var(--color-text)] tracking-tight">{item.name}</h1>
 
         {/* Condition indicator strip */}
-        <div className="flex items-center gap-3 mt-2">
-          {/* Colored condition circle */}
+        <div className="flex items-center gap-2 mt-2 flex-wrap">
           <div className="flex items-center gap-1.5">
-            <span className={cn('w-3 h-3 rounded-full', conditionColor[item.condition] ?? 'bg-[var(--color-text-muted)]')} />
+            <span className={cn('w-3 h-3 rounded-full shrink-0', conditionColor[item.condition] ?? 'bg-[var(--color-text-muted)]')} />
             <span className="text-xs font-medium text-[var(--color-text-secondary)] capitalize">{item.condition}</span>
           </div>
-          <span className="text-[var(--color-border)]">|</span>
+          <span className="text-[var(--color-border)] hidden sm:inline">|</span>
           <span className="text-xs font-medium text-[var(--color-text-secondary)] capitalize">{item.status}</span>
           {item.quantity > 1 && (
-            <>
-              <span className="text-[var(--color-border)]">|</span>
-              <span className="text-xs font-medium text-[var(--color-text-secondary)]">Qty: {item.quantity}</span>
-            </>
+            <span className="text-xs font-medium text-[var(--color-text-secondary)]">Qty: {item.quantity}</span>
           )}
-          <span className="text-[var(--color-border)]">|</span>
-          <span className="text-[10px] font-mono text-[var(--color-text-muted)]">{item.qrCode}</span>
+          <span className="text-[11px] font-mono text-[var(--color-text-muted)]">{item.qrCode}</span>
         </div>
 
         {item.description && (

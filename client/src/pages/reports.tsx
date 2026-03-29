@@ -354,7 +354,7 @@ export function Reports() {
       </div>
 
       {/* Other reports -- 2-column grid with colored left borders */}
-      <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
         {otherReports.map((report, idx) => {
           const Icon = report.icon;
           const isExpanded = expandedReport === report.id;

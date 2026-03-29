@@ -78,8 +78,8 @@ body {
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  /* Prevent pull-to-refresh and overscroll bounce on mobile */
   overscroll-behavior: none;
+  overflow-x: hidden;
 }
 
 /* Prevent iOS Safari from zooming on input focus (requires font-size >= 16px) */

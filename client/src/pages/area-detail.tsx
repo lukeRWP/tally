@@ -76,11 +76,11 @@ export function AreaDetail() {
       {/* Header */}
       <div>
         <div className="flex items-center justify-between gap-2">
-          <h1 className="text-lg font-bold text-[var(--color-text)]">{area.name}</h1>
-          <div className="flex items-center gap-2">
+          <h1 className="text-lg font-bold text-[var(--color-text)] min-w-0 truncate">{area.name}</h1>
+          <div className="flex items-center gap-1.5 shrink-0">
             <Button variant="outline" size="sm" onClick={() => setPrintOpen(true)}>
               <Printer className="w-4 h-4" />
-              Print Label
+              <span className="hidden sm:inline">Print Label</span>
             </Button>
             <Button
               variant="outline"
@@ -90,11 +90,11 @@ export function AreaDetail() {
               className="text-[var(--color-red)] border-[var(--color-red)] hover:bg-[var(--color-red-bg)]"
             >
               <Trash2 className="w-4 h-4" />
-              Delete
+              <span className="hidden sm:inline">Delete</span>
             </Button>
           </div>
         </div>
-        <p className="text-[10px] font-mono text-[var(--color-text-muted)]">{area.qrCode}</p>
+        <p className="text-[11px] font-mono text-[var(--color-text-muted)]">{area.qrCode}</p>
         {area.description && (
           <p className="text-sm text-[var(--color-text-secondary)] mt-1">{area.description}</p>
         )}

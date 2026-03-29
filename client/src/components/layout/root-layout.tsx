@@ -102,17 +102,17 @@ export function RootLayout() {
   }
 
   return (
-    <div className="flex h-screen bg-[var(--color-bg)]">
+    <div className="flex h-screen bg-[var(--color-bg)] overflow-x-hidden">
       {/* Desktop sidebar */}
       <Sidebar />
 
       {/* Main content area */}
-      <div className="flex-1 flex flex-col lg:ml-56">
+      <div className="flex-1 flex flex-col lg:ml-56 overflow-x-hidden">
         {/* Header - mobile/tablet only */}
-        <div className="lg:hidden">
+        <div className="lg:hidden pt-[env(safe-area-inset-top)]">
           <Header />
         </div>
-        <main className="flex-1 overflow-y-auto pb-20 lg:pb-6 px-4 pt-4">
+        <main className="flex-1 overflow-y-auto overflow-x-hidden pb-[calc(5rem+env(safe-area-inset-bottom))] lg:pb-6 px-4 pt-4">
           <div className="md:max-w-[640px] lg:max-w-[800px] mx-auto">
             <Outlet />
           </div>
