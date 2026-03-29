@@ -338,7 +338,7 @@ const ItemsService = {
       [itemId]
     );
     for (const snap of snapshots) {
-      try { await storage.remove(snap.PHOTO_KEY); } catch (_) {}
+      try { await storage.remove(snap.PHOTO_KEY); } catch { /* ignore */ }
     }
     await _db.query(
       `DELETE FROM TALLY.condition_snapshots WHERE ITEM_ID = ?`,
@@ -351,7 +351,7 @@ const ItemsService = {
       [itemId]
     );
     for (const f of files) {
-      try { await storage.remove(f.FILE_KEY); } catch (_) {}
+      try { await storage.remove(f.FILE_KEY); } catch { /* ignore */ }
     }
     await _db.query(
       `DELETE FROM TALLY.item_files WHERE ITEM_ID = ?`,

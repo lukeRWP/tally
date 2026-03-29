@@ -35,6 +35,9 @@ jobs:
       - uses: ./.github/actions/setup-node
       - run: npm ci
         working-directory: server
+      - name: Lint
+        run: npx eslint .
+        working-directory: server
       - name: Syntax check all JS files
         run: node --check index.js && find src -name '*.js' -exec node --check {} +
         working-directory: server

@@ -151,67 +151,60 @@ const LabelsService = {
     const qrSize = labelType === 'asset' ? 50 : 90;
     const qrPadding = 6;
 
-    return new Promise(async (resolve, reject) => {
-      try {
-        const doc = new PDFDocument({ size: 'LETTER', margin: 0 });
-        const buffers = [];
-        doc.on('data', buf => buffers.push(buf));
-        doc.on('end', () => resolve(Buffer.concat(buffers)));
-        doc.on('error', reject);
+    // Pre-generate all QR buffers before starting the PDF stream
+    const qrBuffers = await Promise.all(
+      entities.map(e => LabelsService.generateQrBuffer(e.qrCode, qrSize * 2))
+    );
 
-        for (let i = 0; i < entities.length; i++) {
-          const entity = entities[i];
-          const pageIndex = Math.floor(i / labelsPerPage);
-          const posOnPage = i % labelsPerPage;
+    return new Promise((resolve, reject) => {
+      const doc = new PDFDocument({ size: 'LETTER', margin: 0 });
+      const buffers = [];
+      doc.on('data', buf => buffers.push(buf));
+      doc.on('end', () => resolve(Buffer.concat(buffers)));
+      doc.on('error', reject);
 
-          // Add new page if needed (not for the first entity)
-          if (posOnPage === 0 && pageIndex > 0) {
-            doc.addPage();
-          }
+      for (let i = 0; i < entities.length; i++) {
+        const entity = entities[i];
+        const pageIndex = Math.floor(i / labelsPerPage);
+        const posOnPage = i % labelsPerPage;
 
-          const col = posOnPage % cols;
-          const row = Math.floor(posOnPage / cols);
-
-          const x = marginX + col * labelW;
-          const y = marginY + row * labelH;
-
-          // Generate QR buffer for this entity
-          const qrBuffer = await LabelsService.generateQrBuffer(entity.qrCode, qrSize * 2);
-
-          // Draw QR code
-          doc.image(qrBuffer, x + qrPadding, y + (labelH - qrSize) / 2, { width: qrSize });
-
-          // Text area starts after QR code
-          const textX = x + qrPadding + qrSize + 6;
-          const textW = labelW - qrSize - qrPadding * 2 - 6;
-
-          if (labelType === 'asset') {
-            // Compact layout for small labels
-            doc.fontSize(8).font('Helvetica-Bold')
-              .text(entity.name, textX, y + 10, { width: textW, ellipsis: true, lineBreak: false });
-            doc.fontSize(6).font('Helvetica')
-              .text(entity.qrCode, textX, y + 22, { width: textW, ellipsis: true, lineBreak: false });
-            if (entity.breadcrumb) {
-              doc.fontSize(5).font('Helvetica')
-                .text(entity.breadcrumb, textX, y + 32, { width: textW, ellipsis: true, lineBreak: false });
-            }
-          } else {
-            // Larger layout for bin/location labels
-            doc.fontSize(12).font('Helvetica-Bold')
-              .text(entity.name, textX, y + 20, { width: textW, ellipsis: true, lineBreak: false });
-            doc.fontSize(9).font('Helvetica')
-              .text(entity.qrCode, textX, y + 40, { width: textW, ellipsis: true, lineBreak: false });
-            if (entity.breadcrumb) {
-              doc.fontSize(8).font('Helvetica')
-                .text(entity.breadcrumb, textX, y + 56, { width: textW, ellipsis: true, lineBreak: false });
-            }
-          }
+        if (posOnPage === 0 && pageIndex > 0) {
+          doc.addPage();
         }
 
-        doc.end();
-      } catch (err) {
-        reject(err);
+        const col = posOnPage % cols;
+        const row = Math.floor(posOnPage / cols);
+
+        const x = marginX + col * labelW;
+        const y = marginY + row * labelH;
+
+        doc.image(qrBuffers[i], x + qrPadding, y + (labelH - qrSize) / 2, { width: qrSize });
+
+        const textX = x + qrPadding + qrSize + 6;
+        const textW = labelW - qrSize - qrPadding * 2 - 6;
+
+        if (labelType === 'asset') {
+          doc.fontSize(8).font('Helvetica-Bold')
+            .text(entity.name, textX, y + 10, { width: textW, ellipsis: true, lineBreak: false });
+          doc.fontSize(6).font('Helvetica')
+            .text(entity.qrCode, textX, y + 22, { width: textW, ellipsis: true, lineBreak: false });
+          if (entity.breadcrumb) {
+            doc.fontSize(5).font('Helvetica')
+              .text(entity.breadcrumb, textX, y + 32, { width: textW, ellipsis: true, lineBreak: false });
+          }
+        } else {
+          doc.fontSize(12).font('Helvetica-Bold')
+            .text(entity.name, textX, y + 20, { width: textW, ellipsis: true, lineBreak: false });
+          doc.fontSize(9).font('Helvetica')
+            .text(entity.qrCode, textX, y + 40, { width: textW, ellipsis: true, lineBreak: false });
+          if (entity.breadcrumb) {
+            doc.fontSize(8).font('Helvetica')
+              .text(entity.breadcrumb, textX, y + 56, { width: textW, ellipsis: true, lineBreak: false });
+          }
+        }
       }
+
+      doc.end();
     });
   },
 
