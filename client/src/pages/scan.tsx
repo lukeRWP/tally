@@ -1,5 +1,5 @@
-import { useState, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useState, useCallback, useEffect } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   ScanLine,
   Loader2,
@@ -78,10 +78,11 @@ interface CompletedMove {
   containerName: string;
 }
 
-const TLY_CODE_REGEX = /^TLY-[PACI]-[0-9A-Fa-f]{4}$/;
+const TLY_CODE_REGEX = /^TLY-[PACI]-[0-9A-Fa-f]{4,8}$/;
 
 export function Scan() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
 
   // -- Tab ------------------------------------------------------------------
   const [tab, setTab] = useState<TabMode>('add');
@@ -113,6 +114,19 @@ export function Scan() {
   const { data: areas } = useAreas(propertyId);
   const { data: containers } = useContainers(areaId);
   const createItem = useCreateItem();
+
+  // -- Context-aware pre-fill from URL params (e.g., /scan?containerId=5&areaId=3&propertyId=1)
+  const [contextLoaded, setContextLoaded] = useState(false);
+  useEffect(() => {
+    if (contextLoaded) return;
+    const ctxProperty = searchParams.get('propertyId');
+    const ctxArea = searchParams.get('areaId');
+    const ctxContainer = searchParams.get('containerId');
+    if (ctxProperty) setPropertyId(Number(ctxProperty));
+    if (ctxArea) setAreaId(Number(ctxArea));
+    if (ctxContainer) setContainerId(Number(ctxContainer));
+    setContextLoaded(true);
+  }, [searchParams, contextLoaded]);
 
   // -- Add mode handlers ----------------------------------------------------
 
@@ -457,7 +471,7 @@ export function Scan() {
 
           {/* Adding mode -- container picker + item form */}
           {state === 'adding' && (
-            <Card className="flex flex-col gap-4">
+            <Card className="flex flex-col gap-3 max-h-[70vh] overflow-y-auto">
               <div className="flex items-center gap-2">
                 <Package className="w-5 h-5 text-[var(--color-primary)]" />
                 <h2 className="text-base font-semibold text-[var(--color-text)]">

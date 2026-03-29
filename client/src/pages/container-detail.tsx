@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router-dom';
 import { ScanLine, Printer, Share2, Plus, Package, Box } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -25,6 +25,7 @@ import { cn } from '@/lib/utils';
 export function ContainerDetail() {
   const { containerId } = useParams<{ containerId: string }>();
   const id = Number(containerId);
+  const navigate = useNavigate();
 
   const [createType, setCreateType] = useState<'container' | 'item' | null>(null);
   const [fabOpen, setFabOpen] = useState(false);
@@ -129,7 +130,11 @@ export function ContainerDetail() {
       <div className="flex gap-2 animate-fade-up" style={{ animationDelay: '50ms' }}>
         <button
           type="button"
-          onClick={() => toast('Scanning coming in Phase 2')}
+          onClick={() => {
+            if (container) {
+              navigate(`/scan?containerId=${id}&areaId=${container.areaId}&propertyId=${container.breadcrumb?.[0]?.id || ''}`);
+            }
+          }}
           className="w-9 h-9 rounded-full border border-[var(--color-border)] bg-[var(--color-card)] flex items-center justify-center text-[var(--color-text-secondary)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)] transition-all duration-200"
           title="Scan Into"
         >
