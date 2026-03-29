@@ -68,6 +68,8 @@ app.get('/health/live', async (req, res) => {
   const healthy = dbStatus === 'connected';
   res.status(healthy ? 200 : 503).json({
     status: healthy ? 'ok' : 'degraded',
+    version: process.env.APP_VERSION || 'unknown',
+    sha: process.env.APP_SHA || 'unknown',
     uptime: process.uptime(),
     db: dbStatus,
   });
