@@ -441,7 +441,9 @@ These rules exist because every one of them was learned from a production failur
 
 12. **GitHub repo secrets must be configured for the deploy step** — `ORCHESTRATOR_URL` (variable) and `ORCHESTRATOR_API_KEY` (secret). Missing secrets cause the deploy step to silently send empty auth headers and empty URLs, which fail with unhelpful curl exit codes.
 
-13. **The self-hosted runner must be registered for this repo** — a new runner registration requires: (a) `gh api -X POST repos/lukeRWP/tally/actions/runners/registration-token`, (b) configure at `/opt/actions-runner-tally` on the runner VM, (c) install as systemd service. If the runner is offline, GH Actions jobs queue indefinitely.
+13. **After every push, check GH Actions run status** — `gh run list --limit 3`. If a run fails, diagnose and fix BEFORE pushing more commits. Stacking fixes on failures creates queued broken runs. Cancel stale runs with `gh run cancel <id>`. Never leave a failed run uninvestigated.
+
+14. **The self-hosted runner must be registered for this repo** — a new runner registration requires: (a) `gh api -X POST repos/lukeRWP/tally/actions/runners/registration-token`, (b) configure at `/opt/actions-runner-tally` on the runner VM, (c) install as systemd service. If the runner is offline, GH Actions jobs queue indefinitely.
 
 ## Tally v1.0 — Complete Feature Set
 
