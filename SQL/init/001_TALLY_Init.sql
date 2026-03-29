@@ -7,9 +7,9 @@ CREATE DATABASE IF NOT EXISTS TALLY
 
 USE TALLY;
 
--- Create application user
+-- Create application user (CHANGE PASSWORD for production deployments)
 CREATE USER IF NOT EXISTS 'tally_api'@'%' IDENTIFIED BY 'tally_dev_password';
-GRANT ALL PRIVILEGES ON TALLY.* TO 'tally_api'@'%';
+GRANT SELECT, INSERT, UPDATE, DELETE ON TALLY.* TO 'tally_api'@'%';
 FLUSH PRIVILEGES;
 
 -- ============================================================

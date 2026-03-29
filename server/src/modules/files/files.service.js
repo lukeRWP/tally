@@ -1,6 +1,11 @@
+const path = require('path');
 const { v4: uuidv4 } = require('uuid');
 const sharp = require('sharp');
 const storage = require('../../infrastructure/storage');
+
+function safeName(originalname) {
+  return path.basename(originalname).replace(/[^a-zA-Z0-9._-]/g, '_');
+}
 
 let _db = null;
 let _logger = null;
@@ -29,6 +34,14 @@ const FilesService = {
     };
   },
 
+  async getFileRow(fileId) {
+    const rows = await _db.query(
+      'SELECT * FROM TALLY.item_files WHERE ID = ?',
+      [fileId]
+    );
+    return rows[0] || null;
+  },
+
   // ── Queries ────────────────────────────────────────────────────────────────
 
   async getByItem(itemId) {
@@ -48,14 +61,14 @@ const FilesService = {
 
   async upload(itemId, file, fileType, userId) {
     const uuid = uuidv4();
-    const key = `items/${itemId}/${fileType}/${uuid}-${file.originalname}`;
+    const key = `items/${itemId}/${fileType}/${uuid}-${safeName(file.originalname)}`;
 
     // Upload original file
     await storage.upload(key, file.buffer, file.mimetype);
 
     // If image, also create and upload thumbnail
     if (file.mimetype.startsWith('image/')) {
-      const thumbnailKey = `items/${itemId}/${fileType}/${uuid}-thumb-${file.originalname}`;
+      const thumbnailKey = `items/${itemId}/${fileType}/${uuid}-thumb-${safeName(file.originalname)}`;
       const thumbnailBuffer = await sharp(file.buffer)
         .resize({ width: 200 })
         .toBuffer();

@@ -35,6 +35,9 @@ jobs:
       - uses: ./.github/actions/setup-node
       - run: npm ci
         working-directory: server
+      - name: Syntax check all JS files
+        run: node --check index.js && find src -name '*.js' -exec node --check {} +
+        working-directory: server
 
   security-audit:
     name: Security Audit
@@ -43,8 +46,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup-node
       - name: Audit server
-        run: npm audit --production --audit-level=high || true
+        run: npm audit --production --audit-level=high
         working-directory: server
       - name: Audit client
-        run: npm audit --production --audit-level=high || true
+        run: npm audit --production --audit-level=high
         working-directory: client

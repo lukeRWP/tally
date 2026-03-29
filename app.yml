@@ -10,7 +10,7 @@ ansibleGroups:
   storage: tally_storage
 
 build:
-  env: { NODE_ENV: development }
+  env: { NODE_ENV: production }
   components:
     client:
       dir: client

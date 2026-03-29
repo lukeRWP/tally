@@ -88,11 +88,23 @@ module.exports = function tagsRoutes({ app, db, logger }) {
 
   // ── Get Tags for Entity ────────────────────────────────────────────────────
 
+  async function resolvePropertyFromEntity(req, res, next) {
+    const { entityType, entityId } = req.params;
+    const AuditService = require('../audit/audit.service');
+    const propertyId = await AuditService.getPropertyIdForEntity(entityType, entityId);
+    if (!propertyId) return error(res, 'Entity not found', 404);
+    req.params.propertyId = propertyId;
+    next();
+  }
+
   // GET /api/tags/_x_/entity/:entityType/:entityId
   app.get(
     '/api/tags/_x_/entity/:entityType/:entityId',
     app.locals.requireAuth,
+    resolvePropertyFromEntity,
+    app.locals.resolvePropertyRole,
     async (req, res) => {
+      if (!req.propertyRole) return error(res, 'Access denied', 403);
       const tags = await TagsService.getForEntity(req.params.entityType, req.params.entityId);
       success(res, { tags });
     }

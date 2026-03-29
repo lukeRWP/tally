@@ -97,7 +97,7 @@ module.exports = function itemsRoutes({ app, db, logger }) {
     '/api/items/_y_/purge-expired',
     app.locals.requireAuth,
     async (req, res) => {
-      const count = await ItemsService.purgeExpired();
+      const count = await ItemsService.purgeExpired(req.user.id);
       success(res, { purged: count }, `Purged ${count} expired item(s)`);
     }
   );
@@ -177,6 +177,12 @@ module.exports = function itemsRoutes({ app, db, logger }) {
       const { error: validationError, value } = moveItem.validate(req.body, { abortEarly: false });
       if (validationError) {
         return error(res, 'Validation failed', 422, validationError.details.map(d => d.message));
+      }
+      // Verify destination container is in the same property
+      const destPropertyId = await ContainersService.getPropertyIdForContainer(value.containerId);
+      const srcPropertyId = req.params.propertyId;
+      if (!destPropertyId || String(destPropertyId) !== String(srcPropertyId)) {
+        return error(res, 'Destination container must be in the same property', 400);
       }
       const item = await ItemsService.move(req.params.itemId, value.containerId, req.user.id);
       success(res, { item });

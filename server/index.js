@@ -31,8 +31,8 @@ app.use(cors({ origin: config.clientUrl, credentials: true }));
 
 app.use(compression());
 
-app.use(express.json({ limit: '50mb' }));
-app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+app.use(express.json({ limit: '2mb' }));
+app.use(express.urlencoded({ extended: true, limit: '2mb' }));
 
 app.use(cookieParser(config.auth.cookieSecret));
 
@@ -45,6 +45,12 @@ app.use(
   })
 );
 
+// Stricter rate limits for auth and public endpoints
+const authLimiter = rateLimit({ windowMs: 60 * 1000, max: 10, standardHeaders: true, legacyHeaders: false });
+const shareLimiter = rateLimit({ windowMs: 60 * 1000, max: 30, standardHeaders: true, legacyHeaders: false });
+app.use('/api/auth', authLimiter);
+app.use('/api/sharing/_x_/view', shareLimiter);
+
 storage.init();
 storage.ensureBucket().catch(err => logger.warn('MinIO bucket check failed', { error: err.message }));
 
@@ -56,11 +62,12 @@ app.get('/health/live', async (req, res) => {
     await db.checkConnection();
     dbStatus = 'connected';
   } catch {
-    // DB unavailable — still respond 200 so the process is considered alive
+    // DB unavailable — report unhealthy so load balancer / orchestrator can detect
   }
 
-  res.json({
-    status: 'ok',
+  const healthy = dbStatus === 'connected';
+  res.status(healthy ? 200 : 503).json({
+    status: healthy ? 'ok' : 'degraded',
     uptime: process.uptime(),
     db: dbStatus,
   });
@@ -99,7 +106,8 @@ const server = app.listen(config.port, () => {
 
 const shutdown = async (signal) => {
   logger.info(`${signal} received. Shutting down gracefully...`);
-  server.close(() => {
+  server.close(async () => {
+    try { await db.pool.end(); } catch { /* ignore */ }
     logger.info('HTTP server closed');
     process.exit(0);
   });

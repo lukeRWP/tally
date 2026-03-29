@@ -150,10 +150,12 @@ const ProductsService = {
   },
 
   async searchByText(query) {
-    // Append * to each word for prefix matching in BOOLEAN MODE
+    // Strip FULLTEXT boolean operators and append * for prefix matching
     const booleanQuery = query
       .trim()
       .split(/\s+/)
+      .filter(Boolean)
+      .map(word => word.replace(/[+\-><()~*"@]/g, ''))
       .filter(Boolean)
       .map(word => `${word}*`)
       .join(' ');

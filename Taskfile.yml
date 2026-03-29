@@ -19,9 +19,9 @@ tasks:
     desc: Start with live source mounts
     cmds:
       - docker compose up --build -d
-      - echo "Server running at http://localhost:2727"
-      - echo "Client running at http://localhost:8080"
-      - echo "MinIO console at http://localhost:9001"
+      - echo "Server running at http://localhost:2728"
+      - echo "Client running at http://localhost:8081"
+      - echo "MinIO console at http://localhost:9003"
 
   down:
     desc: Stop all services

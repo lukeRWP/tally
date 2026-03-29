@@ -2,6 +2,7 @@
   "name": "tally-client",
   "version": "1.0.0",
   "type": "module",
+  "engines": { "node": ">=20" },
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",

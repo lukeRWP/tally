@@ -1,5 +1,17 @@
 const multer = require('multer');
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
+
+const ALLOWED_IMAGE_MIMES = new Set([
+  'image/jpeg', 'image/png', 'image/webp', 'image/gif',
+]);
+
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 20 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    if (ALLOWED_IMAGE_MIMES.has(file.mimetype)) cb(null, true);
+    else cb(new Error('Only image files are allowed'), false);
+  },
+});
 
 module.exports = function conditionRoutes({ app, db, logger }) {
   const ConditionService = require('./condition.service');
@@ -33,7 +45,17 @@ module.exports = function conditionRoutes({ app, db, logger }) {
   });
 
   // DELETE /api/conditions/_d_/:snapshotId — delete snapshot (owner only)
-  app.delete('/api/conditions/_d_/:snapshotId', requireAuth, async (req, res) => {
+  async function resolvePropertyFromSnapshot(req, res, next) {
+    const snapshotId = req.params.snapshotId;
+    const rows = await ConditionService.getSnapshotRow(snapshotId);
+    if (!rows) return error(res, 'Snapshot not found', 404);
+    const propertyId = await ItemsService.getPropertyIdForItem(rows.ITEM_ID);
+    if (!propertyId) return error(res, 'Snapshot not found', 404);
+    req.params.propertyId = propertyId;
+    next();
+  }
+
+  app.delete('/api/conditions/_d_/:snapshotId', requireAuth, resolvePropertyFromSnapshot, resolvePropertyRole, requireRole('owner'), async (req, res) => {
     await ConditionService.delete(req.params.snapshotId);
     success(res, null, 'Snapshot deleted');
   });

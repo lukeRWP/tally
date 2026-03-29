@@ -1,6 +1,11 @@
+const path = require('path');
 const { v4: uuidv4 } = require('uuid');
 const sharp = require('sharp');
 const storage = require('../../infrastructure/storage');
+
+function safeName(originalname) {
+  return path.basename(originalname).replace(/[^a-zA-Z0-9._-]/g, '_');
+}
 
 let _db = null;
 let _logger = null;
@@ -28,6 +33,14 @@ const ConditionService = {
     };
   },
 
+  async getSnapshotRow(snapshotId) {
+    const rows = await _db.query(
+      'SELECT * FROM TALLY.condition_snapshots WHERE ID = ?',
+      [snapshotId]
+    );
+    return rows[0] || null;
+  },
+
   // ── Queries ────────────────────────────────────────────────────────────────
 
   async getByItem(itemId) {
@@ -51,13 +64,13 @@ const ConditionService = {
 
   async create(itemId, data, photoFile, userId) {
     const uuid = uuidv4();
-    const key = `items/${itemId}/conditions/${uuid}-${photoFile.originalname}`;
+    const key = `items/${itemId}/conditions/${uuid}-${safeName(photoFile.originalname)}`;
 
     // Upload original photo to MinIO
     await storage.upload(key, photoFile.buffer, photoFile.mimetype);
 
     // Create and upload thumbnail (200px wide)
-    const thumbnailKey = `items/${itemId}/conditions/${uuid}-thumb-${photoFile.originalname}`;
+    const thumbnailKey = `items/${itemId}/conditions/${uuid}-thumb-${safeName(photoFile.originalname)}`;
     const thumbnailBuffer = await sharp(photoFile.buffer)
       .resize({ width: 200 })
       .toBuffer();

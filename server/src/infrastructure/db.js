@@ -33,10 +33,14 @@ function buildPoolConfig() {
     const fs = require('fs');
     const path = require('path');
     const sslPath = process.env.MYSQL_SSL_PATH || '';
-    const sslOpts = { rejectUnauthorized: false };
+    const sslOpts = {};
 
     if (sslPath && fs.existsSync(path.join(sslPath, 'ca.pem'))) {
       sslOpts.ca = fs.readFileSync(path.join(sslPath, 'ca.pem'));
+      sslOpts.rejectUnauthorized = true;
+    } else {
+      sslOpts.rejectUnauthorized = false;
+      console.warn('[db] WARNING: SSL enabled without CA cert — certificate verification disabled');
       if (fs.existsSync(path.join(sslPath, 'client-cert.pem'))) {
         sslOpts.cert = fs.readFileSync(path.join(sslPath, 'client-cert.pem'));
         sslOpts.key = fs.readFileSync(path.join(sslPath, 'client-key.pem'));

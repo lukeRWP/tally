@@ -1,5 +1,4 @@
 const crypto = require('crypto');
-const { v4: uuidv4 } = require('uuid');
 const { createRemoteJWKSet, jwtVerify } = require('jose');
 
 // Singleton service state
@@ -15,6 +14,10 @@ const AuthService = {
     _db = db;
     _config = config;
     _logger = logger;
+
+    // Cleanup expired sessions/state on startup and every hour
+    AuthService._cleanupExpired().catch(() => {});
+    setInterval(() => AuthService._cleanupExpired().catch(() => {}), 60 * 60 * 1000);
 
     if (config.auth.bypassAuth) {
       logger.warn('[auth] BYPASS_AUTH is enabled — skipping real authentication');
@@ -35,7 +38,7 @@ const AuthService = {
     const user = await AuthService.findOrCreateUser(AuthService._devProfile());
     const session = await AuthService.createSession(user.id);
     _devSession = session;
-    _logger.info('[auth] Dev session created', { token: session.token.slice(0, 8) + '...' });
+    _logger.info('[auth] Dev session created');
     return session;
   },
 
@@ -189,7 +192,7 @@ const AuthService = {
   // ── Session management ───────────────────────────────────────────────────
 
   async createSession(userId) {
-    const token = uuidv4().replace(/-/g, '');
+    const token = crypto.randomBytes(32).toString('hex');
     const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
 
     await _db.query(
@@ -226,6 +229,11 @@ const AuthService = {
       'DELETE FROM TALLY.sessions WHERE TOKEN = ?',
       [token]
     );
+  },
+
+  async _cleanupExpired() {
+    await _db.query('DELETE FROM TALLY.sessions WHERE EXPIRES_AT < NOW()');
+    await _db.query('DELETE FROM TALLY.oauth_state WHERE EXPIRES_AT < NOW()');
   },
 
   // ── Helpers ──────────────────────────────────────────────────────────────

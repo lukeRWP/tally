@@ -80,6 +80,27 @@ const AuditService = {
     return rows.map(AuditService._mapEntry);
   },
 
+  async getPropertyIdForEntity(entityType, entityId) {
+    const queries = {
+      property: 'SELECT ID AS PROPERTY_ID FROM TALLY.properties WHERE ID = ?',
+      area: 'SELECT PROPERTY_ID FROM TALLY.areas WHERE ID = ?',
+      container: 'SELECT a.PROPERTY_ID FROM TALLY.containers c JOIN TALLY.areas a ON c.AREA_ID = a.ID WHERE c.ID = ?',
+      item: 'SELECT a.PROPERTY_ID FROM TALLY.items i JOIN TALLY.containers c ON i.CONTAINER_ID = c.ID JOIN TALLY.areas a ON c.AREA_ID = a.ID WHERE i.ID = ?',
+    };
+    const sql = queries[entityType];
+    if (!sql) return null;
+    const rows = await _db.query(sql, [entityId]);
+    return rows[0]?.PROPERTY_ID || null;
+  },
+
+  async checkMembership(propertyId, userId) {
+    const rows = await _db.query(
+      'SELECT 1 FROM TALLY.property_members WHERE PROPERTY_ID = ? AND USER_ID = ?',
+      [propertyId, userId]
+    );
+    return rows.length > 0;
+  },
+
   _mapEntry(row) {
     let changes = row.CHANGES;
     if (typeof changes === 'string') {

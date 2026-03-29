@@ -1,5 +1,21 @@
 const multer = require('multer');
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 100 * 1024 * 1024 } });
+
+const ALLOWED_MIMES = new Set([
+  'image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/svg+xml',
+  'application/pdf',
+  'text/plain', 'text/csv',
+  'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.ms-excel', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+]);
+
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 20 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    if (ALLOWED_MIMES.has(file.mimetype)) cb(null, true);
+    else cb(new Error('File type not allowed'), false);
+  },
+});
 
 module.exports = function filesRoutes({ app, db, logger, config }) {
   const FilesService = require('./files.service');
@@ -32,14 +48,25 @@ module.exports = function filesRoutes({ app, db, logger, config }) {
     success(res, result, 'File uploaded', 201);
   });
 
-  // GET /api/files/_x_/:fileId/url — presigned download URL
-  app.get('/api/files/_x_/:fileId/url', requireAuth, async (req, res) => {
+  async function resolvePropertyFromFile(req, res, next) {
+    const fileId = req.params.fileId;
+    const rows = await FilesService.getFileRow(fileId);
+    if (!rows) return error(res, 'File not found', 404);
+    const propertyId = await ItemsService.getPropertyIdForItem(rows.ITEM_ID);
+    if (!propertyId) return error(res, 'File not found', 404);
+    req.params.propertyId = propertyId;
+    next();
+  }
+
+  // GET /api/files/_x_/:fileId/url — presigned download URL (any member)
+  app.get('/api/files/_x_/:fileId/url', requireAuth, resolvePropertyFromFile, resolvePropertyRole, async (req, res) => {
+    if (!req.propertyRole) return error(res, 'Access denied', 403);
     const url = await FilesService.getPresignedUrl(req.params.fileId);
     success(res, { url });
   });
 
-  // DELETE /api/files/_d_/:fileId — delete file
-  app.delete('/api/files/_d_/:fileId', requireAuth, async (req, res) => {
+  // DELETE /api/files/_d_/:fileId — delete file (owner/editor)
+  app.delete('/api/files/_d_/:fileId', requireAuth, resolvePropertyFromFile, resolvePropertyRole, requireRole('owner', 'editor'), async (req, res) => {
     await FilesService.delete(req.params.fileId, req.user.id);
     success(res, null, 'File deleted');
   });

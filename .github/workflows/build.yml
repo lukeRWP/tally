@@ -5,6 +5,13 @@ on:
     branches: [master]
   workflow_dispatch:
 
+concurrency:
+  group: deploy-prod
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
 jobs:
   build-client:
     name: Build Client
@@ -18,6 +25,7 @@ jobs:
         working-directory: client
         env:
           CI: true
+          NODE_ENV: production
       - run: tar -czf tally-client.tar.gz -C client/dist .
       - uses: actions/upload-artifact@v4
         with:
@@ -32,6 +40,9 @@ jobs:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup-node
       - run: npm ci
+        working-directory: server
+      - name: Syntax check all JS files
+        run: node --check index.js && find src -name '*.js' -exec node --check {} +
         working-directory: server
       - run: tar -czf tally-server.tar.gz -C server index.js package.json package-lock.json src/
       - uses: actions/upload-artifact@v4
@@ -67,6 +78,7 @@ jobs:
             --max-time 30 \
             -d '{"ref": "${{ github.sha }}"}')
           OP=$(echo "$RESULT" | jq -r '.data.opId')
+          echo "Operation: $OP"
           ATTEMPTS=0
           while [ $ATTEMPTS -lt 90 ]; do
             STATUS=$(curl -sf --max-time 10 \
@@ -74,10 +86,10 @@ jobs:
               -H "Authorization: Bearer ${{ secrets.ORCHESTRATOR_API_KEY }}" | jq -r '.data.status')
             case "$STATUS" in
               success) echo "Deploy succeeded"; exit 0 ;;
-              failed) echo "Deploy failed"; exit 1 ;;
+              failed) echo "::error::Deploy failed"; exit 1 ;;
               *) ATTEMPTS=$((ATTEMPTS + 1)); sleep 10 ;;
             esac
           done
-          echo "::error::Deploy timed out"
+          echo "::error::Deploy timed out after 15 minutes"
           exit 1
         timeout-minutes: 16

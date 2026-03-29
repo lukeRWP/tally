@@ -37,6 +37,12 @@ module.exports = function auditRoutes({ app, db, logger }) {
         return error(res, 'Validation failed', 400, validationError.details.map(d => d.message));
       }
 
+      // Verify user has access to the entity's property
+      const propertyId = await AuditService.getPropertyIdForEntity(req.params.entityType, req.params.entityId);
+      if (!propertyId) return error(res, 'Entity not found', 404);
+      const membership = await AuditService.checkMembership(propertyId, req.user.id);
+      if (!membership) return error(res, 'Access denied', 403);
+
       const entries = await AuditService.getByEntity(req.params.entityType, req.params.entityId, value);
       success(res, { entries });
     }

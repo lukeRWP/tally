@@ -201,10 +201,12 @@ const ItemsService = {
   },
 
   async search(query, userId, { tagIds, condition, status } = {}) {
-    // Append * to each word for prefix matching in BOOLEAN MODE
+    // Strip FULLTEXT boolean operators and append * for prefix matching
     const booleanQuery = query
       .trim()
       .split(/\s+/)
+      .filter(Boolean)
+      .map(word => word.replace(/[+\-><()~*"@]/g, ''))
       .filter(Boolean)
       .map(word => `${word}*`)
       .join(' ');
@@ -363,11 +365,16 @@ const ItemsService = {
     );
   },
 
-  async purgeExpired() {
+  async purgeExpired(userId) {
     const rows = await _db.query(
-      `SELECT ID FROM TALLY.items
-       WHERE DELETED_AT IS NOT NULL
-         AND DELETED_AT < DATE_SUB(NOW(), INTERVAL 30 DAY)`
+      `SELECT i.ID FROM TALLY.items i
+       JOIN TALLY.containers c ON i.CONTAINER_ID = c.ID
+       JOIN TALLY.areas a ON c.AREA_ID = a.ID
+       JOIN TALLY.property_members pm ON a.PROPERTY_ID = pm.PROPERTY_ID
+       WHERE i.DELETED_AT IS NOT NULL
+         AND i.DELETED_AT < DATE_SUB(NOW(), INTERVAL 30 DAY)
+         AND pm.USER_ID = ? AND pm.ROLE = 'owner'`,
+      [userId]
     );
     for (const row of rows) {
       await ItemsService.permanentDelete(row.ID);

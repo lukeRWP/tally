@@ -6,12 +6,12 @@ const REVERSE_MAP = Object.fromEntries(Object.entries(TYPE_MAP).map(([k, v]) => 
 function generateCode(entityType) {
   const prefix = REVERSE_MAP[entityType];
   if (!prefix) throw new Error(`Unknown entity type: ${entityType}`);
-  const hex = crypto.randomBytes(2).toString('hex').toUpperCase();
+  const hex = crypto.randomBytes(4).toString('hex').toUpperCase();
   return `TLY-${prefix}-${hex}`;
 }
 
 function parseCode(code) {
-  const match = code.match(/^TLY-([PACI])-([0-9A-Fa-f]{4})$/);
+  const match = code.match(/^TLY-([PACI])-([0-9A-Fa-f]{4,8})$/);
   if (!match) return null;
   return { type: TYPE_MAP[match[1]], hex: match[2].toUpperCase() };
 }
