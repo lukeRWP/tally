@@ -108,10 +108,16 @@ export function CameraScanner({ onBarcodeScanned, onClose, isActive }: CameraSca
       <div
         className={cn(
           'relative w-full overflow-hidden rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-black',
-          'min-h-[300px]'
+          'min-h-[280px]'
         )}
       >
         <div id={scannerId} className="w-full" />
+
+        {/* Corner bracket overlays — inside the video area only */}
+        <div className="absolute top-3 left-3 w-6 h-6 border-t-[3px] border-l-[3px] border-[var(--color-primary)] rounded-tl-sm pointer-events-none z-10" />
+        <div className="absolute top-3 right-3 w-6 h-6 border-t-[3px] border-r-[3px] border-[var(--color-primary)] rounded-tr-sm pointer-events-none z-10" />
+        <div className="absolute bottom-3 left-3 w-6 h-6 border-b-[3px] border-l-[3px] border-[var(--color-primary)] rounded-bl-sm pointer-events-none z-10" />
+        <div className="absolute bottom-3 right-3 w-6 h-6 border-b-[3px] border-r-[3px] border-[var(--color-primary)] rounded-br-sm pointer-events-none z-10" />
 
         {!isScanning && !error && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-[var(--color-card)]">

@@ -388,19 +388,12 @@ export function Scan() {
           {/* Camera -- active when idle or looking_up */}
           {(state === 'idle' || state === 'looking_up') && (
             <div className="relative animate-fade-up" style={{ animationDelay: '50ms' }}>
-              {/* Camera with corner brackets */}
-              <div className="relative rounded-2xl overflow-hidden">
-                <CameraScanner
-                  isActive={state === 'idle'}
-                  onBarcodeScanned={handleBarcodeScanned}
-                  onClose={() => navigate(-1)}
-                />
-                {/* Corner bracket overlays */}
-                <div className="absolute top-3 left-3 w-6 h-6 border-t-[3px] border-l-[3px] border-[var(--color-primary)] rounded-tl-sm pointer-events-none" />
-                <div className="absolute top-3 right-3 w-6 h-6 border-t-[3px] border-r-[3px] border-[var(--color-primary)] rounded-tr-sm pointer-events-none" />
-                <div className="absolute bottom-3 left-3 w-6 h-6 border-b-[3px] border-l-[3px] border-[var(--color-primary)] rounded-bl-sm pointer-events-none" />
-                <div className="absolute bottom-3 right-3 w-6 h-6 border-b-[3px] border-r-[3px] border-[var(--color-primary)] rounded-br-sm pointer-events-none" />
-              </div>
+              {/* Camera with corner brackets on video area only */}
+              <CameraScanner
+                isActive={state === 'idle'}
+                onBarcodeScanned={handleBarcodeScanned}
+                onClose={() => navigate(-1)}
+              />
 
               {/* Scanning status below camera */}
               <div className="flex items-center justify-center gap-2 mt-3">

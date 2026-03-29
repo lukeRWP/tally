@@ -302,59 +302,54 @@ export function Reports() {
         </div>
       </div>
 
-      {/* Featured report -- Insurance Summary, full width */}
-      <div className="animate-fade-up" style={{ animationDelay: '100ms' }}>
-        <Card
-          className={cn(
-            'cursor-pointer select-none border-l-[3px]',
-            insuranceReport.borderColor,
-            isInsuranceExpanded
-              ? 'border-[var(--color-primary)] shadow-[0_2px_12px_rgba(0,0,0,0.08)]'
-              : 'hover:shadow-[0_2px_8px_rgba(0,0,0,0.06)] hover:border-[var(--color-primary)]/30',
-          )}
-          onClick={() => handleCardClick('insurance')}
-        >
-          <div className="flex items-start gap-3">
-            <div className={cn('flex items-center justify-center w-12 h-12 rounded-[var(--radius-lg)] shrink-0', insuranceReport.iconBg)}>
-              <FileText className={cn('w-6 h-6', insuranceReport.iconColor)} />
-            </div>
-            <div className="flex-1 min-w-0">
-              <p className="text-base font-bold text-[var(--color-text)] leading-tight">{insuranceReport.label}</p>
-              <p className="text-sm text-[var(--color-text-muted)] mt-0.5 leading-snug">{insuranceReport.description}</p>
-              {!isInsuranceExpanded && propertyId > 0 && (
-                <Button
-                  size="sm"
-                  className="mt-2"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleCardClick('insurance');
-                  }}
-                >
-                  Generate
-                </Button>
-              )}
-            </div>
-          </div>
-
-          {isInsuranceExpanded && propertyId > 0 && (
-            <ReportOptionsPanel
-              report={insuranceReport}
-              propertyId={propertyId}
-              onGenerate={(format, groupBy, tagIds) => handleGenerate(insuranceReport, format, groupBy, tagIds)}
-              isPending={generateReport.isPending}
-            />
-          )}
-
-          {isInsuranceExpanded && !propertyId && (
-            <p className="mt-3 pt-3 border-t border-[var(--color-border)] text-xs text-[var(--color-text-muted)]">
-              Select a property above to configure this report.
-            </p>
-          )}
-        </Card>
-      </div>
-
-      {/* Other reports -- 2-column grid with colored left borders */}
+      {/* All reports in a uniform grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+        {/* Insurance report */}
+        <div
+          className={cn(
+            'col-span-1 animate-fade-up',
+            isInsuranceExpanded && 'sm:col-span-2 lg:col-span-3',
+          )}
+          style={{ animationDelay: '100ms' }}
+        >
+          <Card
+            className={cn(
+              'cursor-pointer select-none border-l-[3px] h-full',
+              insuranceReport.borderColor,
+              isInsuranceExpanded
+                ? 'border-[var(--color-primary)] shadow-[0_2px_12px_rgba(0,0,0,0.08)]'
+                : 'hover:shadow-[0_2px_8px_rgba(0,0,0,0.06)] hover:border-[var(--color-primary)]/30',
+            )}
+            onClick={() => handleCardClick('insurance')}
+          >
+            <div className="flex items-start gap-3">
+              <div className={cn('flex items-center justify-center w-10 h-10 rounded-[var(--radius-lg)] shrink-0', insuranceReport.iconBg)}>
+                <FileText className={cn('w-5 h-5', insuranceReport.iconColor)} />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-semibold text-[var(--color-text)] leading-tight">{insuranceReport.label}</p>
+                <p className="text-xs text-[var(--color-text-muted)] mt-0.5 leading-snug">{insuranceReport.description}</p>
+              </div>
+            </div>
+
+            {isInsuranceExpanded && propertyId > 0 && (
+              <ReportOptionsPanel
+                report={insuranceReport}
+                propertyId={propertyId}
+                onGenerate={(format, groupBy, tagIds) => handleGenerate(insuranceReport, format, groupBy, tagIds)}
+                isPending={generateReport.isPending}
+              />
+            )}
+
+            {isInsuranceExpanded && !propertyId && (
+              <p className="mt-3 pt-3 border-t border-[var(--color-border)] text-xs text-[var(--color-text-muted)]">
+                Select a property above to configure this report.
+              </p>
+            )}
+          </Card>
+        </div>
+
+        {/* Other reports */}
         {otherReports.map((report, idx) => {
           const Icon = report.icon;
           const isExpanded = expandedReport === report.id;
@@ -364,13 +359,13 @@ export function Reports() {
               key={report.id}
               className={cn(
                 'col-span-1 animate-fade-up',
-                isExpanded && 'col-span-2 lg:col-span-3',
+                isExpanded && 'sm:col-span-2 lg:col-span-3',
               )}
-              style={{ animationDelay: `${(idx + 3) * 50}ms` }}
+              style={{ animationDelay: `${(idx + 2) * 50}ms` }}
             >
               <Card
                 className={cn(
-                  'cursor-pointer select-none border-l-[3px]',
+                  'cursor-pointer select-none border-l-[3px] h-full',
                   report.borderColor,
                   isExpanded
                     ? 'border-[var(--color-primary)] shadow-[0_2px_12px_rgba(0,0,0,0.08)]'
