@@ -17,7 +17,7 @@ jobs:
     name: Build Client
     runs-on: self-hosted
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: ./.github/actions/setup-node
       - run: npm ci
         working-directory: client
@@ -37,7 +37,7 @@ jobs:
     name: Build Server
     runs-on: self-hosted
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: ./.github/actions/setup-node
       - run: npm ci
         working-directory: server
@@ -55,7 +55,7 @@ jobs:
     name: Package Database
     runs-on: self-hosted
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - run: tar -czf tally-db.tar.gz SQL/
       - uses: actions/upload-artifact@v4
         with:
