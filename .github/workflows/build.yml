@@ -69,27 +69,76 @@ jobs:
     runs-on: self-hosted
     environment: prod
     steps:
+      - name: Preflight — verify secrets are configured
+        run: |
+          FAIL=0
+          if [ -z "${{ vars.ORCHESTRATOR_URL }}" ]; then
+            echo "::error::Repository variable ORCHESTRATOR_URL is not set"
+            FAIL=1
+          fi
+          if [ -z "${{ secrets.ORCHESTRATOR_API_KEY }}" ]; then
+            echo "::error::Repository secret ORCHESTRATOR_API_KEY is not set"
+            FAIL=1
+          fi
+          if [ "$FAIL" = "1" ]; then exit 1; fi
+          echo "Orchestrator URL: ${{ vars.ORCHESTRATOR_URL }}"
+
       - name: Deploy via Orchestrator
         run: |
-          RESULT=$(curl -sf -X POST \
-            "${{ vars.ORCHESTRATOR_URL }}/api/_y_/apps/tally/envs/prod/deploy" \
-            -H "Authorization: Bearer ${{ secrets.ORCHESTRATOR_API_KEY }}" \
-            -H "Content-Type: application/json" \
-            --max-time 30 \
-            -d '{"ref": "${{ github.sha }}"}')
-          OP=$(echo "$RESULT" | jq -r '.data.opId')
+          # Trigger deploy with retry (orchestrator may be restarting)
+          for RETRY in 1 2 3; do
+            RESULT=$(curl -s -w "\n%{http_code}" -X POST \
+              "${{ vars.ORCHESTRATOR_URL }}/api/_y_/apps/tally/envs/prod/deploy" \
+              -H "Authorization: Bearer ${{ secrets.ORCHESTRATOR_API_KEY }}" \
+              -H "Content-Type: application/json" \
+              --max-time 30 \
+              -d '{"ref": "${{ github.sha }}"}' 2>&1) || true
+            HTTP_CODE=$(echo "$RESULT" | tail -1)
+            BODY=$(echo "$RESULT" | sed '$d')
+
+            if echo "$BODY" | jq -e '.success' > /dev/null 2>&1; then
+              break
+            fi
+
+            echo "Attempt $RETRY failed (HTTP $HTTP_CODE): $BODY"
+            if [ "$RETRY" -lt 3 ]; then
+              echo "Retrying in 10s..."
+              sleep 10
+            else
+              echo "::error::Failed to trigger deploy after 3 attempts"
+              exit 1
+            fi
+          done
+
+          OP=$(echo "$BODY" | jq -r '.data.opId')
           echo "Operation: $OP"
+          echo "Dashboard: ${{ vars.ORCHESTRATOR_URL }}/operations/$OP"
+
+          # Poll for completion
           ATTEMPTS=0
           while [ $ATTEMPTS -lt 90 ]; do
-            STATUS=$(curl -sf --max-time 10 \
+            POLL=$(curl -s --max-time 10 \
               "${{ vars.ORCHESTRATOR_URL }}/api/_x_/ops/$OP" \
-              -H "Authorization: Bearer ${{ secrets.ORCHESTRATOR_API_KEY }}" | jq -r '.data.status')
+              -H "Authorization: Bearer ${{ secrets.ORCHESTRATOR_API_KEY }}" 2>&1) || true
+            STATUS=$(echo "$POLL" | jq -r '.data.status' 2>/dev/null)
             case "$STATUS" in
-              success) echo "Deploy succeeded"; exit 0 ;;
-              failed) echo "::error::Deploy failed"; exit 1 ;;
-              *) ATTEMPTS=$((ATTEMPTS + 1)); sleep 10 ;;
+              success)
+                echo "Deploy succeeded"
+                exit 0
+                ;;
+              failed)
+                ERROR=$(echo "$POLL" | jq -r '.data.error // "unknown error"' 2>/dev/null)
+                echo "::error::Deploy failed: $ERROR"
+                # Print last 30 lines of output for diagnostics
+                echo "$POLL" | jq -r '.data.output // ""' 2>/dev/null | tail -30
+                exit 1
+                ;;
+              *)
+                ATTEMPTS=$((ATTEMPTS + 1))
+                sleep 10
+                ;;
             esac
           done
           echo "::error::Deploy timed out after 15 minutes"
           exit 1
-        timeout-minutes: 16
+        timeout-minutes: 20
