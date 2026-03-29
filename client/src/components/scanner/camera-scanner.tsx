@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback, useId } from 'react';
 import { Html5Qrcode, Html5QrcodeSupportedFormats } from 'html5-qrcode';
 import { Camera, CameraOff, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -10,8 +10,6 @@ interface CameraScannerProps {
   isActive: boolean;
 }
 
-const SCANNER_REGION_ID = 'scanner-region';
-
 const SUPPORTED_FORMATS = [
   Html5QrcodeSupportedFormats.QR_CODE,
   Html5QrcodeSupportedFormats.UPC_A,
@@ -22,8 +20,16 @@ const SUPPORTED_FORMATS = [
   Html5QrcodeSupportedFormats.CODE_39,
 ];
 
+function clearContainer(id: string) {
+  const el = document.getElementById(id);
+  if (el) el.replaceChildren();
+}
+
 export function CameraScanner({ onBarcodeScanned, onClose, isActive }: CameraScannerProps) {
+  const reactId = useId();
+  const scannerId = `scanner-${reactId.replace(/:/g, '')}`;
   const scannerRef = useRef<Html5Qrcode | null>(null);
+  const mountedRef = useRef(true);
   const [isScanning, setIsScanning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const lastScannedRef = useRef<string>('');
@@ -34,7 +40,6 @@ export function CameraScanner({ onBarcodeScanned, onClose, isActive }: CameraSca
 
   const handleSuccess = useCallback((decodedText: string) => {
     const now = Date.now();
-    // Debounce: ignore same barcode within 2 seconds
     if (
       decodedText === lastScannedRef.current &&
       now - lastScannedTimeRef.current < 2000
@@ -46,23 +51,38 @@ export function CameraScanner({ onBarcodeScanned, onClose, isActive }: CameraSca
     onBarcodeScannedRef.current(decodedText);
   }, []);
 
-  const startScanner = useCallback(async () => {
-    if (scannerRef.current) {
-      try {
-        const state = scannerRef.current.getState();
-        if (state === 2) {
-          // Already scanning
-          return;
-        }
-      } catch {
-        // Ignore — scanner may not be initialized
+  const stopScanner = useCallback(async () => {
+    const scanner = scannerRef.current;
+    if (!scanner) return;
+    scannerRef.current = null;
+    try {
+      const state = scanner.getState();
+      if (state === 2) {
+        await scanner.stop();
       }
+      scanner.clear();
+    } catch {
+      // Ignore cleanup errors
     }
+    clearContainer(scannerId);
+    if (mountedRef.current) {
+      setIsScanning(false);
+    }
+  }, [scannerId]);
 
+  const startScanner = useCallback(async () => {
+    // Stop any existing scanner first
+    await stopScanner();
+
+    if (!mountedRef.current) return;
     setError(null);
 
+    // Wait a tick for DOM to settle after cleanup
+    await new Promise((r) => setTimeout(r, 50));
+    if (!mountedRef.current) return;
+
     try {
-      const scanner = new Html5Qrcode(SCANNER_REGION_ID, {
+      const scanner = new Html5Qrcode(scannerId, {
         formatsToSupport: SUPPORTED_FORMATS,
         verbose: false,
       });
@@ -76,35 +96,23 @@ export function CameraScanner({ onBarcodeScanned, onClose, isActive }: CameraSca
           aspectRatio: 1.0,
         },
         handleSuccess,
-        () => {
-          // Ignore scan failures (no barcode in frame)
-        }
+        () => {}
       );
-      setIsScanning(true);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Camera access denied';
-      setError(message);
-      setIsScanning(false);
-    }
-  }, [handleSuccess]);
-
-  const stopScanner = useCallback(async () => {
-    if (scannerRef.current) {
-      try {
-        const state = scannerRef.current.getState();
-        if (state === 2) {
-          await scannerRef.current.stop();
-        }
-        scannerRef.current.clear();
-      } catch {
-        // Ignore cleanup errors
+      if (mountedRef.current) {
+        setIsScanning(true);
       }
-      scannerRef.current = null;
+    } catch (err) {
+      if (mountedRef.current) {
+        const message = err instanceof Error ? err.message : 'Camera access denied';
+        setError(message);
+        setIsScanning(false);
+      }
     }
-    setIsScanning(false);
-  }, []);
+  }, [scannerId, handleSuccess, stopScanner]);
 
   useEffect(() => {
+    mountedRef.current = true;
+
     if (isActive) {
       startScanner();
     } else {
@@ -112,9 +120,19 @@ export function CameraScanner({ onBarcodeScanned, onClose, isActive }: CameraSca
     }
 
     return () => {
-      stopScanner();
+      mountedRef.current = false;
+      const scanner = scannerRef.current;
+      if (scanner) {
+        scannerRef.current = null;
+        try {
+          const state = scanner.getState();
+          if (state === 2) scanner.stop().then(() => scanner.clear()).catch(() => {});
+          else scanner.clear();
+        } catch { /* ignore */ }
+      }
+      clearContainer(scannerId);
     };
-  }, [isActive, startScanner, stopScanner]);
+  }, [isActive, scannerId, startScanner, stopScanner]);
 
   return (
     <div className="flex flex-col gap-4">
@@ -124,7 +142,7 @@ export function CameraScanner({ onBarcodeScanned, onClose, isActive }: CameraSca
           'min-h-[300px]'
         )}
       >
-        <div id={SCANNER_REGION_ID} className="w-full" />
+        <div id={scannerId} className="w-full" />
 
         {!isScanning && !error && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-[var(--color-card)]">
