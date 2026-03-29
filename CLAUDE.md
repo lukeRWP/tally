@@ -394,11 +394,54 @@ This allows rapid relocation of many items without navigating away from the scan
 - Production is deployed on **VLAN 130** within the Proxmox homelab environment.
 - The manifest is production-only and is not used for local development (use `docker-compose.yml` + Taskfile for local work).
 
-### CI/CD (GitHub Actions)
+### CI/CD (GitHub Actions + PW Orchestrator)
 
-- **`ci.yml`** — runs on every pull request: installs dependencies, runs `tsc --noEmit`, and executes server-side unit tests. Blocks merge on failure.
-- **`build.yml`** — runs on push to `main`: builds the Docker images, pushes them to the container registry, then triggers the Portainer Workloads orchestrator to pull and redeploy the updated stack.
-- Both workflows use repository secrets for registry credentials and the PW API token.
+**Workflows:**
+- **`ci.yml`** — runs on every pull request: `tsc --noEmit`, ESLint, syntax checks, `npm audit`. Blocks merge on failure.
+- **`build.yml`** — runs on push to `master`: builds client/server/db tarballs on the self-hosted runner, then triggers the PW orchestrator to deploy. The orchestrator does its OWN build from a fresh git clone (the GH Actions artifacts are retained for debugging but not consumed by the orchestrator).
+
+**Required GitHub Config:**
+- Repository variable: `ORCHESTRATOR_URL` = `http://10.0.5.42:8500`
+- Repository secret: `ORCHESTRATOR_API_KEY` = the orchestrator admin token
+- Self-hosted runner: `tally-runner-shared` registered at `/opt/actions-runner-tally` on VMID 105
+
+### CI/CD Rules — READ BEFORE MAKING CHANGES
+
+These rules exist because every one of them was learned from a production failure. Do not skip them.
+
+#### Manifest Rules (`app.yml`)
+
+1. **`app.yml` exists in TWO repos** — this repo AND `prevailing-winds/orchestrator/apps/tally/app.yml`. The orchestrator reads the PW copy, NOT the Tally copy. **Any change to `app.yml` in this repo MUST be copied to the PW repo and deployed to the orchestrator.** Failure to sync means the orchestrator deploys with stale config.
+
+2. **`build.env` MUST set `NODE_ENV: development`** — the orchestrator PM2 process runs with `NODE_ENV=production` (from ecosystem.config.js). This is inherited by child processes via `process.env`. If `build.env` doesn't override it, `npm ci` skips devDependencies and check steps (TypeScript, ESLint) fail because their binaries aren't installed. The target VM's deploy task runs `npm ci --production` separately to strip devDeps.
+
+3. **Check commands MUST use `./node_modules/.bin/` paths** — never `npx`. On the orchestrator VM, `npx tsc` resolves to a global npm shim that prints "This is not the tsc command you are looking for" instead of the project-local TypeScript compiler. Always use `./node_modules/.bin/tsc`, `./node_modules/.bin/eslint`, etc.
+
+4. **`build.components.*.tarball.includes` must match `build.yml`** — the GH Actions build.yml creates tarballs with explicit file lists. The orchestrator uses `app.yml`'s tarball config. If a new file is added to the server (e.g., `knexfile.js`), both must be updated. They are separate definitions in separate repos.
+
+5. **`ansibleGroups` must follow the pattern `{appName}_{role}s`** — the executor constructs group names as `${appName}_servers`, `${appName}_clients`, etc. and passes them as Ansible extra-vars. If `ansibleGroups` in app.yml uses different names, the playbook's `hosts:` directive won't match any hosts. All plays skip silently (exit 0) and nothing deploys.
+
+6. **`healthChecks.server.path` must match the actual health endpoint** — the deploy playbook uses this for post-deploy verification. The app-server role also hardcodes `/health/live` in its rollback health check. If you change the health endpoint path in the Express app, update BOTH app.yml and notify the PW team to update the deploy role.
+
+#### Build & Deploy Flow Rules
+
+7. **There are TWO build pipelines — they MUST produce equivalent results.** GH Actions `build.yml` builds on the self-hosted runner. The orchestrator builds on the orchestrator VM from a fresh clone. Different Node versions, npm versions, or OS libraries can cause one to succeed and the other to fail. When changing build commands, test both paths.
+
+8. **`build.yml` sets `NODE_ENV: production` for the client build step, but `app.yml` sets `NODE_ENV: development`** — these are intentionally different. build.yml's NODE_ENV only affects the Vite build (tree-shaking, dead code). app.yml's NODE_ENV affects `npm ci` (must be development to get devDeps). Do not "fix" this discrepancy — it is correct.
+
+9. **`npm audit` in CI can block all PRs** — if a new high-severity advisory is published for any transitive dependency, all PRs fail until resolved. This is intentional (security gate) but can be temporarily bypassed by pinning the vulnerable package or adding an audit exception. Do NOT revert to `|| true`.
+
+10. **The deploy step's curl timeout (16 min) is shorter than the orchestrator's deploy timeout (20 min)** — a slow deploy can succeed on the orchestrator but report failure in GH Actions. This is a known gap. The orchestrator operation status is the source of truth, not the GH Actions status.
+
+#### Adding New Server Files
+
+11. **If you add a new top-level file the server needs at runtime** (e.g., a config file, seed script), you must update THREE places: (a) `app.yml` `build.components.server.tarball.includes`, (b) `build.yml` tar command, (c) `.dockerignore` if applicable.
+
+#### Environment & Secrets
+
+12. **GitHub repo secrets must be configured for the deploy step** — `ORCHESTRATOR_URL` (variable) and `ORCHESTRATOR_API_KEY` (secret). Missing secrets cause the deploy step to silently send empty auth headers and empty URLs, which fail with unhelpful curl exit codes.
+
+13. **The self-hosted runner must be registered for this repo** — a new runner registration requires: (a) `gh api -X POST repos/lukeRWP/tally/actions/runners/registration-token`, (b) configure at `/opt/actions-runner-tally` on the runner VM, (c) install as systemd service. If the runner is offline, GH Actions jobs queue indefinitely.
 
 ## Tally v1.0 — Complete Feature Set
 
