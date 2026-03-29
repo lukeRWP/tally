@@ -15,7 +15,7 @@ build:
     client:
       dir: client
       install: "npm ci"
-      check: "npx tsc --noEmit"
+      check: "./node_modules/.bin/tsc --noEmit"
       build: "npm run build"
       tarball:
         name: "client.tar.gz"
@@ -24,7 +24,7 @@ build:
     server:
       dir: server
       install: "npm ci"
-      check: "npx eslint . && node --check index.js && find src -name '*.js' -exec node --check {} +"
+      check: "./node_modules/.bin/eslint . && node --check index.js && find src -name '*.js' -exec node --check {} +"
       tarball:
         name: "server.tar.gz"
         includes: [index.js, package.json, package-lock.json, src/]
