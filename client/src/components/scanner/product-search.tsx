@@ -52,10 +52,10 @@ export function ProductSearch({
     debounceRef.current = setTimeout(async () => {
       setIsLoading(true);
       try {
-        const data = await api.get<SearchProduct[]>(
+        const data = await api.get<{ products: SearchProduct[] }>(
           `/api/products/_x_/search?q=${encodeURIComponent(query)}`
         );
-        setResults(data);
+        setResults(data.products || []);
       } catch {
         setResults([]);
       } finally {
