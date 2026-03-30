@@ -64,6 +64,12 @@ const ItemsService = {
          p.BRAND AS PRODUCT_BRAND,
          p.IMAGE_URL AS PRODUCT_IMAGE_URL,
          p.DESCRIPTION AS PRODUCT_DESCRIPTION,
+         p.CATEGORY AS PRODUCT_CATEGORY,
+         p.BARCODE AS PRODUCT_BARCODE,
+         p.RETAIL_PRICE AS PRODUCT_RETAIL_PRICE,
+         p.RETAIL_LINKS AS PRODUCT_RETAIL_LINKS,
+         p.SPECS AS PRODUCT_SPECS,
+         p.DATA_SOURCE AS PRODUCT_DATA_SOURCE,
          c.NAME AS CONTAINER_NAME,
          a.ID AS AREA_ID,
          a.NAME AS AREA_NAME,
@@ -85,6 +91,28 @@ const ItemsService = {
     // Enrich with full product data
     if (row.PRODUCT_DESCRIPTION !== undefined) {
       item.productDescription = row.PRODUCT_DESCRIPTION || null;
+    }
+    if (row.PRODUCT_CATEGORY !== undefined) {
+      item.productCategory = row.PRODUCT_CATEGORY || null;
+    }
+    if (row.PRODUCT_BARCODE !== undefined) {
+      item.productBarcode = row.PRODUCT_BARCODE || null;
+    }
+    if (row.PRODUCT_RETAIL_PRICE !== undefined) {
+      item.productRetailPrice = row.PRODUCT_RETAIL_PRICE != null ? parseFloat(row.PRODUCT_RETAIL_PRICE) : null;
+    }
+    if (row.PRODUCT_RETAIL_LINKS !== undefined) {
+      let links = row.PRODUCT_RETAIL_LINKS;
+      if (typeof links === 'string') { try { links = JSON.parse(links); } catch { links = null; } }
+      item.productRetailLinks = links || null;
+    }
+    if (row.PRODUCT_SPECS !== undefined) {
+      let specs = row.PRODUCT_SPECS;
+      if (typeof specs === 'string') { try { specs = JSON.parse(specs); } catch { specs = null; } }
+      item.productSpecs = specs || null;
+    }
+    if (row.PRODUCT_DATA_SOURCE !== undefined) {
+      item.productDataSource = row.PRODUCT_DATA_SOURCE || null;
     }
 
     // Build breadcrumb: property → area → container

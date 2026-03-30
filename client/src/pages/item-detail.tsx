@@ -301,32 +301,89 @@ export function ItemDetail() {
         {/* Left column (main info) */}
         <div className="lg:col-span-2 flex flex-col gap-4">
           {/* Product Info */}
-          {item.product && (
+          {(item.productName || item.productImageUrl) && (
             <Card animationDelay="50ms">
               <h2 className="text-sm font-semibold text-[var(--color-text)] mb-2">Product Info</h2>
-              {item.product.imageUrl && (
+              {item.productImageUrl && (
                 <img
-                  src={item.product.imageUrl}
-                  alt={item.product.name}
-                  className="w-full h-32 object-contain rounded-[var(--radius-md)] mb-2 bg-[var(--color-elevated)]"
+                  src={item.productImageUrl}
+                  alt={item.productName || item.name}
+                  className="w-full h-40 object-contain rounded-[var(--radius-md)] mb-3 bg-[var(--color-elevated)]"
                 />
               )}
+              {item.productDescription && (
+                <p className="text-xs text-[var(--color-text-secondary)] mb-3 leading-relaxed">{item.productDescription}</p>
+              )}
               <div className="grid grid-cols-2 gap-2 text-xs">
-                <div>
-                  <span className="text-[var(--color-text-muted)]">Brand</span>
-                  <p className="text-[var(--color-text)] font-medium">{item.product.brand}</p>
-                </div>
-                <div>
-                  <span className="text-[var(--color-text-muted)]">Category</span>
-                  <p className="text-[var(--color-text)] font-medium">{item.product.category}</p>
-                </div>
-                {item.product.retailPrice != null && (
+                {item.productBrand && (
+                  <div>
+                    <span className="text-[var(--color-text-muted)]">Brand</span>
+                    <p className="text-[var(--color-text)] font-medium">{item.productBrand}</p>
+                  </div>
+                )}
+                {item.productCategory && (
+                  <div>
+                    <span className="text-[var(--color-text-muted)]">Category</span>
+                    <p className="text-[var(--color-text)] font-medium">{item.productCategory}</p>
+                  </div>
+                )}
+                {item.productRetailPrice != null && (
                   <div>
                     <span className="text-[var(--color-text-muted)]">Retail Price</span>
-                    <p className="text-[var(--color-text)] font-medium">${item.product.retailPrice.toFixed(2)}</p>
+                    <p className="text-[var(--color-green)] font-semibold">${item.productRetailPrice.toFixed(2)}</p>
+                  </div>
+                )}
+                {item.productBarcode && (
+                  <div>
+                    <span className="text-[var(--color-text-muted)]">Barcode</span>
+                    <p className="text-[var(--color-text)] font-mono text-[11px]">{item.productBarcode}</p>
+                  </div>
+                )}
+                {item.productDataSource && (
+                  <div>
+                    <span className="text-[var(--color-text-muted)]">Source</span>
+                    <p className="text-[var(--color-text)]">{item.productDataSource.replace(/_/g, ' ')}</p>
                   </div>
                 )}
               </div>
+
+              {/* Product Specs */}
+              {item.productSpecs && Object.keys(item.productSpecs).length > 0 && (
+                <div className="mt-3 pt-3 border-t border-[var(--color-border)]">
+                  <p className="text-[10px] uppercase tracking-wide text-[var(--color-text-muted)] font-medium mb-2">Specifications</p>
+                  <div className="grid grid-cols-2 gap-1.5 text-xs">
+                    {Object.entries(item.productSpecs)
+                      .filter(([, v]) => v != null && v !== '')
+                      .map(([key, value]) => (
+                        <div key={key}>
+                          <span className="text-[var(--color-text-muted)] capitalize">{key.replace(/_/g, ' ')}</span>
+                          <p className="text-[var(--color-text)]">{String(value)}</p>
+                        </div>
+                      ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Retail Links */}
+              {item.productRetailLinks && item.productRetailLinks.length > 0 && (
+                <div className="mt-3 pt-3 border-t border-[var(--color-border)]">
+                  <p className="text-[10px] uppercase tracking-wide text-[var(--color-text-muted)] font-medium mb-2">Where to buy</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {item.productRetailLinks.slice(0, 5).map((link, i) => (
+                      <a
+                        key={i}
+                        href={link.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex items-center gap-1 px-2 py-1 rounded-[var(--radius-sm)] border border-[var(--color-border)] bg-[var(--color-elevated)] text-[11px] text-[var(--color-text-secondary)] hover:text-[var(--color-primary)] hover:border-[var(--color-primary)] transition-colors"
+                      >
+                        <span className="truncate max-w-[100px]">{link.retailer}</span>
+                        {link.price != null && <span className="text-[var(--color-green)]">${link.price.toFixed(2)}</span>}
+                      </a>
+                    ))}
+                  </div>
+                </div>
+              )}
             </Card>
           )}
 

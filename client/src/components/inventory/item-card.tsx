@@ -32,9 +32,9 @@ export function ItemCard({ item }: ItemCardProps) {
       onClick={() => navigate(`/item/${item.id}`)}
     >
       <div className="flex items-center justify-center w-10 h-10 rounded-[var(--radius-md)] shrink-0 bg-[var(--color-elevated)] text-[var(--color-text-muted)]">
-        {item.product?.imageUrl ? (
+        {item.productImageUrl ? (
           <img
-            src={item.product.imageUrl}
+            src={item.productImageUrl}
             alt={item.name}
             className="w-10 h-10 rounded-[var(--radius-md)] object-cover"
             loading="lazy"

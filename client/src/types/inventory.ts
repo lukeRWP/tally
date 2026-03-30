@@ -46,18 +46,19 @@ export interface Item {
   condition: 'new' | 'good' | 'fair' | 'poor';
   qrCode: string;
   status: 'active' | 'removed' | 'lent';
-  product?: Product;
   createdAt: string;
-}
-
-export interface Product {
-  id: number;
-  barcode: string;
-  name: string;
-  brand: string;
-  category: string;
-  imageUrl: string | null;
-  retailPrice: number | null;
+  breadcrumb?: BreadcrumbItem[];
+  // Product data (flat fields from API, joined from products table)
+  productName?: string | null;
+  productBrand?: string | null;
+  productImageUrl?: string | null;
+  productDescription?: string | null;
+  productCategory?: string | null;
+  productBarcode?: string | null;
+  productRetailPrice?: number | null;
+  productRetailLinks?: { retailer: string; url: string; price?: number }[] | null;
+  productSpecs?: Record<string, unknown> | null;
+  productDataSource?: string | null;
 }
 
 export interface BreadcrumbItem {
