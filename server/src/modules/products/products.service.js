@@ -9,7 +9,7 @@ const ProductsService = {
   init({ db, logger }) {
     _db = db;
     _logger = logger;
-    lookupOrchestrator.init(db);
+    lookupOrchestrator.init(db, logger);
   },
 
   // ── Helpers ────────────────────────────────────────────────────────────────
