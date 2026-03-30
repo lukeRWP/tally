@@ -70,9 +70,14 @@ export function CameraScanner({ onBarcodeScanned, onClose, isActive }: CameraSca
       });
       scannerRef.current = scanner;
 
+      // Use responsive qrbox — 80% of the smaller dimension
+      const containerEl = document.getElementById(scannerId);
+      const containerWidth = containerEl?.clientWidth || 300;
+      const qrboxSize = Math.min(Math.floor(containerWidth * 0.8), 300);
+
       await scanner.start(
         { facingMode: 'environment' },
-        { fps: 10, qrbox: { width: 250, height: 250 }, aspectRatio: 1.0 },
+        { fps: 15, qrbox: { width: qrboxSize, height: Math.floor(qrboxSize * 0.6) } },
         (text: string) => {
           const now = Date.now();
           if (text === lastScannedRef.current && now - lastScannedTimeRef.current < 2000) return;
