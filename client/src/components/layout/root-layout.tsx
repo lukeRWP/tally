@@ -91,13 +91,6 @@ function Sidebar() {
 
 export function RootLayout() {
   const { user, isLoading } = useAuth();
-
-  if (isLoading) {
-    return <div className="flex items-center justify-center h-screen">
-      <div className="text-[var(--color-text-muted)]">Loading...</div>
-    </div>;
-  }
-
   const mainRef = useRef<HTMLElement>(null);
   const { pathname } = useLocation();
 
@@ -105,6 +98,12 @@ export function RootLayout() {
   useEffect(() => {
     mainRef.current?.scrollTo(0, 0);
   }, [pathname]);
+
+  if (isLoading) {
+    return <div className="flex items-center justify-center h-screen">
+      <div className="text-[var(--color-text-muted)]">Loading...</div>
+    </div>;
+  }
 
   if (!user) {
     return <Navigate to="/login" replace />;
