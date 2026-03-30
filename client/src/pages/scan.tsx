@@ -11,8 +11,11 @@ import {
   ArrowRight,
   CheckCircle2,
   MoveRight,
+  X,
+  Link,
 } from 'lucide-react';
 import { CameraScanner } from '@/components/scanner/camera-scanner';
+import { UrlExtractor } from '@/components/scanner/url-extractor';
 import { ScanResult } from '@/components/scanner/scan-result';
 import { ProductSearch } from '@/components/scanner/product-search';
 import { DuplicateCheck } from '@/components/scanner/duplicate-check';
@@ -472,11 +475,34 @@ export function Scan() {
                 </h2>
               </div>
 
+              {/* URL paste for product extraction */}
+              {!selectedProduct && (
+                <UrlExtractor onProductExtracted={(product) => {
+                  setSelectedProduct(product);
+                  setItemName((product.name as string) || '');
+                }} />
+              )}
+
               {selectedProduct && (
-                <div className="flex items-center gap-2 px-3 py-2 rounded-[var(--radius-md)] bg-[var(--color-elevated)]">
-                  <p className="text-xs text-[var(--color-text-secondary)] truncate">
-                    Product: {selectedProduct.name as string}
-                  </p>
+                <div className="flex items-start gap-2 px-3 py-2 rounded-[var(--radius-md)] bg-[var(--color-elevated)]">
+                  {(selectedProduct.imageUrl as string) && (
+                    <img src={selectedProduct.imageUrl as string} alt="" className="w-10 h-10 rounded object-cover shrink-0" />
+                  )}
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-medium text-[var(--color-text)] truncate">
+                      {selectedProduct.name as string}
+                    </p>
+                    {(selectedProduct.brand as string) && (
+                      <p className="text-[10px] text-[var(--color-text-muted)]">{selectedProduct.brand as string}</p>
+                    )}
+                    {(selectedProduct.retailPrice as number) != null && (
+                      <p className="text-[10px] text-[var(--color-green)]">${(selectedProduct.retailPrice as number).toFixed(2)}</p>
+                    )}
+                  </div>
+                  <button type="button" onClick={() => { setSelectedProduct(null); setItemName(''); }}
+                    className="text-[var(--color-text-muted)] hover:text-[var(--color-text)] p-1 shrink-0">
+                    <X className="w-3 h-3" />
+                  </button>
                 </div>
               )}
 

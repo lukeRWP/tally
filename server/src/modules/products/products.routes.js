@@ -62,6 +62,34 @@ module.exports = function productsRoutes({ app, db, logger }) {
     }
   );
 
+  // ── Extract product from URL ────────────────────────────────────────────────
+
+  // POST /api/products/_y_/extract-url
+  app.post(
+    '/api/products/_y_/extract-url',
+    app.locals.requireAuth,
+    async (req, res) => {
+      const { url } = req.body;
+      if (!url || typeof url !== 'string') {
+        return error(res, 'URL is required', 422);
+      }
+      try {
+        new URL(url); // validate URL format
+      } catch {
+        return error(res, 'Invalid URL', 422);
+      }
+      try {
+        const urlExtractor = require('./lookup/url-extractor');
+        const product = await urlExtractor.extractFromUrl(url);
+        if (!product) return error(res, 'Could not extract product details from URL', 404);
+        success(res, { product });
+      } catch (err) {
+        logger.warn('URL extraction failed', { url, error: err.message });
+        return error(res, `Failed to fetch URL: ${err.message}`, 500);
+      }
+    }
+  );
+
   // ── Lookup Barcode (local → external) ──────────────────────────────────────
 
   // POST /api/products/_y_/lookup
