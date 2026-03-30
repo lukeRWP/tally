@@ -22,15 +22,30 @@ module.exports = function productsRoutes({ app, db, logger }) {
   // ── Text Search ────────────────────────────────────────────────────────────
   // NOTE: Must be registered before /:productId to avoid "search" matching as a param
 
-  // GET /api/products/_x_/search?q=...
+  // GET /api/products/_x_/search?q=...&online=true
   app.get(
     '/api/products/_x_/search',
     app.locals.requireAuth,
     async (req, res) => {
       const q = req.query.q;
       if (!q || !q.trim()) return error(res, 'Search query is required', 422);
+
+      // Search local catalog first
       const products = await ProductsService.searchByText(q);
-      success(res, { products });
+
+      // If local is empty and online flag is set, search external APIs
+      const includeOnline = req.query.online === 'true';
+      let onlineProducts = [];
+      if (includeOnline) {
+        const textSearch = require('./lookup/text-search');
+        try {
+          onlineProducts = await textSearch.searchByText(q);
+        } catch (err) {
+          logger.warn('Online product search failed', { query: q, error: err.message });
+        }
+      }
+
+      success(res, { products, onlineProducts });
     }
   );
 
