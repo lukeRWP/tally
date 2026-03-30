@@ -276,7 +276,7 @@ export function Home() {
 
         {/* Stat chips */}
         {properties && properties.length > 0 && (
-          <div className="flex gap-2 mt-3 overflow-x-auto pb-1 -mx-1 px-1">
+          <div className="flex flex-wrap gap-2 mt-3">
             <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[var(--color-primary-bg)] text-[var(--color-primary)] text-xs font-semibold whitespace-nowrap shrink-0">
               <Package className="w-3.5 h-3.5" />
               {totalItems} items
@@ -300,7 +300,7 @@ export function Home() {
           placeholder="Search items..."
           value={searchInput}
           onChange={(e) => setSearchInput(e.target.value)}
-          className="pl-10 pr-12 h-12 text-base focus:shadow-[inset_0_0_0_2px_var(--color-primary)] transition-shadow duration-200"
+          className="pl-10 pr-12 h-12 text-base bg-[var(--color-elevated)] focus:shadow-[inset_0_0_0_2px_var(--color-primary)] transition-shadow duration-200"
         />
         <button
           type="button"
