@@ -133,6 +133,11 @@ export function Scan() {
 
   // -- Add mode handlers ----------------------------------------------------
 
+  // Restore context from URL params (used after resetFlow)
+  const ctxPropertyId = Number(searchParams.get('propertyId')) || 0;
+  const ctxAreaId = Number(searchParams.get('areaId')) || 0;
+  const ctxContainerId = Number(searchParams.get('containerId')) || 0;
+
   const resetFlow = useCallback(() => {
     setState('idle');
     setLookupResult(null);
@@ -140,13 +145,14 @@ export function Scan() {
     setShowDuplicates(false);
     setSelectedProduct(null);
     setCurrentBarcode('');
-    setPropertyId(0);
-    setAreaId(0);
-    setContainerId(0);
+    // Restore URL context instead of clearing to 0
+    setPropertyId(ctxPropertyId);
+    setAreaId(ctxAreaId);
+    setContainerId(ctxContainerId);
     setItemName('');
     setQuantity(1);
     setCondition('good');
-  }, []);
+  }, [ctxPropertyId, ctxAreaId, ctxContainerId]);
 
   const handleBarcodeScanned = useCallback(async (code: string) => {
     setState('looking_up');
