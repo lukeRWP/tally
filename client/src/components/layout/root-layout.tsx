@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react';
 import { Outlet, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { Home, Layers, ScanLine, BarChart2, Settings } from 'lucide-react';
 import { useAuth } from '@/hooks/use-auth';
@@ -97,6 +98,14 @@ export function RootLayout() {
     </div>;
   }
 
+  const mainRef = useRef<HTMLElement>(null);
+  const { pathname } = useLocation();
+
+  // Scroll to top on route change
+  useEffect(() => {
+    mainRef.current?.scrollTo(0, 0);
+  }, [pathname]);
+
   if (!user) {
     return <Navigate to="/login" replace />;
   }
@@ -112,7 +121,7 @@ export function RootLayout() {
         <div className="lg:hidden pt-[env(safe-area-inset-top)]">
           <Header />
         </div>
-        <main className="flex-1 overflow-y-auto overflow-x-hidden pb-[calc(5rem+env(safe-area-inset-bottom))] lg:pb-6 px-4 pt-4">
+        <main ref={mainRef} className="flex-1 overflow-y-auto overflow-x-hidden pb-[calc(5rem+env(safe-area-inset-bottom))] lg:pb-6 px-4 pt-4">
           <div className="md:max-w-[640px] lg:max-w-[800px] mx-auto">
             <Outlet />
           </div>

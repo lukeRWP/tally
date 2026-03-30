@@ -66,7 +66,7 @@ export function PropertyDetail() {
       <Breadcrumbs items={[]} />
 
       {/* Hero Header Band */}
-      <div className="bg-[var(--color-primary-bg)] -mx-4 -mt-4 px-4 pt-5 pb-4 rounded-b-2xl animate-fade-up">
+      <div className="bg-[var(--color-primary-bg)] px-4 pt-4 pb-4 rounded-[var(--radius-lg)] animate-fade-up">
         <div className="flex items-center justify-between gap-2">
           <h1 className="text-2xl font-extrabold text-[var(--color-text)] tracking-tight">{property.name}</h1>
           <Button
