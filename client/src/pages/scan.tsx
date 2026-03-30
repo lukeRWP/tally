@@ -118,26 +118,46 @@ export function Scan() {
   const { data: containers } = useContainers(areaId);
   const createItem = useCreateItem();
 
-  // -- Context-aware pre-fill from URL params (e.g., /scan?containerId=5&areaId=3&propertyId=1)
+  // -- Context-aware pre-fill from URL params
+  // Resolves parent IDs: containerId → areaId + propertyId, areaId → propertyId
   const [contextLoaded, setContextLoaded] = useState(false);
   useEffect(() => {
     if (contextLoaded) return;
-    const ctxProperty = searchParams.get('propertyId');
-    const ctxArea = searchParams.get('areaId');
-    const ctxContainer = searchParams.get('containerId');
-    if (ctxProperty) setPropertyId(Number(ctxProperty));
-    if (ctxArea) setAreaId(Number(ctxArea));
-    if (ctxContainer) setContainerId(Number(ctxContainer));
     setContextLoaded(true);
+
+    const ctxProperty = Number(searchParams.get('propertyId')) || 0;
+    const ctxArea = Number(searchParams.get('areaId')) || 0;
+    const ctxContainer = Number(searchParams.get('containerId')) || 0;
+
+    if (ctxProperty) setPropertyId(ctxProperty);
+    if (ctxArea) setAreaId(ctxArea);
+    if (ctxContainer) setContainerId(ctxContainer);
+
+    // Resolve parent IDs from child if parents not provided
+    (async () => {
+      try {
+        if (ctxContainer && (!ctxArea || !ctxProperty)) {
+          const data = await api.get<{ container: { areaId: number; breadcrumb: { id: number; type: string }[] } }>(
+            `/api/containers/_x_/${ctxContainer}`
+          );
+          if (data.container) {
+            const propCrumb = data.container.breadcrumb?.find((b: { type: string }) => b.type === 'property');
+            if (data.container.areaId) setAreaId(data.container.areaId);
+            if (propCrumb?.id) setPropertyId(propCrumb.id);
+          }
+        } else if (ctxArea && !ctxProperty) {
+          const data = await api.get<{ area: { propertyId: number } }>(
+            `/api/areas/_x_/${ctxArea}`
+          );
+          if (data.area?.propertyId) setPropertyId(data.area.propertyId);
+        }
+      } catch { /* context resolution failed, dropdowns stay empty */ }
+    })();
   }, [searchParams, contextLoaded]);
 
   // -- Add mode handlers ----------------------------------------------------
 
-  // Restore context from URL params (used after resetFlow)
-  const ctxPropertyId = Number(searchParams.get('propertyId')) || 0;
-  const ctxAreaId = Number(searchParams.get('areaId')) || 0;
-  const ctxContainerId = Number(searchParams.get('containerId')) || 0;
-
+  // resetFlow restores the current propertyId/areaId/containerId (which may have been resolved from URL params)
   const resetFlow = useCallback(() => {
     setState('idle');
     setLookupResult(null);
@@ -145,14 +165,11 @@ export function Scan() {
     setShowDuplicates(false);
     setSelectedProduct(null);
     setCurrentBarcode('');
-    // Restore URL context instead of clearing to 0
-    setPropertyId(ctxPropertyId);
-    setAreaId(ctxAreaId);
-    setContainerId(ctxContainerId);
+    // Keep current property/area/container — don't reset location context
     setItemName('');
     setQuantity(1);
     setCondition('good');
-  }, [ctxPropertyId, ctxAreaId, ctxContainerId]);
+  }, []);
 
   const handleBarcodeScanned = useCallback(async (code: string) => {
     setState('looking_up');
