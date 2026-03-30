@@ -150,9 +150,11 @@ const ProductsService = {
   },
 
   async searchByText(query) {
+    const trimmed = query.trim();
+    if (!trimmed) return [];
+
     // Strip FULLTEXT boolean operators and append * for prefix matching
-    const booleanQuery = query
-      .trim()
+    const booleanQuery = trimmed
       .split(/\s+/)
       .filter(Boolean)
       .map(word => word.replace(/[+\-><()~*"@]/g, ''))
@@ -160,13 +162,31 @@ const ProductsService = {
       .map(word => `${word}*`)
       .join(' ');
 
-    const rows = await _db.query(
-      `SELECT *
-       FROM TALLY.products
-       WHERE MATCH(NAME, BRAND, DESCRIPTION) AGAINST(? IN BOOLEAN MODE)
-       LIMIT 50`,
-      [booleanQuery]
-    );
+    // Try FULLTEXT search first (fast, relevance-ranked)
+    let rows = [];
+    if (booleanQuery.length > 0) {
+      rows = await _db.query(
+        `SELECT *
+         FROM TALLY.products
+         WHERE MATCH(NAME, BRAND, DESCRIPTION) AGAINST(? IN BOOLEAN MODE)
+         LIMIT 50`,
+        [booleanQuery]
+      );
+    }
+
+    // Fallback to LIKE search if FULLTEXT returns nothing
+    // (handles short words below ft_min_token_size, partial matches, etc.)
+    if (rows.length === 0) {
+      const likePattern = `%${trimmed}%`;
+      rows = await _db.query(
+        `SELECT *
+         FROM TALLY.products
+         WHERE NAME LIKE ? OR BRAND LIKE ? OR BARCODE LIKE ?
+         ORDER BY NAME
+         LIMIT 50`,
+        [likePattern, likePattern, likePattern]
+      );
+    }
 
     return rows.map(ProductsService._mapProduct);
   },
