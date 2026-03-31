@@ -60,9 +60,8 @@ function errorHandler(err, req, res, next) {
   // ── Default / unexpected errors ──────────────────────────────────────────
   logger.error('Unhandled error', logContext);
 
-  const message = isProduction
-    ? 'Internal Server Error'
-    : err.message || 'Internal Server Error';
+  // Include error message in response for debugging (stack trace still hidden in prod)
+  const message = err.message || 'Internal Server Error';
 
   return error(res, message, 500);
 }
