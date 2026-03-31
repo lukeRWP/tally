@@ -170,7 +170,7 @@ const LabelsService = {
 
         // Cutting guide border
         doc.save()
-          .roundedRect(x + 2, y + 2, labelW - 4, labelH - 4, 4)
+          .rect(x + 2, y + 2, labelW - 4, labelH - 4)
           .lineWidth(0.5).strokeColor('#cccccc').stroke()
           .restore();
 
