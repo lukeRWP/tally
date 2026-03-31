@@ -168,37 +168,47 @@ const LabelsService = {
         const x = marginX + col * labelW;
         const y = marginY + row * labelH;
 
-        // Cutting guide border
+        // Black background with white text for high contrast
         doc.save()
           .rect(x + 2, y + 2, labelW - 4, labelH - 4)
-          .lineWidth(0.5).strokeColor('#cccccc').stroke()
+          .fill('#1a1a1a');
+
+        // White border
+        doc.rect(x + 2, y + 2, labelW - 4, labelH - 4)
+          .lineWidth(1).strokeColor('#333333').stroke()
           .restore();
 
-        // QR code — vertically centered
-        doc.image(qrBuffers[i], x + pad, y + (labelH - qrSize) / 2, { width: qrSize });
+        // QR code — white background behind QR for scanability
+        const qrX = x + pad;
+        const qrY = y + (labelH - qrSize) / 2;
+        doc.save()
+          .rect(qrX - 4, qrY - 4, qrSize + 8, qrSize + 8)
+          .fill('#ffffff')
+          .restore();
+        doc.image(qrBuffers[i], qrX, qrY, { width: qrSize });
 
-        // Text block
+        // Text block — white on black
         const textX = x + pad + qrSize + pad;
         const textW = labelW - qrSize - pad * 3;
         const centerY = y + (labelH / 2);
 
-        // Name — bold
+        // Name — bold, white, uppercase
         const nameH = fs.name * (labelType === 'asset' ? 1.2 : 2.4);
-        doc.fontSize(fs.name).font('Helvetica-Bold').fillColor('#000000')
-          .text(entity.name, textX, centerY - nameH - 2, {
+        doc.fontSize(fs.name).font('Helvetica-Bold').fillColor('#ffffff')
+          .text(entity.name.toUpperCase(), textX, centerY - nameH - 2, {
             width: textW, lineBreak: true, height: nameH, ellipsis: true,
           });
 
-        // QR code string — monospace, gray
-        doc.fontSize(fs.code).font('Courier').fillColor('#666666')
-          .text(entity.qrCode, textX, centerY + 4, {
+        // QR code string — monospace, light gray, uppercase
+        doc.fontSize(fs.code).font('Courier').fillColor('#aaaaaa')
+          .text(entity.qrCode.toUpperCase(), textX, centerY + 4, {
             width: textW, lineBreak: false, ellipsis: true,
           });
 
-        // Breadcrumb — lighter
+        // Breadcrumb — lighter, uppercase
         if (entity.breadcrumb) {
-          doc.fontSize(fs.bc).font('Helvetica').fillColor('#999999')
-            .text(entity.breadcrumb, textX, centerY + 4 + fs.code * 1.8, {
+          doc.fontSize(fs.bc).font('Helvetica').fillColor('#888888')
+            .text(entity.breadcrumb.toUpperCase(), textX, centerY + 4 + fs.code * 1.8, {
               width: textW, lineBreak: false, ellipsis: true,
             });
         }
