@@ -176,20 +176,20 @@ export function Scan() {
     setCurrentBarcode(code);
 
     try {
-      const [lookupData, dupeData] = await Promise.all([
+      const [lookupData, dupeResponse] = await Promise.all([
         api.post<LookupResult>('/api/products/_y_/lookup', { barcode: code }),
-        api.post<DuplicateItem[]>('/api/products/_y_/check-duplicate', { barcode: code }).catch(() => [] as DuplicateItem[]),
+        api.post<{ existingItems: DuplicateItem[] }>('/api/products/_y_/check-duplicate', { barcode: code }).catch(() => ({ existingItems: [] })),
       ]);
 
       setLookupResult(lookupData);
-      setDuplicates(dupeData);
+      setDuplicates(dupeResponse.existingItems || []);
 
       if (lookupData.source === 'not_found') {
         setState('not_found');
         setLookupResult({ source: 'not_found', product: { barcode: code } });
       } else {
         setState('found');
-        if (dupeData.length > 0) {
+        if ((dupeResponse.existingItems || []).length > 0) {
           setShowDuplicates(true);
         }
       }

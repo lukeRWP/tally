@@ -50,7 +50,9 @@ export function ScanResult({
   const name = product.name as string;
   const brand = product.brand as string | undefined;
   const category = product.category as string | undefined;
-  const imageUrl = product.imageUrl as string | undefined;
+  const rawImageUrl = product.imageUrl as string | undefined;
+  // Upgrade HTTP image URLs to HTTPS to avoid mixed content blocking
+  const imageUrl = rawImageUrl?.replace(/^http:\/\//, 'https://');
   const retailPrice = product.retailPrice as number | undefined;
   const retailLinks = (product.retailLinks as RetailLink[] | undefined) || [];
   const description = product.description as string | undefined;
@@ -59,8 +61,13 @@ export function ScanResult({
     <Card className="flex flex-col gap-3">
       {/* Product image — larger on mobile */}
       {imageUrl && (
-        <div className="w-full h-40 rounded-[var(--radius-md)] bg-[var(--color-elevated)] overflow-hidden">
-          <img src={imageUrl} alt={name} className="w-full h-full object-contain" />
+        <div className="w-full h-40 rounded-[var(--radius-md)] bg-[var(--color-elevated)] overflow-hidden flex items-center justify-center">
+          <img
+            src={imageUrl}
+            alt={name}
+            className="w-full h-full object-contain"
+            onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+          />
         </div>
       )}
 
@@ -79,7 +86,6 @@ export function ScanResult({
           )}
           <div className="flex items-center gap-2 mt-1.5 flex-wrap">
             {category && <Badge variant="default">{category}</Badge>}
-            <Badge variant="info">{source}</Badge>
           </div>
           {retailPrice != null && (
             <p className="text-sm font-semibold text-[var(--color-green)] mt-1.5">${retailPrice.toFixed(2)}</p>
