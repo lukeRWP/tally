@@ -176,9 +176,11 @@ export function Scan() {
     setCurrentBarcode(code);
 
     try {
+      // Minimum 1.5s loading state so user sees the lookup is happening
       const [lookupData, dupeResponse] = await Promise.all([
         api.post<LookupResult>('/api/products/_y_/lookup', { barcode: code }),
         api.post<{ existingItems: DuplicateItem[] }>('/api/products/_y_/check-duplicate', { barcode: code }).catch(() => ({ existingItems: [] })),
+        new Promise(r => setTimeout(r, 1500)),
       ]);
 
       setLookupResult(lookupData);
