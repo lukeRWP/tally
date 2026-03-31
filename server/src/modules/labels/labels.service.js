@@ -130,28 +130,21 @@ const LabelsService = {
 
   async generatePdf(entities, labelType) {
     // Label dimensions in points (1 inch = 72 points)
-    // Letter size: 612 x 792 points (8.5" x 11")
     const layouts = {
-      asset: { cols: 3, rows: 10, labelW: 144, labelH: 72 },   // 2" x 1"
-      bin: { cols: 2, rows: 5, labelW: 216, labelH: 144 },      // 3" x 2"
-      location: { cols: 2, rows: 5, labelW: 216, labelH: 144 }, // 3" x 2"
+      asset:    { cols: 3, rows: 10, labelW: 189, labelH: 72,  qrSize: 56,  fs: { name: 9, code: 7, bc: 6 } },
+      bin:      { cols: 2, rows: 4,  labelW: 270, labelH: 180, qrSize: 130, fs: { name: 16, code: 10, bc: 9 } },
+      location: { cols: 2, rows: 4,  labelW: 270, labelH: 180, qrSize: 130, fs: { name: 16, code: 10, bc: 9 } },
     };
 
-    const layout = layouts[labelType] || layouts.asset;
-    const { cols, rows, labelW, labelH } = layout;
+    const layout = layouts[labelType] || layouts.bin;
+    const { cols, rows, labelW, labelH, qrSize, fs } = layout;
     const labelsPerPage = cols * rows;
-
-    // Center the grid on the page
     const pageW = 612;
     const pageH = 792;
     const marginX = (pageW - cols * labelW) / 2;
     const marginY = (pageH - rows * labelH) / 2;
+    const pad = 10;
 
-    // QR size relative to label height
-    const qrSize = labelType === 'asset' ? 50 : 90;
-    const qrPadding = 6;
-
-    // Pre-generate all QR buffers before starting the PDF stream
     const qrBuffers = await Promise.all(
       entities.map(e => LabelsService.generateQrBuffer(e.qrCode, qrSize * 2))
     );
@@ -168,40 +161,49 @@ const LabelsService = {
         const pageIndex = Math.floor(i / labelsPerPage);
         const posOnPage = i % labelsPerPage;
 
-        if (posOnPage === 0 && pageIndex > 0) {
-          doc.addPage();
-        }
+        if (posOnPage === 0 && pageIndex > 0) doc.addPage();
 
         const col = posOnPage % cols;
         const row = Math.floor(posOnPage / cols);
-
         const x = marginX + col * labelW;
         const y = marginY + row * labelH;
 
-        doc.image(qrBuffers[i], x + qrPadding, y + (labelH - qrSize) / 2, { width: qrSize });
+        // Cutting guide border
+        doc.save()
+          .roundedRect(x + 2, y + 2, labelW - 4, labelH - 4, 4)
+          .lineWidth(0.5).strokeColor('#cccccc').stroke()
+          .restore();
 
-        const textX = x + qrPadding + qrSize + 6;
-        const textW = labelW - qrSize - qrPadding * 2 - 6;
+        // QR code — vertically centered
+        doc.image(qrBuffers[i], x + pad, y + (labelH - qrSize) / 2, { width: qrSize });
 
-        if (labelType === 'asset') {
-          doc.fontSize(8).font('Helvetica-Bold')
-            .text(entity.name, textX, y + 10, { width: textW, ellipsis: true, lineBreak: false });
-          doc.fontSize(6).font('Helvetica')
-            .text(entity.qrCode, textX, y + 22, { width: textW, ellipsis: true, lineBreak: false });
-          if (entity.breadcrumb) {
-            doc.fontSize(5).font('Helvetica')
-              .text(entity.breadcrumb, textX, y + 32, { width: textW, ellipsis: true, lineBreak: false });
-          }
-        } else {
-          doc.fontSize(12).font('Helvetica-Bold')
-            .text(entity.name, textX, y + 20, { width: textW, ellipsis: true, lineBreak: false });
-          doc.fontSize(9).font('Helvetica')
-            .text(entity.qrCode, textX, y + 40, { width: textW, ellipsis: true, lineBreak: false });
-          if (entity.breadcrumb) {
-            doc.fontSize(8).font('Helvetica')
-              .text(entity.breadcrumb, textX, y + 56, { width: textW, ellipsis: true, lineBreak: false });
-          }
+        // Text block
+        const textX = x + pad + qrSize + pad;
+        const textW = labelW - qrSize - pad * 3;
+        const centerY = y + (labelH / 2);
+
+        // Name — bold
+        const nameH = fs.name * (labelType === 'asset' ? 1.2 : 2.4);
+        doc.fontSize(fs.name).font('Helvetica-Bold').fillColor('#000000')
+          .text(entity.name, textX, centerY - nameH - 2, {
+            width: textW, lineBreak: true, height: nameH, ellipsis: true,
+          });
+
+        // QR code string — monospace, gray
+        doc.fontSize(fs.code).font('Courier').fillColor('#666666')
+          .text(entity.qrCode, textX, centerY + 4, {
+            width: textW, lineBreak: false, ellipsis: true,
+          });
+
+        // Breadcrumb — lighter
+        if (entity.breadcrumb) {
+          doc.fontSize(fs.bc).font('Helvetica').fillColor('#999999')
+            .text(entity.breadcrumb, textX, centerY + 4 + fs.code * 1.8, {
+              width: textW, lineBreak: false, ellipsis: true,
+            });
         }
+
+        doc.fillColor('#000000');
       }
 
       doc.end();
