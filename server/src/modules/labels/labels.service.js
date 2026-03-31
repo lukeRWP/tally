@@ -168,47 +168,83 @@ const LabelsService = {
         const x = marginX + col * labelW;
         const y = marginY + row * labelH;
 
-        // Black background with white text for high contrast
-        doc.save()
-          .rect(x + 2, y + 2, labelW - 4, labelH - 4)
-          .fill('#1a1a1a');
+        const lx = x + 2;
+        const ly = y + 2;
+        const lw = labelW - 4;
+        const lh = labelH - 4;
+        const bandH = labelType === 'asset' ? 10 : 18;
+        const chevW = labelType === 'asset' ? 6 : 10;
+        const chevColor = '#00b894';
 
-        // White border
-        doc.rect(x + 2, y + 2, labelW - 4, labelH - 4)
-          .lineWidth(1).strokeColor('#333333').stroke()
-          .restore();
+        // Black background
+        doc.save().rect(lx, ly, lw, lh).fill('#1a1a1a').restore();
 
-        // QR code — white background behind QR for scanability
-        const qrX = x + pad;
-        const qrY = y + (labelH - qrSize) / 2;
-        doc.save()
-          .rect(qrX - 4, qrY - 4, qrSize + 8, qrSize + 8)
-          .fill('#ffffff')
-          .restore();
-        doc.image(qrBuffers[i], qrX, qrY, { width: qrSize });
+        // Top chevron band
+        for (let cx = 0; cx < lw; cx += chevW * 2) {
+          doc.save()
+            .moveTo(lx + cx, ly)
+            .lineTo(lx + cx + chevW, ly + bandH / 2)
+            .lineTo(lx + cx, ly + bandH)
+            .lineTo(lx + cx + chevW, ly + bandH)
+            .lineTo(lx + cx + chevW * 2, ly + bandH / 2)
+            .lineTo(lx + cx + chevW, ly)
+            .closePath()
+            .fill(chevColor)
+            .restore();
+        }
+        // Clip top band to label bounds
+        doc.save().rect(lx, ly, lw, bandH).clip()
+          .rect(lx, ly, lw, bandH).fill(chevColor).restore();
+        for (let cx = 0; cx < lw + chevW; cx += chevW * 2) {
+          doc.save()
+            .moveTo(lx + cx, ly).lineTo(lx + cx + chevW, ly + bandH / 2).lineTo(lx + cx, ly + bandH)
+            .lineWidth(2).strokeColor('#1a1a1a').stroke().restore();
+        }
 
-        // Text block — white on black
-        const textX = x + pad + qrSize + pad;
-        const textW = labelW - qrSize - pad * 3;
-        const centerY = y + (labelH / 2);
+        // Bottom chevron band
+        const byy = ly + lh - bandH;
+        doc.save().rect(lx, byy, lw, bandH).clip()
+          .rect(lx, byy, lw, bandH).fill(chevColor).restore();
+        for (let cx = 0; cx < lw + chevW; cx += chevW * 2) {
+          doc.save()
+            .moveTo(lx + cx, byy).lineTo(lx + cx + chevW, byy + bandH / 2).lineTo(lx + cx, byy + bandH)
+            .lineWidth(2).strokeColor('#1a1a1a').stroke().restore();
+        }
 
-        // Name — bold, white, uppercase
+        // Border
+        doc.save().rect(lx, ly, lw, lh).lineWidth(1).strokeColor('#333333').stroke().restore();
+
+        // QR code with white pad
+        const contentY = ly + bandH + 4;
+        const contentH = lh - bandH * 2 - 8;
+        const qrX = lx + pad;
+        const qrActual = Math.min(qrSize, contentH);
+        const qrY = contentY + (contentH - qrActual) / 2;
+        doc.save().rect(qrX - 3, qrY - 3, qrActual + 6, qrActual + 6).fill('#ffffff').restore();
+        doc.image(qrBuffers[i], qrX, qrY, { width: qrActual });
+
+        // Text — white on black
+        const textX = qrX + qrActual + pad;
+        const textW = lw - qrActual - pad * 3;
+        const textCenterY = contentY + contentH / 2;
+
+        // Name — bold, uppercase
         const nameH = fs.name * (labelType === 'asset' ? 1.2 : 2.4);
         doc.fontSize(fs.name).font('Helvetica-Bold').fillColor('#ffffff')
-          .text(entity.name.toUpperCase(), textX, centerY - nameH - 2, {
+          .text(entity.name.toUpperCase(), textX, textCenterY - nameH - 2, {
             width: textW, lineBreak: true, height: nameH, ellipsis: true,
           });
 
-        // QR code string — monospace, light gray, uppercase
+        // Code — monospace
         doc.fontSize(fs.code).font('Courier').fillColor('#aaaaaa')
-          .text(entity.qrCode.toUpperCase(), textX, centerY + 4, {
+          .text(entity.qrCode.toUpperCase(), textX, textCenterY + 4, {
             width: textW, lineBreak: false, ellipsis: true,
           });
 
-        // Breadcrumb — lighter, uppercase
+        // Breadcrumb
         if (entity.breadcrumb) {
           doc.fontSize(fs.bc).font('Helvetica').fillColor('#888888')
-            .text(entity.breadcrumb.toUpperCase(), textX, centerY + 4 + fs.code * 1.8, {
+            .text(entity.breadcrumb.toUpperCase(), textX, textCenterY + 4 + fs.code * 1.8, {
               width: textW, lineBreak: false, ellipsis: true,
             });
         }
