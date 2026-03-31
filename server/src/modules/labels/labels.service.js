@@ -172,63 +172,68 @@ const LabelsService = {
         const ly = y + 2;
         const lw = labelW - 4;
         const lh = labelH - 4;
-        const bandH = labelType === 'asset' ? 10 : 18;
-        const chevW = labelType === 'asset' ? 6 : 10;
-        const chevColor = '#00b894';
+        const bandH = labelType === 'asset' ? 8 : 14;
+        const stripeW = labelType === 'asset' ? 8 : 14;
 
-        // Black background
-        doc.save().rect(lx, ly, lw, lh).fill('#1a1a1a').restore();
-
-        // Top chevron band
-        for (let cx = 0; cx < lw; cx += chevW * 2) {
-          doc.save()
-            .moveTo(lx + cx, ly)
-            .lineTo(lx + cx + chevW, ly + bandH / 2)
-            .lineTo(lx + cx, ly + bandH)
-            .lineTo(lx + cx + chevW, ly + bandH)
-            .lineTo(lx + cx + chevW * 2, ly + bandH / 2)
-            .lineTo(lx + cx + chevW, ly)
-            .closePath()
-            .fill(chevColor)
-            .restore();
+        // ── Top white chevron band (above the black area) ──
+        doc.save();
+        for (let sx = -stripeW; sx < lw + stripeW; sx += stripeW * 2) {
+          doc.moveTo(lx + sx, ly)
+            .lineTo(lx + sx + stripeW, ly + bandH)
+            .lineTo(lx + sx + stripeW * 2, ly)
+            .closePath();
         }
-        // Clip top band to label bounds
-        doc.save().rect(lx, ly, lw, bandH).clip()
-          .rect(lx, ly, lw, bandH).fill(chevColor).restore();
-        for (let cx = 0; cx < lw + chevW; cx += chevW * 2) {
-          doc.save()
-            .moveTo(lx + cx, ly).lineTo(lx + cx + chevW, ly + bandH / 2).lineTo(lx + cx, ly + bandH)
-            .lineWidth(2).strokeColor('#1a1a1a').stroke().restore();
+        doc.clip().rect(lx, ly, lw, bandH).fill('#ffffff').restore();
+        // Draw the V shapes on top
+        doc.save().rect(lx, ly, lw, bandH).clip();
+        for (let sx = -stripeW; sx < lw + stripeW * 2; sx += stripeW * 2) {
+          doc.moveTo(lx + sx, ly)
+            .lineTo(lx + sx + stripeW, ly + bandH)
+            .lineTo(lx + sx + stripeW * 2, ly)
+            .lineWidth(1.5).strokeColor('#cccccc').stroke();
         }
+        doc.restore();
 
-        // Bottom chevron band
+        // ── Black content area ──
+        doc.save().rect(lx, ly + bandH, lw, lh - bandH * 2).fill('#1a1a1a').restore();
+
+        // ── Bottom white chevron band (below the black area) ──
         const byy = ly + lh - bandH;
-        doc.save().rect(lx, byy, lw, bandH).clip()
-          .rect(lx, byy, lw, bandH).fill(chevColor).restore();
-        for (let cx = 0; cx < lw + chevW; cx += chevW * 2) {
-          doc.save()
-            .moveTo(lx + cx, byy).lineTo(lx + cx + chevW, byy + bandH / 2).lineTo(lx + cx, byy + bandH)
-            .lineWidth(2).strokeColor('#1a1a1a').stroke().restore();
+        doc.save();
+        for (let sx = -stripeW; sx < lw + stripeW; sx += stripeW * 2) {
+          doc.moveTo(lx + sx, byy + bandH)
+            .lineTo(lx + sx + stripeW, byy)
+            .lineTo(lx + sx + stripeW * 2, byy + bandH)
+            .closePath();
         }
+        doc.clip().rect(lx, byy, lw, bandH).fill('#ffffff').restore();
+        doc.save().rect(lx, byy, lw, bandH).clip();
+        for (let sx = -stripeW; sx < lw + stripeW * 2; sx += stripeW * 2) {
+          doc.moveTo(lx + sx, byy + bandH)
+            .lineTo(lx + sx + stripeW, byy)
+            .lineTo(lx + sx + stripeW * 2, byy + bandH)
+            .lineWidth(1.5).strokeColor('#cccccc').stroke();
+        }
+        doc.restore();
 
-        // Border
-        doc.save().rect(lx, ly, lw, lh).lineWidth(1).strokeColor('#333333').stroke().restore();
+        // ── Outer border ──
+        doc.save().rect(lx, ly, lw, lh).lineWidth(0.5).strokeColor('#999999').stroke().restore();
 
-        // QR code with white pad
+        // ── QR code with white pad ──
         const contentY = ly + bandH + 4;
         const contentH = lh - bandH * 2 - 8;
         const qrX = lx + pad;
         const qrActual = Math.min(qrSize, contentH);
         const qrY = contentY + (contentH - qrActual) / 2;
-        doc.save().rect(qrX - 3, qrY - 3, qrActual + 6, qrActual + 6).fill('#ffffff').restore();
+        doc.save().rect(qrX - 4, qrY - 4, qrActual + 8, qrActual + 8).fill('#ffffff').restore();
         doc.image(qrBuffers[i], qrX, qrY, { width: qrActual });
 
-        // Text — white on black
+        // ── Text — white on black ──
         const textX = qrX + qrActual + pad;
         const textW = lw - qrActual - pad * 3;
         const textCenterY = contentY + contentH / 2;
 
-        // Name — bold, uppercase
+        // Name
         const nameH = fs.name * (labelType === 'asset' ? 1.2 : 2.4);
         doc.fontSize(fs.name).font('Helvetica-Bold').fillColor('#ffffff')
           .text(entity.name.toUpperCase(), textX, textCenterY - nameH - 2, {
