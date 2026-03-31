@@ -11,8 +11,7 @@ interface LabelPreviewProps {
 export function LabelPreview({ entity, qrImageUrl }: LabelPreviewProps) {
   return (
     <div
-      className="inline-flex items-center gap-3 border border-[var(--color-border)] rounded-[var(--radius-md)] p-2 bg-[var(--color-elevated)]"
-      style={{ minWidth: 220, maxWidth: 320 }}
+      className="flex items-center gap-3 border border-[var(--color-border)] rounded-[var(--radius-md)] p-2 bg-[var(--color-elevated)] max-w-full"
     >
       {/* QR Code */}
       <img

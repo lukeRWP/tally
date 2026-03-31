@@ -7,7 +7,7 @@ const generateLabels = Joi.object({
 });
 
 const resolveCode = Joi.object({
-  code: Joi.string().pattern(/^TLY-[PACI]-[0-9A-Fa-f]{4}$/).required(),
+  code: Joi.string().pattern(/^TLY-[PACI]-[0-9A-Fa-f]{4,8}$/).required(),
 });
 
 module.exports = { generateLabels, resolveCode };
