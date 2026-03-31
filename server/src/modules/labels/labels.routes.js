@@ -48,11 +48,10 @@ module.exports = function labelsRoutes({ app, db, logger, config }) {
     }
   );
 
-  // ── GET /api/labels/_x_/qr/:code — generate QR code image ───────────────
+  // ── GET /api/labels/_x_/qr/:code — generate QR code image (no auth — public QR images)
 
   app.get(
     '/api/labels/_x_/qr/:code',
-    app.locals.requireAuth,
     validate(resolveCode, 'params'),
     async (req, res) => {
       const buffer = await LabelsService.generateQrBuffer(req.params.code);
