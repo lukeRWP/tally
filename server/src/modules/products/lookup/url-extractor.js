@@ -1,4 +1,35 @@
 const axios = require('axios');
+const dns = require('dns');
+const { URL } = require('url');
+
+/**
+ * Validate a URL is not targeting private/internal networks (SSRF protection)
+ */
+async function validateUrlNotPrivate(urlStr) {
+  const parsed = new URL(urlStr);
+  if (!['http:', 'https:'].includes(parsed.protocol)) {
+    throw new Error('Only HTTP and HTTPS URLs are allowed');
+  }
+
+  const hostname = parsed.hostname;
+  // Block obvious private hostnames
+  if (['localhost', '127.0.0.1', '::1', '0.0.0.0'].includes(hostname)) {
+    throw new Error('Private/localhost URLs are not allowed');
+  }
+
+  // Resolve DNS and check the actual IP
+  const addresses = await dns.promises.resolve4(hostname).catch(() => []);
+  for (const ip of addresses) {
+    const parts = ip.split('.').map(Number);
+    if (parts[0] === 10 ||                                    // 10.0.0.0/8
+        (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) || // 172.16.0.0/12
+        (parts[0] === 192 && parts[1] === 168) ||             // 192.168.0.0/16
+        parts[0] === 127 ||                                    // 127.0.0.0/8
+        (parts[0] === 169 && parts[1] === 254)) {             // 169.254.0.0/16 (link-local/metadata)
+      throw new Error('URLs resolving to private IP ranges are not allowed');
+    }
+  }
+}
 
 /**
  * Extract product details from a URL by parsing:
@@ -7,6 +38,8 @@ const axios = require('axios');
  * 3. Standard HTML meta tags as fallback
  */
 async function extractFromUrl(url) {
+  await validateUrlNotPrivate(url);
+
   const { data: html } = await axios.get(url, {
     timeout: 8000,
     maxRedirects: 5,

@@ -1,7 +1,8 @@
 const multer = require('multer');
 
 const ALLOWED_MIMES = new Set([
-  'image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/svg+xml',
+  'image/jpeg', 'image/png', 'image/webp', 'image/gif',
+  // SVG removed — can contain <script> tags (stored XSS)
   'application/pdf',
   'text/plain', 'text/csv',
   'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',

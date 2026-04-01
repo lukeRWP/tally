@@ -268,13 +268,16 @@ const LabelsService = {
       entities = [entities];
     }
 
+    // Sanitize text for ZPL: strip ^ and ~ which are ZPL command prefixes
+    const zplSafe = (str) => String(str || '').replace(/[\^~]/g, '');
+
     return entities
       .map(entity => {
         return [
           '^XA',
           `^FO50,50^BQN,2,5^FDMA,${_baseUrl}/s/${entity.qrCode}^FS`,
-          `^CF0,30^FO200,60^FD${entity.name}^FS`,
-          `^CF0,20^FO200,100^FD${entity.qrCode}^FS`,
+          `^CF0,30^FO200,60^FD${zplSafe(entity.name)}^FS`,
+          `^CF0,20^FO200,100^FD${zplSafe(entity.qrCode)}^FS`,
           '^XZ',
         ].join('\n');
       })
