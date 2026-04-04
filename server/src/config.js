@@ -61,7 +61,15 @@ const config = Object.freeze({
     entraClientId: process.env.ENTRA_CLIENT_ID,
     entraClientSecret: process.env.ENTRA_CLIENT_SECRET,
     entraTenantId: process.env.ENTRA_TENANT_ID,
-    bypassAuth: !isProduction && process.env.BYPASS_AUTH === 'true',
+    bypassAuth: (() => {
+      if (process.env.BYPASS_AUTH !== 'true') return false;
+      if (isProduction) {
+        console.error('[SECURITY] BYPASS_AUTH=true is BLOCKED in production. Auth will NOT be bypassed.');
+        return false;
+      }
+      console.warn('[config] BYPASS_AUTH=true — all requests use dev user identity');
+      return true;
+    })(),
     cookieSecret: process.env.COOKIE_SECRET,
   },
 
