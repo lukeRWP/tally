@@ -191,13 +191,18 @@ const AuthService = {
 
   // ── Session management ───────────────────────────────────────────────────
 
+  _hashToken(token) {
+    return crypto.createHash('sha256').update(token).digest('hex');
+  },
+
   async createSession(userId) {
     const token = crypto.randomBytes(32).toString('hex');
+    const tokenHash = AuthService._hashToken(token);
     const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
 
     await _db.query(
       `INSERT INTO TALLY.sessions (USER_ID, TOKEN, EXPIRES_AT) VALUES (?, ?, ?)`,
-      [userId, token, expiresAt]
+      [userId, tokenHash, expiresAt]
     );
 
     await _db.query(
@@ -205,10 +210,12 @@ const AuthService = {
       [userId]
     );
 
+    // Return the raw token to the client; only the hash is stored in DB
     return { token, expiresAt };
   },
 
   async validateSession(token) {
+    const tokenHash = AuthService._hashToken(token);
     const rows = await _db.query(
       `SELECT s.ID as SESSION_ID, s.TOKEN, s.EXPIRES_AT,
               u.ID, u.ENTRA_ID, u.EMAIL, u.DISPLAY_NAME, u.AVATAR_URL,
@@ -216,7 +223,7 @@ const AuthService = {
        FROM TALLY.sessions s
        JOIN TALLY.users u ON s.USER_ID = u.ID
        WHERE s.TOKEN = ? AND s.EXPIRES_AT > NOW()`,
-      [token]
+      [tokenHash]
     );
 
     if (!rows.length) return null;
@@ -225,9 +232,10 @@ const AuthService = {
   },
 
   async destroySession(token) {
+    const tokenHash = AuthService._hashToken(token);
     await _db.query(
       'DELETE FROM TALLY.sessions WHERE TOKEN = ?',
-      [token]
+      [tokenHash]
     );
   },
 
