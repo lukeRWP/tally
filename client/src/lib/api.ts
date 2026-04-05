@@ -1,13 +1,27 @@
 const BASE = '';
 
+function getCsrfToken(): string | undefined {
+  const match = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]*)/);
+  return match ? decodeURIComponent(match[1]) : undefined;
+}
+
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    ...options.headers as Record<string, string>,
+  };
+
+  // Attach CSRF token on state-changing requests
+  const method = options.method?.toUpperCase();
+  if (method && method !== 'GET' && method !== 'HEAD') {
+    const csrf = getCsrfToken();
+    if (csrf) headers['X-CSRF-Token'] = csrf;
+  }
+
   const res = await fetch(`${BASE}${path}`, {
     ...options,
     credentials: 'include',
-    headers: {
-      'Content-Type': 'application/json',
-      ...options.headers,
-    },
+    headers,
   });
   const json = await res.json();
   if (!res.ok || !json.success) {

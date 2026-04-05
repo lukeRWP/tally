@@ -35,6 +35,7 @@ app.use(express.json({ limit: '2mb' }));
 app.use(express.urlencoded({ extended: true, limit: '2mb' }));
 
 app.use(cookieParser(config.auth.cookieSecret));
+app.use(require('./src/middleware/csrf')());
 
 app.use(
   rateLimit({
