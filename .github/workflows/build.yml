@@ -27,7 +27,7 @@ jobs:
           CI: true
           NODE_ENV: production
       - run: tar -czf tally-client.tar.gz -C client/dist .
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: tally-client
           path: tally-client.tar.gz
@@ -45,7 +45,7 @@ jobs:
         run: node --check index.js && find src -name '*.js' -exec node --check {} +
         working-directory: server
       - run: tar -czf tally-server.tar.gz -C server index.js package.json package-lock.json src/
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: tally-server
           path: tally-server.tar.gz
@@ -57,7 +57,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - run: tar -czf tally-db.tar.gz SQL/
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: tally-db
           path: tally-db.tar.gz
