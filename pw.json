@@ -1,0 +1,51 @@
+{
+  "name": "tally",
+  "displayName": "Tally Home Inventory",
+  "repo": "git@github.com:lukeRWP/Tally.git",
+
+  "services": {
+    "app": {
+      "type": "nodejs",
+      "build": {
+        "client": { "dir": "client", "cmd": "npm run build", "output": "build" },
+        "server": { "dir": "server" }
+      },
+      "port": 2727,
+      "healthCheck": "/health/live"
+    },
+    "db": {
+      "type": "mysql",
+      "databases": ["TALLY"],
+      "config": { "lowerCaseTableNames": 0 }
+    },
+    "storage": {
+      "type": "minio",
+      "buckets": ["tally-files"]
+    },
+    "web": {
+      "type": "nginx",
+      "upstream": "app:2727"
+    }
+  },
+
+  "secrets": [
+    "MYSQL_ROOT_PASSWORD",
+    "MYSQL_PASSWORD",
+    "MYSQL_SSL_PASSWORD",
+    "S3_ACCESS_KEY",
+    "S3_SECRET_KEY",
+    "AUTH_SECRET_ENCRYPTION_KEY",
+    "COOKIE_SECRET",
+    "FILE_ENCRYPTION_MASTER_KEY",
+    "SYNC_ENCRYPTION_KEY",
+    "ENTRA_CLIENT_SECRET",
+    "ENTRA_CLIENT_ID",
+    "ENTRA_TENANT_ID"
+  ],
+
+  "environments": {
+    "prod": {
+      "pipeline": { "deployOnTag": "v*", "requiresApproval": true }
+    }
+  }
+}
