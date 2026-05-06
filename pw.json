@@ -2,32 +2,43 @@
   "name": "tally",
   "displayName": "Tally Home Inventory",
   "repo": "git@github.com:lukeRWP/Tally.git",
-
   "services": {
     "app": {
       "type": "nodejs",
-      "build": {
-        "client": { "dir": "client", "cmd": "npm run build", "output": "build" },
-        "server": { "dir": "server" }
-      },
+      "build": [
+        {
+          "dir": "client",
+          "cmd": "npm run build",
+          "output": "build"
+        },
+        {
+          "dir": "server",
+          "cmd": "true"
+        }
+      ],
       "port": 2727,
-      "healthCheck": "/health/live"
+      "healthCheck": {
+        "path": "/health/live",
+        "port": 2727
+      }
     },
     "db": {
       "type": "mysql",
-      "databases": ["TALLY"],
-      "config": { "lowerCaseTableNames": 0 }
+      "databases": [
+        "TALLY"
+      ]
     },
     "storage": {
       "type": "minio",
-      "buckets": ["tally-files"]
+      "buckets": [
+        "tally-files"
+      ]
     },
     "web": {
       "type": "nginx",
       "upstream": "app:2727"
     }
   },
-
   "secrets": [
     "MYSQL_ROOT_PASSWORD",
     "MYSQL_PASSWORD",
@@ -42,10 +53,39 @@
     "ENTRA_CLIENT_ID",
     "ENTRA_TENANT_ID"
   ],
-
   "environments": {
     "prod": {
-      "pipeline": { "deployOnTag": "v*", "requiresApproval": true }
+      "pipeline": {
+        "autoDeployBranch": "master",
+        "requiresApproval": false
+      },
+      "services": {
+        "app": {
+          "image": "node:22-bookworm-slim",
+          "command": [
+            "node",
+            "index.js"
+          ],
+          "working_dir": "/app/server",
+          "volumes": [
+            "./server:/app/server",
+            "./client/build:/app/client/build:ro"
+          ],
+          "environment": {
+            "MAIN_DATABASE": "TALLY",
+            "MYSQL_URL": "db",
+            "MYSQL_USER": "root",
+            "MYSQL_PASSWORD": "${MYSQL_ROOT_PASSWORD}",
+            "CLIENT_URL": "https://tally.razorwire-productions.com",
+            "PORT": "2727"
+          }
+        },
+        "db": {
+          "volumes": [
+            "./init-db.sql:/docker-entrypoint-initdb.d/init-db.sql:ro"
+          ]
+        }
+      }
     }
   }
 }
