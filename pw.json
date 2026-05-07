@@ -48,10 +48,12 @@
     "AUTH_SECRET_ENCRYPTION_KEY",
     "COOKIE_SECRET",
     "FILE_ENCRYPTION_MASTER_KEY",
-    "SYNC_ENCRYPTION_KEY",
-    "ENTRA_CLIENT_SECRET",
+    "SYNC_ENCRYPTION_KEY"
+  ],
+  "external_secrets": [
+    "ENTRA_TENANT_ID",
     "ENTRA_CLIENT_ID",
-    "ENTRA_TENANT_ID"
+    "ENTRA_CLIENT_SECRET"
   ],
   "environments": {
     "prod": {
