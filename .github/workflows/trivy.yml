@@ -21,10 +21,10 @@ jobs:
       contents: read
       security-events: write   # for SARIF upload to Code Scanning tab
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.x
 
       - name: Trivy filesystem scan
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
         with:
           scan-type: fs
           scan-ref: .
@@ -36,7 +36,7 @@ jobs:
 
       - name: Upload SARIF to Code Scanning
         if: always()
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@52485aec7be33610227643b0fe83936b8b5f061a # v3
         with:
           sarif_file: trivy-results.sarif
           category: trivy
