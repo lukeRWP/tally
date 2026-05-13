@@ -1,0 +1,14 @@
+title = "Tally gitleaks config"
+extend.useDefault = true
+
+# Repository-specific allowlist. Add entries here when a default rule
+# flags content that is NOT actually a secret (e.g., string constants
+# named like keys, fixture data, sample env values).
+[allowlist]
+description = "Repo-specific exclusions — keep narrow and well-justified"
+paths = [
+  '''.*\.lock''',
+  '''.*\.lock\.json''',
+  '''package-lock\.json''',
+  '''yarn\.lock''',
+]

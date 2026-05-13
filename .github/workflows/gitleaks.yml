@@ -1,0 +1,31 @@
+name: gitleaks
+
+# Server-side backstop for the local pre-commit hook. Catches secrets
+# that bypass the hook (contributor hasn't installed pre-commit, or
+# committed via the GitHub web UI, or used --no-verify).
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history needed so gitleaks scans every commit on PRs,
+          # not just the diff. Slower (~1 min) but catches secrets that
+          # were committed earlier on a branch.
+          fetch-depth: 0
+
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Pin gitleaks binary to match local .pre-commit-config.yaml.
+          GITLEAKS_VERSION: "8.30.1"
+          GITLEAKS_CONFIG: ".gitleaks.toml"
