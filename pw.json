@@ -1,4 +1,5 @@
 {
+  "schemaVersion": 1,
   "name": "tally",
   "displayName": "Tally Home Inventory",
   "repo": "git@github.com:lukeRWP/Tally.git",
