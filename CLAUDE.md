@@ -16,6 +16,24 @@ Collaborative home inventory management system. Track items across containers an
 | Auth       | Microsoft Entra ID (OIDC)                       |
 | Container  | Docker Compose                                  |
 
+## Backlog & Issue Tracking
+
+**Deferred work goes to GitHub issues**, not session task lists or ad-hoc TODOs:
+
+```bash
+gh issue create -R lukeRWP/tally -t "<one-line subject>" -b "<context>"
+```
+
+Session tasks rotate out when memory recycles; GH issues persist, are visible to the operator at any time, and link to PRs when the fix lands.
+
+**When you find something out of scope mid-task:**
+- File an issue with a one-line subject + multi-line body explaining context.
+- Apply an existing label (`enhancement`, `infrastructure`, `security`, `documentation`, `operator-action` for things requiring human action). Don't invent labels without asking.
+- End the body with `---\nMigrated from session backlog YYYY-MM-DD.` so the origin is clear.
+- The session task can do in-flight bookkeeping; the GH issue is the permanent record.
+
+**Skip the issue** only when the work is fully done in-session with no deferred follow-up.
+
 ## Common Commands
 
 ```bash
