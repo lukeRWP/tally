@@ -135,33 +135,34 @@ const ContainersService = {
   },
 
   async create(data, userId) {
-    let qrCode = generateCode('container');
-    try {
-      const result = await _db.query(
-        `INSERT INTO TALLY.containers (AREA_ID, PARENT_CONTAINER_ID, NAME, TYPE, DESCRIPTION, QR_CODE)
-         VALUES (?, ?, ?, ?, ?, ?)`,
-        [data.areaId, data.parentContainerId || null, data.name, data.type, data.description || null, qrCode]
-      );
-      await _closureTable.addNode(result.insertId, data.parentContainerId || null);
-      const propertyId = await ContainersService.getPropertyIdForContainer(result.insertId);
-      AuditService.logChange(userId, 'container', result.insertId, 'created', data, propertyId);
-      return ContainersService.getById(result.insertId);
-    } catch (err) {
-      // Duplicate QR code — retry once with a new code
-      if (err.code === 'ER_DUP_ENTRY' && err.message.includes('qr_code')) {
-        qrCode = generateCode('container');
-        const result = await _db.query(
+    // Insert the container row and its closure self/ancestor paths atomically:
+    // a half-created container (row but no closure path) corrupts every tree read.
+    const insertContainer = (qrCode) =>
+      _db.withTransaction(async (tx) => {
+        const result = await tx.query(
           `INSERT INTO TALLY.containers (AREA_ID, PARENT_CONTAINER_ID, NAME, TYPE, DESCRIPTION, QR_CODE)
            VALUES (?, ?, ?, ?, ?, ?)`,
           [data.areaId, data.parentContainerId || null, data.name, data.type, data.description || null, qrCode]
         );
-        await _closureTable.addNode(result.insertId, data.parentContainerId || null);
-        const propertyId = await ContainersService.getPropertyIdForContainer(result.insertId);
-        AuditService.logChange(userId, 'container', result.insertId, 'created', data, propertyId);
-        return ContainersService.getById(result.insertId);
+        await _closureTable.addNode(result.insertId, data.parentContainerId || null, tx);
+        return result.insertId;
+      });
+
+    let insertId;
+    try {
+      insertId = await insertContainer(generateCode('container'));
+    } catch (err) {
+      // Duplicate QR code — retry once with a new code (fresh transaction)
+      if (err.code === 'ER_DUP_ENTRY' && err.message.includes('qr_code')) {
+        insertId = await insertContainer(generateCode('container'));
+      } else {
+        throw err;
       }
-      throw err;
     }
+
+    const propertyId = await ContainersService.getPropertyIdForContainer(insertId);
+    AuditService.logChange(userId, 'container', insertId, 'created', data, propertyId);
+    return ContainersService.getById(insertId);
   },
 
   async update(id, data, userId) {
@@ -196,12 +197,15 @@ const ContainersService = {
     }
 
     values.push(id);
-    await _db.query(
-      `UPDATE TALLY.containers SET ${fields.join(', ')} WHERE ID = ?`,
-      values
-    );
-
-    await _closureTable.moveNode(id, newParentContainerId || null);
+    // Row move + closure rewrite must commit together, or breadcrumbs/descendant
+    // queries see a tree that disagrees with the containers table.
+    await _db.withTransaction(async (tx) => {
+      await tx.query(
+        `UPDATE TALLY.containers SET ${fields.join(', ')} WHERE ID = ?`,
+        values
+      );
+      await _closureTable.moveNode(id, newParentContainerId || null, tx);
+    });
 
     const propertyId = await ContainersService.getPropertyIdForContainer(id);
     AuditService.logChange(userId, 'container', id, 'moved', { parentContainerId: newParentContainerId, areaId: newAreaId }, propertyId);
@@ -211,11 +215,13 @@ const ContainersService = {
 
   async softDelete(id, userId) {
     const propertyId = await ContainersService.getPropertyIdForContainer(id);
-    await _db.query(
-      'UPDATE TALLY.containers SET DELETED_AT = NOW() WHERE ID = ?',
-      [id]
-    );
-    await _closureTable.removeNode(id);
+    await _db.withTransaction(async (tx) => {
+      await tx.query(
+        'UPDATE TALLY.containers SET DELETED_AT = NOW() WHERE ID = ?',
+        [id]
+      );
+      await _closureTable.removeNode(id, tx);
+    });
     AuditService.logChange(userId, 'container', id, 'deleted', {}, propertyId);
   },
 

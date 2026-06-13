@@ -30,26 +30,29 @@ const LendingService = {
   // ── Lend ──────────────────────────────────────────────────────────────────
 
   async lend(itemId, data, userId) {
-    const result = await _db.query(
-      `INSERT INTO TALLY.item_lending (ITEM_ID, LENT_TO, LENT_AT, DUE_AT, NOTES, CREATED_BY)
-       VALUES (?, ?, NOW(), ?, ?, ?)`,
-      [
-        itemId,
-        data.lentTo,
-        data.dueAt || null,
-        data.notes || null,
-        userId,
-      ]
-    );
-
-    await _db.query(
-      `UPDATE TALLY.items SET STATUS = 'lent' WHERE ID = ?`,
-      [itemId]
-    );
+    // The lending record and the item's 'lent' status must commit together.
+    const insertId = await _db.withTransaction(async (tx) => {
+      const result = await tx.query(
+        `INSERT INTO TALLY.item_lending (ITEM_ID, LENT_TO, LENT_AT, DUE_AT, NOTES, CREATED_BY)
+         VALUES (?, ?, NOW(), ?, ?, ?)`,
+        [
+          itemId,
+          data.lentTo,
+          data.dueAt || null,
+          data.notes || null,
+          userId,
+        ]
+      );
+      await tx.query(
+        `UPDATE TALLY.items SET STATUS = 'lent' WHERE ID = ?`,
+        [itemId]
+      );
+      return result.insertId;
+    });
 
     const rows = await _db.query(
       `SELECT * FROM TALLY.item_lending WHERE ID = ?`,
-      [result.insertId]
+      [insertId]
     );
 
     return _mapLending(rows[0]);
@@ -58,25 +61,28 @@ const LendingService = {
   // ── Return ────────────────────────────────────────────────────────────────
 
   async return(lendingId, userId) {
-    await _db.query(
-      `UPDATE TALLY.item_lending SET RETURNED_AT = NOW() WHERE ID = ?`,
-      [lendingId]
-    );
+    // Marking the lending returned and flipping the item back to 'active'
+    // must commit together.
+    const lending = await _db.withTransaction(async (tx) => {
+      await tx.query(
+        `UPDATE TALLY.item_lending SET RETURNED_AT = NOW() WHERE ID = ?`,
+        [lendingId]
+      );
 
-    const rows = await _db.query(
-      `SELECT * FROM TALLY.item_lending WHERE ID = ?`,
-      [lendingId]
-    );
+      const rows = await tx.query(
+        `SELECT * FROM TALLY.item_lending WHERE ID = ?`,
+        [lendingId]
+      );
+      if (!rows.length) return null;
 
-    if (!rows.length) return null;
+      await tx.query(
+        `UPDATE TALLY.items SET STATUS = 'active' WHERE ID = ?`,
+        [rows[0].ITEM_ID]
+      );
+      return rows[0];
+    });
 
-    const lending = rows[0];
-
-    await _db.query(
-      `UPDATE TALLY.items SET STATUS = 'active' WHERE ID = ?`,
-      [lending.ITEM_ID]
-    );
-
+    if (!lending) return null;
     return _mapLending(lending);
   },
 

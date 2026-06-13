@@ -336,61 +336,58 @@ const ItemsService = {
   },
 
   async permanentDelete(itemId) {
-    // 1. entity_tags
-    await _db.query(
-      `DELETE FROM TALLY.entity_tags WHERE ENTITY_TYPE = 'item' AND ENTITY_ID = ?`,
-      [itemId]
-    );
-
-    // 2. item_accessories (item may appear on either side)
-    await _db.query(
-      `DELETE FROM TALLY.item_accessories WHERE ITEM_ID = ? OR ACCESSORY_ID = ?`,
-      [itemId, itemId]
-    );
-
-    // 3. item_dates
-    await _db.query(
-      `DELETE FROM TALLY.item_dates WHERE ITEM_ID = ?`,
-      [itemId]
-    );
-
-    // 4. item_lending
-    await _db.query(
-      `DELETE FROM TALLY.item_lending WHERE ITEM_ID = ?`,
-      [itemId]
-    );
-
-    // 5. condition_snapshots — delete MinIO objects first
+    // Collect the object-storage keys BEFORE the transaction so we can remove
+    // them only AFTER the DB delete commits — removing them up front (as the
+    // old code did) would orphan data if the transaction later rolled back.
     const snapshots = await _db.query(
       `SELECT PHOTO_KEY FROM TALLY.condition_snapshots WHERE ITEM_ID = ?`,
       [itemId]
     );
-    for (const snap of snapshots) {
-      try { await storage.remove(snap.PHOTO_KEY); } catch { /* ignore */ }
-    }
-    await _db.query(
-      `DELETE FROM TALLY.condition_snapshots WHERE ITEM_ID = ?`,
-      [itemId]
-    );
-
-    // 6. item_files — delete MinIO objects first
     const files = await _db.query(
       `SELECT FILE_KEY FROM TALLY.item_files WHERE ITEM_ID = ?`,
       [itemId]
     );
+
+    // All dependent-table deletes + the item hard-delete commit as one unit,
+    // so a failure can't leave dangling child rows (or a half-deleted item).
+    await _db.withTransaction(async (tx) => {
+      await tx.query(
+        `DELETE FROM TALLY.entity_tags WHERE ENTITY_TYPE = 'item' AND ENTITY_ID = ?`,
+        [itemId]
+      );
+      await tx.query(
+        `DELETE FROM TALLY.item_accessories WHERE ITEM_ID = ? OR ACCESSORY_ID = ?`,
+        [itemId, itemId]
+      );
+      await tx.query(
+        `DELETE FROM TALLY.item_dates WHERE ITEM_ID = ?`,
+        [itemId]
+      );
+      await tx.query(
+        `DELETE FROM TALLY.item_lending WHERE ITEM_ID = ?`,
+        [itemId]
+      );
+      await tx.query(
+        `DELETE FROM TALLY.condition_snapshots WHERE ITEM_ID = ?`,
+        [itemId]
+      );
+      await tx.query(
+        `DELETE FROM TALLY.item_files WHERE ITEM_ID = ?`,
+        [itemId]
+      );
+      await tx.query(
+        `DELETE FROM TALLY.items WHERE ID = ?`,
+        [itemId]
+      );
+    });
+
+    // Best-effort object cleanup after the DB delete is durable.
+    for (const snap of snapshots) {
+      try { await storage.remove(snap.PHOTO_KEY); } catch { /* ignore */ }
+    }
     for (const f of files) {
       try { await storage.remove(f.FILE_KEY); } catch { /* ignore */ }
     }
-    await _db.query(
-      `DELETE FROM TALLY.item_files WHERE ITEM_ID = ?`,
-      [itemId]
-    );
-
-    // 7. Hard-delete the item
-    await _db.query(
-      `DELETE FROM TALLY.items WHERE ID = ?`,
-      [itemId]
-    );
   },
 
   async purgeExpired(userId) {
