@@ -23,16 +23,38 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.x
 
-      - name: Trivy filesystem scan
+      # GATE: this is the pass/fail check. Use table output, which honors the
+      # `severity` filter AND `.trivyignore` correctly. (The sarif format path
+      # in trivy-action builds "all severities" and trips exit-code regardless
+      # of the severity filter / ignore file — so it must NOT be the gate.)
+      - name: Trivy scan (gate)
         uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
         with:
           scan-type: fs
           scan-ref: .
+          scanners: vuln,secret,misconfig   # CVEs + leaked secrets + IaC/Dockerfile misconfigs
           severity: HIGH,CRITICAL
           ignore-unfixed: true
           exit-code: 1
+          format: table
+          # The action does not auto-detect .trivyignore; pass it explicitly so
+          # the documented suppressions in that file actually apply.
+          trivyignores: .trivyignore
+
+      # REPORT: non-gating SARIF for the Code Scanning tab (sarif's all-severity
+      # behavior is fine here since exit-code is 0).
+      - name: Trivy scan (SARIF report)
+        if: always()
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,secret,misconfig
+          ignore-unfixed: true
+          exit-code: 0
           format: sarif
           output: trivy-results.sarif
+          trivyignores: .trivyignore
 
       - name: Upload SARIF to Code Scanning
         if: always()
