@@ -16,7 +16,7 @@
   --color-border: oklch(0.88 0.008 70);
   --color-text: oklch(0.15 0.005 70);
   --color-text-secondary: oklch(0.45 0.008 70);
-  --color-text-muted: oklch(0.6 0.005 70);
+  --color-text-muted: oklch(0.5 0.005 70);
   --color-primary: oklch(0.55 0.12 195);
   --color-primary-bg: oklch(0.55 0.12 195 / 0.08);
   --color-green: oklch(0.6 0.19 155);
@@ -37,7 +37,7 @@
   --color-border: oklch(0.28 0.008 70);
   --color-text: oklch(0.97 0.005 70);
   --color-text-secondary: oklch(0.7 0.006 70);
-  --color-text-muted: oklch(0.5 0.005 70);
+  --color-text-muted: oklch(0.62 0.005 70);
   --color-primary: oklch(0.72 0.1 195);
   --color-primary-bg: oklch(0.72 0.1 195 / 0.12);
   --color-green: oklch(0.72 0.17 155);
@@ -58,7 +58,7 @@
     --color-border: oklch(0.28 0.008 70);
     --color-text: oklch(0.97 0.005 70);
     --color-text-secondary: oklch(0.7 0.006 70);
-    --color-text-muted: oklch(0.5 0.005 70);
+    --color-text-muted: oklch(0.62 0.005 70);
     --color-primary: oklch(0.72 0.1 195);
     --color-primary-bg: oklch(0.72 0.1 195 / 0.12);
     --color-green: oklch(0.72 0.17 155);
@@ -157,4 +157,24 @@ html {
 * {
   scrollbar-width: thin;
   scrollbar-color: var(--color-border) transparent;
+}
+
+/* ── Accessibility ───────────────────────────────────────────────────── */
+
+/* App-wide keyboard focus indicator (fallback for any control that doesn't
+   define its own focus-visible ring). */
+:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+/* Respect users who ask for less motion — neutralize entrance animations. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

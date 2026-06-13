@@ -51,6 +51,15 @@ function applyTheme(theme: Theme) {
   if (theme !== 'system') {
     root.classList.add(theme);
   }
+  // Keep the browser status-bar / address-bar color in sync with the resolved theme.
+  const effective =
+    theme === 'system'
+      ? window.matchMedia('(prefers-color-scheme: dark)').matches
+        ? 'dark'
+        : 'light'
+      : theme;
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.setAttribute('content', effective === 'dark' ? '#1c1c1c' : '#f7f7f5');
 }
 
 // Apply theme on load

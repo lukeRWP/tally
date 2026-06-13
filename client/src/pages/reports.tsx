@@ -80,6 +80,7 @@ const REPORT_TYPES: ReportType[] = [
     id: 'tags',
     label: 'Tag Report',
     description: 'Items by selected tags',
+    hasTagSelect: true,
     icon: Tag,
     iconColor: 'text-[var(--color-red)]',
     iconBg: 'bg-[var(--color-red-bg)]',

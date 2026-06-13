@@ -43,7 +43,8 @@ export function BottomNav() {
       <div className="flex items-center justify-around py-1 md:py-2 max-w-lg mx-auto">
         {tabs.map((tab) => {
           const isActive = location.pathname === tab.path ||
-            (tab.path === '/scan' && location.pathname.startsWith('/scan'));
+            (tab.path === '/scan' && location.pathname.startsWith('/scan')) ||
+            (tab.path === '/inventory' && /^\/(property|area|container|item)\//.test(location.pathname));
           const Icon = tab.icon;
 
           if (tab.center) {
@@ -51,10 +52,7 @@ export function BottomNav() {
             return (
               <button key={tab.path} onClick={() => navigate(scanUrl)}
                 className="flex flex-col items-center -mt-5 transition-transform duration-200 active:scale-95 min-w-[44px]">
-                <div className={cn(
-                  'w-13 h-13 rounded-full bg-[var(--color-primary)] flex items-center justify-center shadow-lg',
-                  !isActive && 'animate-pulse-ring',
-                )}>
+                <div className="w-13 h-13 rounded-full bg-[var(--color-primary)] flex items-center justify-center shadow-lg">
                   <Icon className="w-6 h-6 text-white" />
                 </div>
                 <span className="text-[11px] mt-1 font-medium text-[var(--color-text-muted)]">{tab.label}</span>

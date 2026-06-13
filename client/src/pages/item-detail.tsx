@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams } from 'react-router-dom';
 import {
   Pencil, ArrowRightLeft, Trash2, Plus, Printer, Link, CalendarPlus, HandCoins, Share2,
   ChevronRight, ChevronDown, MoreHorizontal, Upload,
@@ -169,7 +169,6 @@ function OverflowMenu({
 export function ItemDetail() {
   const { itemId } = useParams<{ itemId: string }>();
   const id = Number(itemId);
-  const navigate = useNavigate();
 
   const { data: item, isLoading } = useItem(id);
   // Reuse delete mutation pattern -- actual item delete not yet available, placeholder
@@ -291,7 +290,6 @@ export function ItemDetail() {
           onPrint={() => setPrintOpen(true)}
           onDelete={() => {
             toast('Delete coming soon');
-            navigate(-1);
           }}
         />
       </div>
