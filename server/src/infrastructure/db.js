@@ -106,6 +106,48 @@ async function getConnection() {
   return pool.getConnection();
 }
 
+/**
+ * Run `fn` inside a single database transaction.
+ *
+ * `fn` receives a `tx` executor that exposes the same `query()/queryLong()`
+ * interface as this module but is bound to one connection with an open
+ * transaction. Pass `tx` to any service/closure method that should take part
+ * in the transaction. The transaction commits if `fn` resolves and rolls back
+ * if it throws; the connection is always released.
+ *
+ * Note: transient-error auto-retry is intentionally NOT applied inside a
+ * transaction — re-running a single statement against an aborted transaction
+ * would be incorrect. Side effects that aren't transactional (e.g. MinIO
+ * object removal) should be performed by the caller AFTER this resolves.
+ *
+ * @param {(tx: {query: Function, queryLong: Function}) => Promise<any>} fn
+ * @returns {Promise<any>} whatever `fn` returns
+ */
+async function withTransaction(fn) {
+  const conn = await pool.getConnection();
+  const run = async (sql, params) => {
+    const [rows] = await conn.query(sql, params);
+    return rows;
+  };
+  const tx = { query: run, queryLong: run };
+  try {
+    await conn.query(`SET SESSION MAX_EXECUTION_TIME=${QUERY_TIMEOUT_MS}`);
+    await conn.beginTransaction();
+    const result = await fn(tx);
+    await conn.commit();
+    return result;
+  } catch (err) {
+    try {
+      await conn.rollback();
+    } catch {
+      /* ignore rollback failure — surface the original error */
+    }
+    throw err;
+  } finally {
+    conn.release();
+  }
+}
+
 async function checkConnection() {
   const conn = await pool.getConnection();
   try {
@@ -126,4 +168,4 @@ function getPoolStats() {
   };
 }
 
-module.exports = { query, queryLong, getConnection, checkConnection, getPoolStats, pool };
+module.exports = { query, queryLong, withTransaction, getConnection, checkConnection, getPoolStats, pool };

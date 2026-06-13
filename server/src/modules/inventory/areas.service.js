@@ -113,50 +113,56 @@ const AreasService = {
     return AreasService.getById(id);
   },
 
-  async cascadeDelete(areaId, userId) {
-    const propertyId = await AreasService.getPropertyIdForArea(areaId);
+  /**
+   * Cascade-soft-delete an area and everything under it.
+   * `executor` defaults to the pooled db; pass a transaction `tx` to make the
+   * cascade part of a larger atomic operation (e.g. property delete). When
+   * called standalone, `softDelete` supplies the transaction.
+   */
+  async cascadeDelete(areaId, userId, executor = _db) {
+    const propertyId = await AreasService.getPropertyIdForArea(areaId, executor);
 
     // 1. Find all containers in this area
-    const containers = await _db.query(
+    const containers = await executor.query(
       'SELECT ID FROM TALLY.containers WHERE AREA_ID = ? AND DELETED_AT IS NULL',
       [areaId]
     );
 
     // 2. For each container, soft-delete all items inside and clean up
     for (const container of containers) {
-      const items = await _db.query(
+      const items = await executor.query(
         'SELECT ID FROM TALLY.items WHERE CONTAINER_ID = ? AND DELETED_AT IS NULL',
         [container.ID]
       );
 
       for (const item of items) {
         // Return active lending
-        await _db.query(
+        await executor.query(
           'UPDATE TALLY.item_lending SET RETURNED_AT = NOW() WHERE ITEM_ID = ? AND RETURNED_AT IS NULL',
           [item.ID]
         );
         // Soft-delete the item
-        await _db.query(
+        await executor.query(
           "UPDATE TALLY.items SET DELETED_AT = NOW(), STATUS = 'removed' WHERE ID = ?",
           [item.ID]
         );
       }
 
       // Remove closure table entries for this container
-      await _db.query(
+      await executor.query(
         'DELETE FROM TALLY.container_paths WHERE ANCESTOR_ID = ? OR DESCENDANT_ID = ?',
         [container.ID, container.ID]
       );
 
       // Soft-delete the container
-      await _db.query(
+      await executor.query(
         'UPDATE TALLY.containers SET DELETED_AT = NOW() WHERE ID = ?',
         [container.ID]
       );
     }
 
     // 3. Soft-delete the area
-    await _db.query(
+    await executor.query(
       'UPDATE TALLY.areas SET DELETED_AT = NOW() WHERE ID = ?',
       [areaId]
     );
@@ -166,11 +172,11 @@ const AreasService = {
   },
 
   async softDelete(id, userId) {
-    await AreasService.cascadeDelete(id, userId);
+    await _db.withTransaction((tx) => AreasService.cascadeDelete(id, userId, tx));
   },
 
-  async getPropertyIdForArea(areaId) {
-    const rows = await _db.query(
+  async getPropertyIdForArea(areaId, executor = _db) {
+    const rows = await executor.query(
       'SELECT PROPERTY_ID FROM TALLY.areas WHERE ID = ?',
       [areaId]
     );
