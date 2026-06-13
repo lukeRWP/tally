@@ -1,0 +1,15 @@
+# Trivy ignore file (auto-read by the fs scan in .github/workflows/trivy.yml).
+# Each entry is an accepted-risk finding that can't be fixed cleanly right now.
+# Keep a justification + tracking issue + revisit date with every entry.
+# NOTE: plain .trivyignore matches IDs repo-wide (no per-path scoping), so any
+# NEW Dockerfile must still add a non-root USER — DS-0002 is suppressed below.
+
+# AVD-DS-0002 (HIGH) — "Specify at least 1 USER command in Dockerfile with a
+# non-root user." Triggered only by client/Dockerfile, whose final nginx:alpine
+# stage runs as root (stock nginx needs root to bind :80). client/Dockerfile is
+# a DEV-ONLY artifact — PW v2 deploys from pw.json + the platform service
+# catalog's nginx image, not this file. A proper fix (nginx-unprivileged on
+# :8080) ripples into nginx.conf / compose port mapping; tracked in #46.
+# (server/Dockerfile already runs as USER node and is unaffected.)
+# Revisit by: 2026-09-01
+AVD-DS-0002
