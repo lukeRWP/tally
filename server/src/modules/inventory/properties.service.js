@@ -91,48 +91,37 @@ const PropertiesService = {
   },
 
   async create(data, userId) {
-    // Generate QR code, retry once on collision
-    let qrCode = generateCode('property');
-    try {
-      const result = await _db.query(
-        `INSERT INTO TALLY.properties (NAME, ADDRESS, DESCRIPTION, OWNER_ID, QR_CODE)
-         VALUES (?, ?, ?, ?, ?)`,
-        [data.name, data.address || null, data.description || null, userId, qrCode]
-      );
-
-      const propertyId = result.insertId;
-
-      await _db.query(
-        `INSERT INTO TALLY.property_members (PROPERTY_ID, USER_ID, ROLE) VALUES (?, ?, 'owner')`,
-        [propertyId, userId]
-      );
-
-      AuditService.logChange(userId, 'property', propertyId, 'created', data, propertyId);
-
-      return PropertiesService.getById(propertyId);
-    } catch (err) {
-      // Duplicate QR code — retry once with a new code
-      if (err.code === 'ER_DUP_ENTRY' && err.message.includes('qr_code')) {
-        qrCode = generateCode('property');
-        const result = await _db.query(
+    // The property row and its owner membership must commit together; a
+    // property with no owner row is unmanageable (nobody can see or edit it).
+    const insertProperty = (qrCode) =>
+      _db.withTransaction(async (tx) => {
+        const result = await tx.query(
           `INSERT INTO TALLY.properties (NAME, ADDRESS, DESCRIPTION, OWNER_ID, QR_CODE)
            VALUES (?, ?, ?, ?, ?)`,
           [data.name, data.address || null, data.description || null, userId, qrCode]
         );
-
         const propertyId = result.insertId;
-
-        await _db.query(
+        await tx.query(
           `INSERT INTO TALLY.property_members (PROPERTY_ID, USER_ID, ROLE) VALUES (?, ?, 'owner')`,
           [propertyId, userId]
         );
+        return propertyId;
+      });
 
-        AuditService.logChange(userId, 'property', propertyId, 'created', data, propertyId);
-
-        return PropertiesService.getById(propertyId);
+    let propertyId;
+    try {
+      propertyId = await insertProperty(generateCode('property'));
+    } catch (err) {
+      // Duplicate QR code — retry once with a new code (fresh transaction)
+      if (err.code === 'ER_DUP_ENTRY' && err.message.includes('qr_code')) {
+        propertyId = await insertProperty(generateCode('property'));
+      } else {
+        throw err;
       }
-      throw err;
     }
+
+    AuditService.logChange(userId, 'property', propertyId, 'created', data, propertyId);
+    return PropertiesService.getById(propertyId);
   },
 
   async update(id, data, userId) {
@@ -157,24 +146,25 @@ const PropertiesService = {
   },
 
   async cascadeDelete(propertyId, userId) {
-    // 1. Find all areas in this property
-    const areas = await _db.query(
-      'SELECT ID FROM TALLY.areas WHERE PROPERTY_ID = ? AND DELETED_AT IS NULL',
-      [propertyId]
-    );
+    // The whole property teardown (areas → containers → items + closure paths,
+    // then the property itself) commits as one unit, so a mid-cascade failure
+    // can't leave a half-deleted tree.
+    await _db.withTransaction(async (tx) => {
+      const areas = await tx.query(
+        'SELECT ID FROM TALLY.areas WHERE PROPERTY_ID = ? AND DELETED_AT IS NULL',
+        [propertyId]
+      );
 
-    // 2. For each area, cascade delete
-    for (const area of areas) {
-      await AreasService.cascadeDelete(area.ID, userId);
-    }
+      for (const area of areas) {
+        await AreasService.cascadeDelete(area.ID, userId, tx);
+      }
 
-    // 3. Soft-delete the property
-    await _db.query(
-      'UPDATE TALLY.properties SET DELETED_AT = NOW() WHERE ID = ?',
-      [propertyId]
-    );
+      await tx.query(
+        'UPDATE TALLY.properties SET DELETED_AT = NOW() WHERE ID = ?',
+        [propertyId]
+      );
+    });
 
-    // 4. Log the audit
     AuditService.logChange(userId, 'property', propertyId, 'deleted', {}, propertyId);
   },
 
