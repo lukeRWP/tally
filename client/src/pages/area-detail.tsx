@@ -34,7 +34,7 @@ export function AreaDetail() {
     deleteArea.mutate(id, {
       onSuccess: () => {
         toast('Area deleted');
-        navigate(area?.propertyId ? `/properties/${area.propertyId}` : '/');
+        navigate(area?.propertyId ? `/property/${area.propertyId}` : '/');
       },
       onError: (err) => toast(err.message),
     });

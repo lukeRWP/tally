@@ -79,6 +79,7 @@
             "MYSQL_URL": "db",
             "MYSQL_USER": "root",
             "MYSQL_PASSWORD": "${MYSQL_ROOT_PASSWORD}",
+            "S3_BUCKET": "tally-files",
             "CLIENT_URL": "https://tally.razorwire-productions.com",
             "PORT": "2727"
           }

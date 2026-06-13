@@ -38,13 +38,17 @@ function buildPoolConfig() {
     if (sslPath && fs.existsSync(path.join(sslPath, 'ca.pem'))) {
       sslOpts.ca = fs.readFileSync(path.join(sslPath, 'ca.pem'));
       sslOpts.rejectUnauthorized = true;
-    } else {
-      sslOpts.rejectUnauthorized = false;
-      console.warn('[db] WARNING: SSL enabled without CA cert — certificate verification disabled');
+      // Optional mutual TLS, only once the CA is trusted.
       if (fs.existsSync(path.join(sslPath, 'client-cert.pem'))) {
         sslOpts.cert = fs.readFileSync(path.join(sslPath, 'client-cert.pem'));
         sslOpts.key = fs.readFileSync(path.join(sslPath, 'client-key.pem'));
       }
+    } else {
+      // Fail closed: never connect with certificate verification disabled.
+      throw new Error(
+        `[db] MYSQL_USE_SSL=true but no CA cert found at ${sslPath || '(MYSQL_SSL_PATH unset)'}/ca.pem — ` +
+          'refusing to connect with TLS verification disabled. Provide the CA or unset MYSQL_USE_SSL.'
+      );
     }
 
     cfg.ssl = sslOpts;

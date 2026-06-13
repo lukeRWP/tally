@@ -8,6 +8,19 @@ let _config = null;
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
+// Neutralize CSV/formula injection: a cell beginning with = + - @ tab or CR can be
+// executed as a formula by Excel/Sheets. Prefix any such value with a single quote.
+function _csvSafeValue(value) {
+  if (typeof value !== 'string') return value;
+  return /^[=+\-@\t\r]/.test(value) ? `'${value}` : value;
+}
+
+function _sanitizeCsvRecord(record) {
+  const safe = {};
+  for (const [key, val] of Object.entries(record)) safe[key] = _csvSafeValue(val);
+  return safe;
+}
+
 function _calcDepreciatedValue(purchasePrice, depreciationRate, purchaseDate) {
   if (!purchasePrice || !depreciationRate) return purchasePrice || 0;
   const now = new Date();
@@ -874,7 +887,8 @@ const ReportsService = {
         return '';
     }
 
-    return stringifier.getHeaderString() + stringifier.stringifyRecords(records);
+    const safeRecords = records.map(_sanitizeCsvRecord);
+    return stringifier.getHeaderString() + stringifier.stringifyRecords(safeRecords);
   },
 
   _flattenContainersCsv(records, areaName, containers, parentPath) {
