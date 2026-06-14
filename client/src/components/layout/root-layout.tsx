@@ -1,8 +1,9 @@
 import { useEffect, useRef } from 'react';
 import { Outlet, Navigate, useLocation, useNavigate } from 'react-router-dom';
-import { Home, Layers, ScanLine, BarChart2, Settings } from 'lucide-react';
+import { Home, Layers, ScanLine, BarChart2, Bell, Settings } from 'lucide-react';
 import { useAuth } from '@/hooks/use-auth';
 import { useAuthStore } from '@/store/auth-store';
+import { useUnreadCount } from '@/hooks/use-notifications';
 import { Header } from './header';
 import { BottomNav } from './bottom-nav';
 import { cn } from '@/lib/utils';
@@ -12,6 +13,7 @@ const navItems = [
   { path: '/inventory', icon: Layers, label: 'Inventory' },
   { path: '/scan', icon: ScanLine, label: 'Scan' },
   { path: '/reports', icon: BarChart2, label: 'Reports' },
+  { path: '/notifications', icon: Bell, label: 'Notifications' },
   { path: '/settings', icon: Settings, label: 'Settings' },
 ];
 
@@ -19,6 +21,8 @@ function Sidebar() {
   const location = useLocation();
   const navigate = useNavigate();
   const { user } = useAuthStore();
+  const { data: unreadCount } = useUnreadCount();
+  const unread = typeof unreadCount === 'number' ? unreadCount : 0;
 
   return (
     <aside className="hidden lg:flex lg:flex-col lg:w-56 lg:fixed lg:inset-y-0 bg-[var(--color-card)] border-r border-[var(--color-border)] z-50">
@@ -58,8 +62,13 @@ function Sidebar() {
                   : 'text-[var(--color-text-secondary)] hover:bg-[var(--color-elevated)] hover:text-[var(--color-text)]',
               )}
             >
-              <Icon className={cn('w-5 h-5', isActive ? 'text-[var(--color-primary)]' : '')} />
-              {item.label}
+              <Icon className={cn('w-5 h-5 shrink-0', isActive ? 'text-[var(--color-primary)]' : '')} />
+              <span className="flex-1 text-left">{item.label}</span>
+              {item.path === '/notifications' && unread > 0 && (
+                <span className="min-w-[18px] h-[18px] px-1 rounded-full bg-[var(--color-red)] text-white text-[10px] font-bold flex items-center justify-center leading-none">
+                  {unread > 99 ? '99+' : unread}
+                </span>
+              )}
             </button>
           );
         })}
