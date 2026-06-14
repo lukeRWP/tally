@@ -92,6 +92,7 @@ export function Scan() {
 
   // -- Add mode state -------------------------------------------------------
   const [state, setState] = useState<ScanState>('idle');
+  const [manualBarcode, setManualBarcode] = useState('');
   const [lookupResult, setLookupResult] = useState<LookupResult | null>(null);
   const [duplicates, setDuplicates] = useState<DuplicateItem[]>([]);
   const [showDuplicates, setShowDuplicates] = useState(false);
@@ -433,6 +434,32 @@ export function Scan() {
                   {state === 'looking_up' ? 'Looking up barcode...' : 'Scanning for barcodes'}
                 </p>
               </div>
+
+              {/* Manual barcode entry — fallback when the camera can't read the
+                  code (denied permission, poor lighting, or a damaged label). */}
+              {state === 'idle' && (
+                <form
+                  className="flex gap-2 mt-3"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    const code = manualBarcode.trim();
+                    if (!code) return;
+                    handleBarcodeScanned(code);
+                    setManualBarcode('');
+                  }}
+                >
+                  <Input
+                    inputMode="numeric"
+                    placeholder="Or type a barcode (UPC/EAN)…"
+                    value={manualBarcode}
+                    onChange={(e) => setManualBarcode(e.target.value)}
+                    className="flex-1"
+                  />
+                  <Button type="submit" variant="outline" disabled={!manualBarcode.trim()}>
+                    Look up
+                  </Button>
+                </form>
+              )}
             </div>
           )}
 
