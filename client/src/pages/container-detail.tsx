@@ -41,7 +41,7 @@ export function ContainerDetail() {
 
   function handleCreateContainer(data: Record<string, unknown>) {
     if (!container) return;
-    createContainer.mutate(
+    return createContainer.mutateAsync(
       { ...data, areaId: container.areaId, parentContainerId: id } as {
         name: string;
         type: string;
@@ -49,15 +49,13 @@ export function ContainerDetail() {
         areaId: number;
         parentContainerId: number;
       },
-      {
-        onSuccess: () => toast('Container created'),
-        onError: (err) => toast(err.message),
-      },
-    );
+    )
+      .then(() => toast('Container created'))
+      .catch((err: Error) => { toast(err.message); throw err; });
   }
 
   function handleCreateItem(data: Record<string, unknown>) {
-    createItem.mutate(
+    return createItem.mutateAsync(
       { ...data, containerId: id } as {
         name: string;
         description?: string;
@@ -66,11 +64,9 @@ export function ContainerDetail() {
         purchasePrice?: number;
         condition?: string;
       },
-      {
-        onSuccess: () => toast('Item created'),
-        onError: (err) => toast(err.message),
-      },
-    );
+    )
+      .then(() => toast('Item created'))
+      .catch((err: Error) => { toast(err.message); throw err; });
   }
 
   if (containerLoading) {

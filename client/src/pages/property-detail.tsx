@@ -36,10 +36,9 @@ export function PropertyDetail() {
   }
 
   function handleCreateArea(data: Record<string, unknown>) {
-    createArea.mutate({ ...data, propertyId: id } as { name: string; description?: string; propertyId: number }, {
-      onSuccess: () => toast('Area created'),
-      onError: (err) => toast(err.message),
-    });
+    return createArea.mutateAsync({ ...data, propertyId: id } as { name: string; description?: string; propertyId: number })
+      .then(() => toast('Area created'))
+      .catch((err: Error) => { toast(err.message); throw err; });
   }
 
   if (propertyLoading) {
