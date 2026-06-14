@@ -188,6 +188,26 @@ const ContainersService = {
   },
 
   async move(id, newParentContainerId, newAreaId, userId) {
+    // Prevent cycles: a container can't be moved into itself or into one of its
+    // own descendants — that would make moveNode insert self-referential closure
+    // paths and corrupt every tree read.
+    if (newParentContainerId) {
+      if (Number(newParentContainerId) === Number(id)) {
+        const err = new Error('A container cannot be moved into itself');
+        err.statusCode = 400;
+        throw err;
+      }
+      const cycle = await _db.query(
+        'SELECT 1 FROM TALLY.container_paths WHERE ANCESTOR_ID = ? AND DESCENDANT_ID = ? LIMIT 1',
+        [id, newParentContainerId]
+      );
+      if (cycle.length) {
+        const err = new Error('A container cannot be moved into its own descendant');
+        err.statusCode = 400;
+        throw err;
+      }
+    }
+
     const fields = ['PARENT_CONTAINER_ID = ?'];
     const values = [newParentContainerId || null];
 

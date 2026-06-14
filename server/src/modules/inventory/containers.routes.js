@@ -146,6 +146,22 @@ module.exports = function containersRoutes({ app, db, logger }) {
       if (validationError) {
         return error(res, 'Validation failed', 422, validationError.details.map(d => d.message));
       }
+      // Destination must be in the same property as the source — block cross-property
+      // moves (a property editor must not relocate a container into another tenant's
+      // property). The source property is resolved by resolvePropertyFromContainer.
+      const srcPropertyId = req.params.propertyId;
+      if (value.areaId !== undefined && value.areaId !== null) {
+        const destAreaProperty = await AreasService.getPropertyIdForArea(value.areaId);
+        if (!destAreaProperty || String(destAreaProperty) !== String(srcPropertyId)) {
+          return error(res, 'Destination area must be in the same property', 400);
+        }
+      }
+      if (value.parentContainerId !== undefined && value.parentContainerId !== null) {
+        const destParentProperty = await ContainersService.getPropertyIdForContainer(value.parentContainerId);
+        if (!destParentProperty || String(destParentProperty) !== String(srcPropertyId)) {
+          return error(res, 'Destination container must be in the same property', 400);
+        }
+      }
       const container = await ContainersService.move(req.params.containerId, value.parentContainerId, value.areaId, req.user.id);
       success(res, { container });
     }
