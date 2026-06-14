@@ -1,5 +1,7 @@
+import { useState } from 'react';
 import { Trash2, RotateCcw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { api } from '@/lib/api';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { queryKeys } from '@/lib/query-client';
@@ -28,6 +30,7 @@ function locationLabel(item: DeletedItem): string {
 
 export function RecycleBinList() {
   const qc = useQueryClient();
+  const [purgeOpen, setPurgeOpen] = useState(false);
 
   const { data: items, isLoading } = useQuery({
     queryKey: [...queryKeys.items.all, 'deleted'],
@@ -65,13 +68,27 @@ export function RecycleBinList() {
         <Button
           variant="outline"
           size="sm"
-          onClick={() => purgeExpired.mutate()}
+          onClick={() => setPurgeOpen(true)}
           disabled={purgeExpired.isPending}
         >
           <Trash2 className="w-4 h-4" />
           Purge Expired
         </Button>
       </div>
+
+      <ConfirmDialog
+        open={purgeOpen}
+        onOpenChange={setPurgeOpen}
+        title="Permanently delete expired items?"
+        description="Items past their 30-day recycle window will be permanently deleted. This cannot be undone."
+        destructive
+        confirmLabel="Delete permanently"
+        isPending={purgeExpired.isPending}
+        onConfirm={() => {
+          purgeExpired.mutate();
+          setPurgeOpen(false);
+        }}
+      />
 
       {/* Loading */}
       {isLoading && (
