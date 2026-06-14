@@ -1,32 +1,87 @@
 const axios = require('axios');
 const dns = require('dns');
+const net = require('net');
+const http = require('http');
+const https = require('https');
 const { URL } = require('url');
 
 /**
- * Validate a URL is not targeting private/internal networks (SSRF protection)
+ * Is this IP in a private/reserved range the extractor must never reach?
+ * IPv4: 0/8, loopback 127/8, RFC1918, link-local + cloud metadata 169.254/16,
+ * CGNAT 100.64/10, multicast/reserved (>=224). IPv6: loopback, ULA (fc00::/7),
+ * link-local (fe80::/10), and IPv4-mapped addresses (re-checked as IPv4).
+ */
+function isPrivateOrReserved(ip) {
+  if (net.isIPv4(ip)) {
+    const p = ip.split('.').map(Number);
+    return (
+      p[0] === 0 || p[0] === 10 || p[0] === 127 ||
+      (p[0] === 169 && p[1] === 254) ||
+      (p[0] === 172 && p[1] >= 16 && p[1] <= 31) ||
+      (p[0] === 192 && p[1] === 168) ||
+      (p[0] === 100 && p[1] >= 64 && p[1] <= 127) ||
+      p[0] >= 224
+    );
+  }
+  if (net.isIPv6(ip)) {
+    const a = ip.toLowerCase();
+    if (a.startsWith('fc') || a.startsWith('fd')) return true;   // fc00::/7 ULA
+    if (/^fe[89ab]/.test(a)) return true;                        // fe80::/10 link-local
+    // Anything in ::/16 — loopback (::1), unspecified (::), IPv4-mapped
+    // (::ffff:a.b.c.d, which can smuggle a private IPv4), and IPv4-compatible
+    // (::a.b.c.d) — is never a globally routable host, so block it outright.
+    if (a.startsWith('::')) return true;
+    return false;
+  }
+  return true; // unparseable → block
+}
+
+/**
+ * Drop-in dns.lookup that resolves the way the HTTP client actually connects
+ * (so decimal/octal IPv4 forms and IPv6 are handled identically) and rejects
+ * any result in a private/reserved range. Attached to the HTTP(S) agents so
+ * EVERY connection — initial request, redirect, and DNS-rebind re-resolution —
+ * is validated at connect time.
+ */
+function ssrfSafeLookup(hostname, options, callback) {
+  if (typeof options === 'function') { callback = options; options = {}; }
+  dns.lookup(hostname, { ...options, all: true, verbatim: true }, (err, addresses) => {
+    if (err) return callback(err);
+    for (const a of addresses) {
+      if (isPrivateOrReserved(a.address)) {
+        return callback(new Error('Refusing to connect to a private/reserved address (SSRF protection)'));
+      }
+    }
+    if (options && options.all) return callback(null, addresses);
+    return callback(null, addresses[0].address, addresses[0].family);
+  });
+}
+
+const ssrfHttpAgent = new http.Agent({ lookup: ssrfSafeLookup });
+const ssrfHttpsAgent = new https.Agent({ lookup: ssrfSafeLookup });
+
+/**
+ * Pre-flight SSRF check for a clean error message. The real enforcement is the
+ * validating lookup on the HTTP agents (which also covers redirects + rebinding).
  */
 async function validateUrlNotPrivate(urlStr) {
   const parsed = new URL(urlStr);
   if (!['http:', 'https:'].includes(parsed.protocol)) {
     throw new Error('Only HTTP and HTTPS URLs are allowed');
   }
-
-  const hostname = parsed.hostname;
-  // Block obvious private hostnames
-  if (['localhost', '127.0.0.1', '::1', '0.0.0.0'].includes(hostname)) {
-    throw new Error('Private/localhost URLs are not allowed');
+  const host = parsed.hostname.replace(/^\[|\]$/g, ''); // strip IPv6 brackets
+  // A literal IP hostname connects directly without going through dns.lookup,
+  // so the agent guard never sees it — validate it here.
+  if (net.isIP(host)) {
+    if (isPrivateOrReserved(host)) {
+      throw new Error('URL resolves to a private/reserved address and is not allowed');
+    }
+    return;
   }
-
-  // Resolve DNS and check the actual IP
-  const addresses = await dns.promises.resolve4(hostname).catch(() => []);
-  for (const ip of addresses) {
-    const parts = ip.split('.').map(Number);
-    if (parts[0] === 10 ||                                    // 10.0.0.0/8
-        (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) || // 172.16.0.0/12
-        (parts[0] === 192 && parts[1] === 168) ||             // 192.168.0.0/16
-        parts[0] === 127 ||                                    // 127.0.0.0/8
-        (parts[0] === 169 && parts[1] === 254)) {             // 169.254.0.0/16 (link-local/metadata)
-      throw new Error('URLs resolving to private IP ranges are not allowed');
+  const addresses = await dns.promises.lookup(host, { all: true, verbatim: true }).catch(() => []);
+  for (const a of addresses) {
+    if (isPrivateOrReserved(a.address)) {
+      throw new Error('URL resolves to a private/reserved address and is not allowed');
     }
   }
 }
@@ -43,6 +98,11 @@ async function extractFromUrl(url) {
   const { data: html } = await axios.get(url, {
     timeout: 8000,
     maxRedirects: 5,
+    // SSRF protection: every connection (incl. redirects/rebinds) resolves
+    // through ssrfSafeLookup, which rejects private/reserved addresses.
+    httpAgent: ssrfHttpAgent,
+    httpsAgent: ssrfHttpsAgent,
+    maxContentLength: 5 * 1024 * 1024, // cap response body (defensive)
     headers: {
       'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
       'Accept': 'text/html,application/xhtml+xml',
