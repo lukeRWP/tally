@@ -109,7 +109,7 @@ const ReportsService = {
       let photoUrl = null;
       if (row.LATEST_PHOTO_KEY) {
         try {
-          photoUrl = await storage.getPresignedUrl(row.LATEST_PHOTO_KEY);
+          photoUrl = await storage.getPresignedUrl(row.LATEST_PHOTO_KEY, { inline: true });
         } catch (err) {
           _logger.warn('Failed to get presigned URL for condition photo', { key: row.LATEST_PHOTO_KEY, error: err.message });
         }

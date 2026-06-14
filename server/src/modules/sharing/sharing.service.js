@@ -372,7 +372,7 @@ const SharingService = {
         notes: snap.NOTES || null,
         recordedByName: snap.RECORDED_BY_NAME || null,
         createdAt: snap.CREATED_AT,
-        photoUrl: await storage.getPresignedUrl(snap.PHOTO_KEY, 300),
+        photoUrl: await storage.getPresignedUrl(snap.PHOTO_KEY, { expiresIn: 300, inline: true }),
       }))
     );
 
@@ -393,7 +393,7 @@ const SharingService = {
         mimeType: f.MIME_TYPE,
         fileSize: f.FILE_SIZE,
         createdAt: f.CREATED_AT,
-        url: await storage.getPresignedUrl(f.FILE_KEY, 300),
+        url: await storage.getPresignedUrl(f.FILE_KEY, { expiresIn: 300, contentType: f.MIME_TYPE, fileName: f.FILE_NAME }),
       }))
     );
 

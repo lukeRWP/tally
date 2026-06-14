@@ -36,10 +36,31 @@ async function upload(key, body, contentType) {
   return key;
 }
 
-async function getPresignedUrl(key, expiresIn = 3600) {
+/**
+ * Presigned GET URL.
+ *
+ * @param {string} key
+ * @param {object|number} [opts] - options object, or a number for legacy expiresIn
+ * @param {number} [opts.expiresIn=3600]
+ * @param {string} [opts.contentType] - server-derived content type to assert on the response
+ * @param {string} [opts.fileName]    - download filename for non-inline responses
+ * @param {boolean} [opts.inline]     - force inline (e.g. verified images)
+ *
+ * Non-image content is served as `attachment` (forced download) so a file can
+ * never be rendered/executed inline from the storage origin (stored-XSS guard).
+ */
+async function getPresignedUrl(key, opts = {}) {
+  if (typeof opts === 'number') opts = { expiresIn: opts };
+  const { expiresIn = 3600, contentType, fileName, inline } = opts;
+
+  const isInline = inline === true || (typeof contentType === 'string' && contentType.startsWith('image/'));
+  const safeFileName = String(fileName || 'download').replace(/[^a-zA-Z0-9._-]/g, '_');
+
   return getSignedUrl(s3Client, new GetObjectCommand({
     Bucket: config.storage.bucket,
     Key: key,
+    ...(contentType ? { ResponseContentType: contentType } : {}),
+    ResponseContentDisposition: isInline ? 'inline' : `attachment; filename="${safeFileName}"`,
   }), { expiresIn });
 }
 

@@ -2,6 +2,7 @@ const path = require('path');
 const { v4: uuidv4 } = require('uuid');
 const sharp = require('sharp');
 const storage = require('../../infrastructure/storage');
+const { sniffMime } = require('../../utils/fileType');
 
 function safeName(originalname) {
   return path.basename(originalname).replace(/[^a-zA-Z0-9._-]/g, '_');
@@ -56,25 +57,34 @@ const ConditionService = {
     return Promise.all(
       rows.map(async (row) => {
         const snapshot = ConditionService._mapSnapshot(row);
-        snapshot.photoUrl = await storage.getPresignedUrl(row.PHOTO_KEY);
+        // Condition photos are always verified images — serve inline for display.
+        snapshot.photoUrl = await storage.getPresignedUrl(row.PHOTO_KEY, { inline: true });
         return snapshot;
       })
     );
   },
 
   async create(itemId, data, photoFile, userId) {
+    // A condition snapshot must be a real image — verify the bytes.
+    const contentType = sniffMime(photoFile.buffer);
+    if (!contentType || !contentType.startsWith('image/')) {
+      const err = new Error('Condition photo must be a valid image (JPEG, PNG, GIF, or WebP)');
+      err.statusCode = 400;
+      throw err;
+    }
+
     const uuid = uuidv4();
     const key = `items/${itemId}/conditions/${uuid}-${safeName(photoFile.originalname)}`;
 
-    // Upload original photo to MinIO
-    await storage.upload(key, photoFile.buffer, photoFile.mimetype);
+    // Upload original photo to MinIO with the server-derived content type
+    await storage.upload(key, photoFile.buffer, contentType);
 
     // Create and upload thumbnail (200px wide)
     const thumbnailKey = `items/${itemId}/conditions/${uuid}-thumb-${safeName(photoFile.originalname)}`;
     const thumbnailBuffer = await sharp(photoFile.buffer)
       .resize({ width: 200 })
       .toBuffer();
-    await storage.upload(thumbnailKey, thumbnailBuffer, photoFile.mimetype);
+    await storage.upload(thumbnailKey, thumbnailBuffer, contentType);
 
     // Insert condition snapshot record
     const result = await _db.query(
@@ -99,7 +109,7 @@ const ConditionService = {
     );
 
     const snapshot = ConditionService._mapSnapshot(rows[0]);
-    snapshot.photoUrl = await storage.getPresignedUrl(key);
+    snapshot.photoUrl = await storage.getPresignedUrl(key, { contentType, fileName: photoFile.originalname });
     return snapshot;
   },
 
