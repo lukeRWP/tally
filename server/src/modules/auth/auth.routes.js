@@ -12,7 +12,19 @@ module.exports = function authRoutes({ app, db, logger, config }) {
 
   // GET /api/auth/_x_/oauth/init — start OAuth flow
   app.get('/api/auth/_x_/oauth/init', async (req, res) => {
-    const { url } = await AuthService.getAuthorizationUrl();
+    const { url, state } = await AuthService.getAuthorizationUrl();
+    // Bind the OAuth state to THIS browser. Without it, an attacker can
+    // pre-initiate login, capture a valid state, and feed the victim a crafted
+    // callback URL to log them into the attacker's account (login CSRF /
+    // session stitching) — the DB-stored state alone proves nothing about who
+    // started the flow.
+    res.cookie('oauth_state', state, {
+      httpOnly: true,
+      secure: config.isProduction,
+      sameSite: 'lax',
+      maxAge: 5 * 60 * 1000,
+      signed: true,
+    });
     res.redirect(url);
   });
 
@@ -20,6 +32,17 @@ module.exports = function authRoutes({ app, db, logger, config }) {
   app.get('/api/auth/_x_/oauth/callback', async (req, res) => {
     try {
       const { code, state } = req.query;
+
+      // The state must match the cookie set at /oauth/init (skipped under the
+      // dev bypass, which short-circuits the real flow).
+      if (!AuthService.isBypassAuth()) {
+        const boundState = req.signedCookies?.oauth_state;
+        if (!boundState || boundState !== state) {
+          throw new Error('OAuth state does not match the initiating browser');
+        }
+      }
+      res.clearCookie('oauth_state');
+
       const profile = await AuthService.exchangeCode(code, state);
       const user = await AuthService.findOrCreateUser(profile);
       const session = await AuthService.createSession(user.id);
