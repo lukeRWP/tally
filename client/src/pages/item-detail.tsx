@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router-dom';
 import {
   Pencil, ArrowRightLeft, Trash2, Plus, Printer, Link, CalendarPlus, HandCoins, Share2,
   ChevronRight, ChevronDown, MoreHorizontal, Upload,
@@ -9,7 +9,8 @@ import { LabelPrintDialog } from '@/components/labels/label-print-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Card } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
-import { useItem, useDeleteProperty } from '@/hooks/use-inventory';
+import { useItem, useDeleteItem } from '@/hooks/use-inventory';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { toast } from '@/components/ui/toast';
 import { Breadcrumbs } from '@/components/layout/breadcrumbs';
 import { FileList } from '@/components/files/file-list';
@@ -170,13 +171,26 @@ export function ItemDetail() {
   const { itemId } = useParams<{ itemId: string }>();
   const id = Number(itemId);
 
+  const navigate = useNavigate();
   const { data: item, isLoading } = useItem(id);
-  // Reuse delete mutation pattern -- actual item delete not yet available, placeholder
-  const _deleteProperty = useDeleteProperty();
+  const deleteItem = useDeleteItem();
+  const [deleteOpen, setDeleteOpen] = React.useState(false);
 
-  // Derive propertyId from breadcrumb returned by the item detail API
-  const propertyId = (item as unknown as { breadcrumb?: { id: number; type: string }[] })
-    ?.breadcrumb?.find((b) => b.type === 'property')?.id ?? 0;
+  // Derive property/container from breadcrumb returned by the item detail API
+  const breadcrumb = (item as unknown as { breadcrumb?: { id: number; type: string }[] })?.breadcrumb;
+  const propertyId = breadcrumb?.find((b) => b.type === 'property')?.id ?? 0;
+  const containerId = breadcrumb?.find((b) => b.type === 'container')?.id;
+
+  function confirmDeleteItem() {
+    deleteItem.mutate(id, {
+      onSuccess: () => {
+        toast('Item moved to recycle bin');
+        navigate(containerId ? `/container/${containerId}` : '/inventory');
+      },
+      onError: (err: Error) => toast(err.message),
+    });
+    setDeleteOpen(false);
+  }
 
   const [conditionFormOpen, setConditionFormOpen] = React.useState(false);
   const [printOpen, setPrintOpen] = React.useState(false);
@@ -288,9 +302,7 @@ export function ItemDetail() {
         <OverflowMenu
           onShare={() => setShareOpen(true)}
           onPrint={() => setPrintOpen(true)}
-          onDelete={() => {
-            toast('Delete coming soon');
-          }}
+          onDelete={() => setDeleteOpen(true)}
         />
       </div>
 
@@ -547,6 +559,17 @@ export function ItemDetail() {
         entityName={item.name}
         isOpen={shareOpen}
         onOpenChange={setShareOpen}
+      />
+
+      <ConfirmDialog
+        open={deleteOpen}
+        onOpenChange={setDeleteOpen}
+        title={`Delete "${item.name}"?`}
+        description="This moves the item to the recycle bin, where it can be restored for 30 days."
+        destructive
+        confirmLabel="Delete"
+        isPending={deleteItem.isPending}
+        onConfirm={confirmDeleteItem}
       />
     </div>
   );

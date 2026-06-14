@@ -205,6 +205,14 @@ export function useMoveItem() {
   });
 }
 
+export function useDeleteItem() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) => api.del(`/api/items/_d_/${id}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.items.all }),
+  });
+}
+
 export interface SearchFilters {
   tagIds?: number[];
   condition?: string;
