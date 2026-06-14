@@ -1,12 +1,17 @@
 import { QueryClient } from '@tanstack/react-query';
+import { ApiError } from './api';
 
 export const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
       staleTime: 30 * 1000,
       retry: (failureCount, error) => {
-        if (error instanceof Error && error.message.includes('401')) return false;
-        return failureCount < 3;
+        // Never retry client errors (auth/validation/not-found) — the old check
+        // looked for '401' in the message, which the server never sends, so
+        // every expired session was retried 3x before failing. Only retry
+        // transient server/network errors, and only briefly.
+        if (error instanceof ApiError && error.status >= 400 && error.status < 500) return false;
+        return failureCount < 2;
       },
     },
   },

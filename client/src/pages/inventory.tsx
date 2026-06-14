@@ -4,12 +4,13 @@ import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { PropertyCard } from '@/components/inventory/property-card';
 import { EntityForm } from '@/components/inventory/entity-form';
+import { ErrorState } from '@/components/ui/error-state';
 import { useProperties, useCreateProperty } from '@/hooks/use-inventory';
 import { toast } from '@/components/ui/toast';
 
 export function Inventory() {
   const [createOpen, setCreateOpen] = useState(false);
-  const { data: properties, isLoading } = useProperties();
+  const { data: properties, isLoading, isError, refetch } = useProperties();
   const createProperty = useCreateProperty();
 
   function handleCreate(data: Record<string, unknown>) {
@@ -37,13 +38,17 @@ export function Inventory() {
         </div>
       )}
 
-      {properties && properties.length === 0 && (
+      {isError && (
+        <ErrorState message="Couldn't load your properties." onRetry={() => refetch()} />
+      )}
+
+      {!isError && properties && properties.length === 0 && (
         <p className="text-sm text-[var(--color-text-muted)] text-center py-8">
           No properties yet. Create one to get started.
         </p>
       )}
 
-      {properties && properties.length > 0 && (
+      {!isError && properties && properties.length > 0 && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
           {properties.map((property) => (
             <PropertyCard key={property.id} property={property} />

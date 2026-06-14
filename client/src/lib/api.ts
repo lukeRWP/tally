@@ -1,5 +1,15 @@
 const BASE = '';
 
+/** Error carrying the HTTP status so callers/retry logic can branch on it. */
+export class ApiError extends Error {
+  status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+  }
+}
+
 function getCsrfToken(): string | undefined {
   const match = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]*)/);
   return match ? decodeURIComponent(match[1]) : undefined;
@@ -23,11 +33,20 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     credentials: 'include',
     headers,
   });
-  const json = await res.json();
-  if (!res.ok || !json.success) {
-    throw new Error(json.message || 'Request failed');
+
+  // Guard against non-JSON responses (e.g. a 502/504 HTML page from the proxy),
+  // which would otherwise throw an opaque SyntaxError.
+  let json: { success?: boolean; message?: string; data?: T } | null = null;
+  try {
+    json = await res.json();
+  } catch {
+    /* not JSON */
   }
-  return json.data;
+
+  if (!res.ok || !json || json.success === false) {
+    throw new ApiError(json?.message || res.statusText || 'Request failed', res.status);
+  }
+  return json.data as T;
 }
 
 export const api = {
