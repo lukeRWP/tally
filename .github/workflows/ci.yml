@@ -41,6 +41,9 @@ jobs:
       - name: Syntax check all JS files
         run: node --check index.js && find src -name '*.js' -exec node --check {} +
         working-directory: server
+      - name: Unit tests
+        run: npm test
+        working-directory: server
 
   security-audit:
     name: Security Audit
