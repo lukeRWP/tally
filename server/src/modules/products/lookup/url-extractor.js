@@ -252,4 +252,4 @@ function truncate(str, max) {
   return str.length > max ? str.substring(0, max) + '...' : str;
 }
 
-module.exports = { extractFromUrl };
+module.exports = { extractFromUrl, isPrivateOrReserved };
