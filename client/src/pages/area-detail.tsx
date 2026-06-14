@@ -39,13 +39,11 @@ export function AreaDetail() {
   }
 
   function handleCreateContainer(data: Record<string, unknown>) {
-    createContainer.mutate(
+    return createContainer.mutateAsync(
       { ...data, areaId: id } as { name: string; type: string; description?: string; areaId: number },
-      {
-        onSuccess: () => toast('Container created'),
-        onError: (err) => toast(err.message),
-      },
-    );
+    )
+      .then(() => toast('Container created'))
+      .catch((err: Error) => { toast(err.message); throw err; });
   }
 
   if (areaLoading) {

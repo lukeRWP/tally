@@ -220,10 +220,9 @@ export function Home() {
   }, [tagDropdownOpen]);
 
   function handleCreateProperty(data: Record<string, unknown>) {
-    createProperty.mutate(data as { name: string; address?: string; description?: string }, {
-      onSuccess: () => toast('Property created'),
-      onError: (err) => toast(err.message),
-    });
+    return createProperty.mutateAsync(data as { name: string; address?: string; description?: string })
+      .then(() => toast('Property created'))
+      .catch((err: Error) => { toast(err.message); throw err; });
   }
 
   function toggleTag(tagId: number) {
