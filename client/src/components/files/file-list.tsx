@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { FileText, Image, Receipt, File, Trash2 } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { toast } from '@/components/ui/toast';
 import { useItemFiles, useDeleteFile } from '@/hooks/use-files';
 import type { ItemFile } from '@/types/files';
@@ -43,9 +44,10 @@ interface FileRowProps {
 
 function FileRow({ file, itemId }: FileRowProps) {
   const deleteFile = useDeleteFile();
+  const [confirmOpen, setConfirmOpen] = React.useState(false);
 
   async function handleDelete() {
-    if (!window.confirm(`Delete "${file.fileName}"?`)) return;
+    setConfirmOpen(false);
     try {
       await deleteFile.mutateAsync({ fileId: file.id, itemId });
       toast.success('File deleted');
@@ -69,7 +71,7 @@ function FileRow({ file, itemId }: FileRowProps) {
       </button>
       <button
         type="button"
-        onClick={handleDelete}
+        onClick={() => setConfirmOpen(true)}
         disabled={deleteFile.isPending}
         className={cn(
           'p-1.5 rounded-[var(--radius-md)] text-[var(--color-text-muted)]',
@@ -80,6 +82,17 @@ function FileRow({ file, itemId }: FileRowProps) {
       >
         <Trash2 className="w-3.5 h-3.5" />
       </button>
+
+      <ConfirmDialog
+        open={confirmOpen}
+        onOpenChange={setConfirmOpen}
+        title={`Delete "${file.fileName}"?`}
+        description="This permanently removes the attached file."
+        destructive
+        confirmLabel="Delete"
+        isPending={deleteFile.isPending}
+        onConfirm={handleDelete}
+      />
     </div>
   );
 }

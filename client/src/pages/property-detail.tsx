@@ -6,6 +6,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Breadcrumbs } from '@/components/layout/breadcrumbs';
 import { AreaCard } from '@/components/inventory/area-card';
 import { EntityForm } from '@/components/inventory/entity-form';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { useProperty, useAreas, useCreateArea, useDeleteProperty } from '@/hooks/use-inventory';
 import { toast } from '@/components/ui/toast';
 import { cn } from '@/lib/utils';
@@ -16,19 +17,13 @@ export function PropertyDetail() {
 
   const navigate = useNavigate();
   const [createOpen, setCreateOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
   const { data: property, isLoading: propertyLoading } = useProperty(id);
   const { data: areas, isLoading: areasLoading } = useAreas(id);
   const createArea = useCreateArea();
   const deleteProperty = useDeleteProperty();
 
-  function handleDeleteProperty() {
-    const areaCount = property?.areaCount ?? 0;
-    const containerCount = property?.containerCount ?? 0;
-    const itemCount = property?.itemCount ?? 0;
-    const confirmed = window.confirm(
-      `This will delete the property and all ${areaCount} ${areaCount === 1 ? 'area' : 'areas'}, ${containerCount} ${containerCount === 1 ? 'container' : 'containers'}, and ${itemCount} ${itemCount === 1 ? 'item' : 'items'} inside it. This action moves everything to the recycle bin.`
-    );
-    if (!confirmed) return;
+  function confirmDeleteProperty() {
     deleteProperty.mutate(id, {
       onSuccess: () => {
         toast('Property deleted');
@@ -36,6 +31,7 @@ export function PropertyDetail() {
       },
       onError: (err) => toast(err.message),
     });
+    setDeleteOpen(false);
   }
 
   function handleCreateArea(data: Record<string, unknown>) {
@@ -72,7 +68,7 @@ export function PropertyDetail() {
           <Button
             variant="outline"
             size="sm"
-            onClick={handleDeleteProperty}
+            onClick={() => setDeleteOpen(true)}
             disabled={deleteProperty.isPending}
             className="text-[var(--color-red)] border-[var(--color-red)] hover:bg-[var(--color-red-bg)] shrink-0"
           >
@@ -155,6 +151,17 @@ export function PropertyDetail() {
         type="area"
         onSubmit={handleCreateArea}
         isPending={createArea.isPending}
+      />
+
+      <ConfirmDialog
+        open={deleteOpen}
+        onOpenChange={setDeleteOpen}
+        title={`Delete "${property.name}"?`}
+        description={`This moves the property and its ${property.areaCount ?? 0} ${(property.areaCount ?? 0) === 1 ? 'area' : 'areas'}, ${property.containerCount ?? 0} containers, and ${property.itemCount ?? 0} items to the recycle bin.`}
+        destructive
+        confirmLabel="Delete"
+        isPending={deleteProperty.isPending}
+        onConfirm={confirmDeleteProperty}
       />
     </div>
   );

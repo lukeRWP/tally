@@ -7,6 +7,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Breadcrumbs } from '@/components/layout/breadcrumbs';
 import { ContainerCard } from '@/components/inventory/container-card';
 import { EntityForm } from '@/components/inventory/entity-form';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { useArea, useContainers, useCreateContainer, useDeleteArea } from '@/hooks/use-inventory';
 import { toast } from '@/components/ui/toast';
 import { TagPicker } from '@/components/tags/tag-picker';
@@ -19,18 +20,13 @@ export function AreaDetail() {
   const navigate = useNavigate();
   const [createOpen, setCreateOpen] = useState(false);
   const [printOpen, setPrintOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
   const { data: area, isLoading: areaLoading } = useArea(id);
   const { data: containers, isLoading: containersLoading } = useContainers(id);
   const createContainer = useCreateContainer();
   const deleteArea = useDeleteArea();
 
-  function handleDeleteArea() {
-    const containerCount = area?.containerCount ?? 0;
-    const itemCount = area?.itemCount ?? 0;
-    const confirmed = window.confirm(
-      `This will delete the area and all ${containerCount} ${containerCount === 1 ? 'container' : 'containers'} and ${itemCount} ${itemCount === 1 ? 'item' : 'items'} inside it. This action moves everything to the recycle bin.`
-    );
-    if (!confirmed) return;
+  function confirmDeleteArea() {
     deleteArea.mutate(id, {
       onSuccess: () => {
         toast('Area deleted');
@@ -38,6 +34,7 @@ export function AreaDetail() {
       },
       onError: (err) => toast(err.message),
     });
+    setDeleteOpen(false);
   }
 
   function handleCreateContainer(data: Record<string, unknown>) {
@@ -85,7 +82,7 @@ export function AreaDetail() {
             <Button
               variant="outline"
               size="sm"
-              onClick={handleDeleteArea}
+              onClick={() => setDeleteOpen(true)}
               disabled={deleteArea.isPending}
               className="text-[var(--color-red)] border-[var(--color-red)] hover:bg-[var(--color-red-bg)]"
             >
@@ -157,6 +154,17 @@ export function AreaDetail() {
         entityType="area"
         isOpen={printOpen}
         onOpenChange={setPrintOpen}
+      />
+
+      <ConfirmDialog
+        open={deleteOpen}
+        onOpenChange={setDeleteOpen}
+        title={`Delete "${area.name}"?`}
+        description={`This moves the area and its ${area.containerCount ?? 0} ${(area.containerCount ?? 0) === 1 ? 'container' : 'containers'} and ${area.itemCount ?? 0} items to the recycle bin.`}
+        destructive
+        confirmLabel="Delete"
+        isPending={deleteArea.isPending}
+        onConfirm={confirmDeleteArea}
       />
     </div>
   );
