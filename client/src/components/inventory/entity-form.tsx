@@ -17,7 +17,7 @@ interface EntityFormProps {
   onOpenChange: (open: boolean) => void;
   type: EntityType;
   defaultValues?: Record<string, unknown>;
-  onSubmit: (data: Record<string, unknown>) => void;
+  onSubmit: (data: Record<string, unknown>) => void | Promise<unknown>;
   isPending?: boolean;
 }
 
@@ -60,14 +60,14 @@ export function EntityForm({
   onSubmit,
   isPending,
 }: EntityFormProps) {
-  const { register, handleSubmit, reset } = useForm({
+  const { register, handleSubmit, reset, formState: { errors } } = useForm({
     defaultValues: defaultValues as Record<string, string>,
   });
 
   const fields = fieldsByType[type];
   const isEdit = !!defaultValues;
 
-  function handleFormSubmit(data: Record<string, string>) {
+  async function handleFormSubmit(data: Record<string, string>) {
     const cleaned: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(data)) {
       if (value === '' || value == null) continue;
@@ -78,9 +78,16 @@ export function EntityForm({
         cleaned[key] = value;
       }
     }
-    onSubmit(cleaned);
-    reset();
-    onOpenChange(false);
+    try {
+      // Only reset + close once the submit resolves. If the parent returns a
+      // rejecting promise (a failed mutation), keep the dialog open with the
+      // user's input instead of discarding it.
+      await onSubmit(cleaned);
+      reset();
+      onOpenChange(false);
+    } catch {
+      /* parent surfaces the error (toast); leave the form open */
+    }
   }
 
   return (
@@ -104,8 +111,15 @@ export function EntityForm({
                 id={field.name}
                 type={field.type || 'text'}
                 step={field.type === 'number' ? 'any' : undefined}
-                {...register(field.name, { required: field.required })}
+                aria-invalid={errors[field.name] ? true : undefined}
+                className={errors[field.name] ? 'border-[var(--color-red)]' : undefined}
+                {...register(field.name, { required: field.required && `${field.label} is required` })}
               />
+              {errors[field.name] && (
+                <span className="text-xs text-[var(--color-red)]">
+                  {(errors[field.name]?.message as string) || `${field.label} is required`}
+                </span>
+              )}
             </div>
           ))}
 
