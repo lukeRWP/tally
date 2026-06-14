@@ -57,6 +57,13 @@ function errorHandler(err, req, res, next) {
     return error(res, message, status);
   }
 
+  // ── Explicit application errors (err.statusCode / err.status set by a service) ─
+  const explicitStatus = err.statusCode || err.status;
+  if (explicitStatus && explicitStatus >= 400 && explicitStatus < 500) {
+    logger.warn('Application error', { ...logContext });
+    return error(res, err.message || 'Request failed', explicitStatus);
+  }
+
   // ── Default / unexpected errors ──────────────────────────────────────────
   logger.error('Unhandled error', logContext);
 

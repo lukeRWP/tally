@@ -30,6 +30,14 @@ const LendingService = {
   // ── Lend ──────────────────────────────────────────────────────────────────
 
   async lend(itemId, data, userId) {
+    // Reject a second active loan on the same physical item.
+    const active = await LendingService.getActive(itemId);
+    if (active) {
+      const err = new Error('Item is already lent out');
+      err.statusCode = 409;
+      throw err;
+    }
+
     // The lending record and the item's 'lent' status must commit together.
     const insertId = await _db.withTransaction(async (tx) => {
       const result = await tx.query(
@@ -64,21 +72,34 @@ const LendingService = {
     // Marking the lending returned and flipping the item back to 'active'
     // must commit together.
     const lending = await _db.withTransaction(async (tx) => {
-      await tx.query(
-        `UPDATE TALLY.item_lending SET RETURNED_AT = NOW() WHERE ID = ?`,
+      // Only an OPEN lending can be returned — guards against double-return
+      // overwriting the original RETURNED_AT or re-activating a re-lent item.
+      const result = await tx.query(
+        `UPDATE TALLY.item_lending SET RETURNED_AT = NOW() WHERE ID = ? AND RETURNED_AT IS NULL`,
         [lendingId]
       );
+      if (result.affectedRows === 0) {
+        const err = new Error('This lending has already been returned');
+        err.statusCode = 409;
+        throw err;
+      }
 
       const rows = await tx.query(
         `SELECT * FROM TALLY.item_lending WHERE ID = ?`,
         [lendingId]
       );
-      if (!rows.length) return null;
 
-      await tx.query(
-        `UPDATE TALLY.items SET STATUS = 'active' WHERE ID = ?`,
+      // Re-activate the item only if it has no other still-open lending.
+      const others = await tx.query(
+        `SELECT 1 FROM TALLY.item_lending WHERE ITEM_ID = ? AND RETURNED_AT IS NULL LIMIT 1`,
         [rows[0].ITEM_ID]
       );
+      if (!others.length) {
+        await tx.query(
+          `UPDATE TALLY.items SET STATUS = 'active' WHERE ID = ?`,
+          [rows[0].ITEM_ID]
+        );
+      }
       return rows[0];
     });
 
