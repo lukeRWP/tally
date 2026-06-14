@@ -7,6 +7,7 @@ import { Breadcrumbs } from '@/components/layout/breadcrumbs';
 import { AreaCard } from '@/components/inventory/area-card';
 import { EntityForm } from '@/components/inventory/entity-form';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
+import { ErrorState } from '@/components/ui/error-state';
 import { useProperty, useAreas, useCreateArea, useDeleteProperty } from '@/hooks/use-inventory';
 import { toast } from '@/components/ui/toast';
 import { cn } from '@/lib/utils';
@@ -18,7 +19,7 @@ export function PropertyDetail() {
   const navigate = useNavigate();
   const [createOpen, setCreateOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
-  const { data: property, isLoading: propertyLoading } = useProperty(id);
+  const { data: property, isLoading: propertyLoading, isError: propertyError, refetch: refetchProperty } = useProperty(id);
   const { data: areas, isLoading: areasLoading } = useAreas(id);
   const createArea = useCreateArea();
   const deleteProperty = useDeleteProperty();
@@ -50,6 +51,10 @@ export function PropertyDetail() {
         <Skeleton className="h-20 w-full" />
       </div>
     );
+  }
+
+  if (propertyError) {
+    return <ErrorState message="Couldn't load this property." onRetry={() => refetchProperty()} />;
   }
 
   if (!property) {

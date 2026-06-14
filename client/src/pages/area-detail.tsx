@@ -8,6 +8,7 @@ import { Breadcrumbs } from '@/components/layout/breadcrumbs';
 import { ContainerCard } from '@/components/inventory/container-card';
 import { EntityForm } from '@/components/inventory/entity-form';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
+import { ErrorState } from '@/components/ui/error-state';
 import { useArea, useContainers, useCreateContainer, useDeleteArea } from '@/hooks/use-inventory';
 import { toast } from '@/components/ui/toast';
 import { TagPicker } from '@/components/tags/tag-picker';
@@ -21,7 +22,7 @@ export function AreaDetail() {
   const [createOpen, setCreateOpen] = useState(false);
   const [printOpen, setPrintOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
-  const { data: area, isLoading: areaLoading } = useArea(id);
+  const { data: area, isLoading: areaLoading, isError: areaError, refetch: refetchArea } = useArea(id);
   const { data: containers, isLoading: containersLoading } = useContainers(id);
   const createContainer = useCreateContainer();
   const deleteArea = useDeleteArea();
@@ -55,6 +56,10 @@ export function AreaDetail() {
         <Skeleton className="h-20 w-full" />
       </div>
     );
+  }
+
+  if (areaError) {
+    return <ErrorState message="Couldn't load this area." onRetry={() => refetchArea()} />;
   }
 
   if (!area) {

@@ -9,6 +9,7 @@ import { Breadcrumbs } from '@/components/layout/breadcrumbs';
 import { ContainerCard } from '@/components/inventory/container-card';
 import { ItemCard } from '@/components/inventory/item-card';
 import { EntityForm } from '@/components/inventory/entity-form';
+import { ErrorState } from '@/components/ui/error-state';
 import {
   useContainer,
   useContainerChildren,
@@ -32,7 +33,7 @@ export function ContainerDetail() {
   const [printOpen, setPrintOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
 
-  const { data: container, isLoading: containerLoading } = useContainer(id);
+  const { data: container, isLoading: containerLoading, isError: containerError, refetch: refetchContainer } = useContainer(id);
   const { data: children, isLoading: childrenLoading } = useContainerChildren(id);
   const { data: items, isLoading: itemsLoading } = useItems(id);
   const createContainer = useCreateContainer();
@@ -81,6 +82,10 @@ export function ContainerDetail() {
         <Skeleton className="h-20 w-full" />
       </div>
     );
+  }
+
+  if (containerError) {
+    return <ErrorState message="Couldn't load this container." onRetry={() => refetchContainer()} />;
   }
 
   if (!container) {

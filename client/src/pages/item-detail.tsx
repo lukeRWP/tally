@@ -11,6 +11,7 @@ import { Card } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useItem, useDeleteItem } from '@/hooks/use-inventory';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
+import { ErrorState } from '@/components/ui/error-state';
 import { toast } from '@/components/ui/toast';
 import { Breadcrumbs } from '@/components/layout/breadcrumbs';
 import { FileList } from '@/components/files/file-list';
@@ -172,7 +173,7 @@ export function ItemDetail() {
   const id = Number(itemId);
 
   const navigate = useNavigate();
-  const { data: item, isLoading } = useItem(id);
+  const { data: item, isLoading, isError, refetch } = useItem(id);
   const deleteItem = useDeleteItem();
   const [deleteOpen, setDeleteOpen] = React.useState(false);
 
@@ -222,7 +223,9 @@ export function ItemDetail() {
   }
 
   if (!item) {
-    return <p className="text-sm text-[var(--color-text-muted)] text-center py-8">Item not found.</p>;
+    return isError
+      ? <ErrorState message="Couldn't load this item." onRetry={() => refetch()} />
+      : <p className="text-sm text-[var(--color-text-muted)] text-center py-8">Item not found.</p>;
   }
 
   // Cast to access depreciation fields from the API
