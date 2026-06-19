@@ -1,0 +1,10 @@
+name: eph-canary-selftest
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  selftest:
+    runs-on: [self-hosted, tally]
+    steps:
+      - run: echo "ephemeral canary ran on $(hostname) at $(date -u +%FT%TZ)"
