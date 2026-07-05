@@ -12,9 +12,9 @@
     "test": "node --test"
   },
   "dependencies": {
-    "@aws-sdk/client-s3": "^3.1072.0",
-    "@aws-sdk/s3-request-presigner": "^3.1072.0",
-    "axios": "^1.18.0",
+    "@aws-sdk/client-s3": "^3.1079.0",
+    "@aws-sdk/s3-request-presigner": "^3.1079.0",
+    "axios": "^1.18.1",
     "compression": "^1.7.4",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
@@ -31,14 +31,14 @@
     "node-cache": "^5.1.2",
     "pdfkit": "^0.19.1",
     "qrcode": "^1.5.4",
-    "sharp": "^0.35.1",
+    "sharp": "^0.35.3",
     "uuid": "^13.0.2",
     "winston": "^3.19.0",
     "winston-daily-rotate-file": "^5.0.0"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "eslint": "^10.5.0"
+    "eslint": "^10.6.0"
   },
   "overrides": {
     "fast-xml-builder": "^1.1.7",
