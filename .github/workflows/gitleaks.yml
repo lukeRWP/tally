@@ -19,14 +19,14 @@ jobs:
       # the PR commits; without this it 403s on pull_request events.
       pull-requests: read
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.x
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v4.x
         with:
           # Full history needed so gitleaks scans every commit on PRs,
           # not just the diff. Slower (~1 min) but catches secrets that
           # were committed earlier on a branch.
           fetch-depth: 0
 
-      - uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2.3.9
+      - uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # Pin gitleaks binary to match local .pre-commit-config.yaml.
