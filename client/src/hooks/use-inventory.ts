@@ -96,8 +96,12 @@ export function useCreateArea() {
   return useMutation({
     mutationFn: (data: { name: string; description?: string; propertyId: number }) =>
       api.post<{ area: Area }>('/api/areas/_y_/create', data),
-    onSuccess: (_: unknown, vars: { name: string; description?: string; propertyId: number }) =>
-      qc.invalidateQueries({ queryKey: queryKeys.areas.byProperty(vars.propertyId) }),
+    onSuccess: (_: unknown, vars: { name: string; description?: string; propertyId: number }) => {
+      qc.invalidateQueries({ queryKey: queryKeys.areas.byProperty(vars.propertyId) });
+      // Also refresh property queries so the server-computed AREA_COUNT updates
+      // (property cards / detail / home totals), matching useDeleteArea.
+      qc.invalidateQueries({ queryKey: queryKeys.properties.all });
+    },
   });
 }
 

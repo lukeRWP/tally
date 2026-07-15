@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { api } from '@/lib/api';
+import { api, getCsrfToken } from '@/lib/api';
 import { queryKeys } from '@/lib/query-client';
 import type { ItemFile, ConditionSnapshot } from '@/types/files';
 
@@ -30,9 +30,13 @@ export function useUploadFile() {
       const formData = new FormData();
       formData.append('file', file);
       formData.append('fileType', fileType);
+      // Raw fetch (FormData upload) — attach CSRF manually; do NOT set
+      // Content-Type so the browser sets the multipart boundary.
+      const csrf = getCsrfToken();
       const res = await fetch(`/api/files/_y_/item/${itemId}/upload`, {
         method: 'POST',
         credentials: 'include',
+        headers: { ...(csrf ? { 'X-CSRF-Token': csrf } : {}) },
         body: formData,
       });
       const json = await res.json();
@@ -88,9 +92,13 @@ export function useCreateCondition() {
       formData.append('condition', condition);
       if (notes) formData.append('notes', notes);
       if (photo) formData.append('photo', photo);
+      // Raw fetch (FormData) — attach CSRF manually; no Content-Type so the
+      // browser sets the multipart boundary.
+      const csrf = getCsrfToken();
       const res = await fetch(`/api/conditions/_y_/item/${itemId}`, {
         method: 'POST',
         credentials: 'include',
+        headers: { ...(csrf ? { 'X-CSRF-Token': csrf } : {}) },
         body: formData,
       });
       const json = await res.json();
