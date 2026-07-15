@@ -1,5 +1,5 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { api } from '@/lib/api';
+import { api, getCsrfToken } from '@/lib/api';
 
 interface ReportParams {
   reportType: string;
@@ -14,10 +14,15 @@ interface ReportParams {
 export function useGenerateReport() {
   return useMutation({
     mutationFn: async (params: ReportParams) => {
+      // Raw fetch (needs the binary blob response) — attach CSRF manually.
+      const csrf = getCsrfToken();
       const res = await fetch('/api/reports/_y_/generate', {
         method: 'POST',
         credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(csrf ? { 'X-CSRF-Token': csrf } : {}),
+        },
         body: JSON.stringify(params),
       });
       if (!res.ok) {
