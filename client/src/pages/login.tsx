@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Loader2, LogIn, Package } from 'lucide-react';
+import { Loader2, LogIn } from 'lucide-react';
 
 export function Login() {
   const [loading, setLoading] = useState(false);
@@ -14,7 +14,20 @@ export function Login() {
       <div className="flex flex-col items-center gap-6 max-w-sm w-full">
         {/* Logo */}
         <div className="flex items-center justify-center w-16 h-16 rounded-2xl bg-[var(--color-primary)] shadow-lg">
-          <Package className="w-8 h-8 text-white" />
+          <svg
+            viewBox="0 0 100 100"
+            className="w-8 h-8"
+            fill="none"
+            stroke="white"
+            strokeWidth={6}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <rect x="24" y="32" width="52" height="42" rx="5" />
+            <line x1="24" y1="45" x2="76" y2="45" />
+            <line x1="50" y1="32" x2="50" y2="45" />
+          </svg>
         </div>
 
         <div className="text-center">
