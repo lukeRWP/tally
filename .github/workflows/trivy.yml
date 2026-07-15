@@ -15,20 +15,22 @@ on:
     - cron: '17 4 * * 1'   # Mondays 04:17 UTC
 
 jobs:
-  scan:
+  # Distinct check context: gitleaks also reports a job named "scan" — the
+  # duplicate context defeated a required trivy gate (#208). Required on master.
+  trivy-scan:
     runs-on: ubuntu-latest
     permissions:
       contents: read
       security-events: write   # for SARIF upload to Code Scanning tab
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.x
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v4.x
 
       # GATE: this is the pass/fail check. Use table output, which honors the
       # `severity` filter AND `.trivyignore` correctly. (The sarif format path
       # in trivy-action builds "all severities" and trips exit-code regardless
       # of the severity filter / ignore file — so it must NOT be the gate.)
       - name: Trivy scan (gate)
-        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: fs
           scan-ref: .
@@ -45,7 +47,7 @@ jobs:
       # behavior is fine here since exit-code is 0).
       - name: Trivy scan (SARIF report)
         if: always()
-        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: fs
           scan-ref: .
