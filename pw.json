@@ -19,7 +19,7 @@
       ],
       "port": 2727,
       "healthCheck": {
-        "path": "/health/live",
+        "path": "/health/ready",
         "port": 2727
       }
     },
@@ -43,13 +43,9 @@
   "secrets": [
     "MYSQL_ROOT_PASSWORD",
     "MYSQL_PASSWORD",
-    "MYSQL_SSL_PASSWORD",
     "S3_ACCESS_KEY",
     "S3_SECRET_KEY",
-    "AUTH_SECRET_ENCRYPTION_KEY",
-    "COOKIE_SECRET",
-    "FILE_ENCRYPTION_MASTER_KEY",
-    "SYNC_ENCRYPTION_KEY"
+    "COOKIE_SECRET"
   ],
   "external_secrets": [
     "ENTRA_TENANT_ID",
@@ -75,7 +71,7 @@
             "./client/dist:/app/client/dist:ro"
           ],
           "environment": {
-            "MAIN_DATABASE": "TALLY",
+            "TALLY_DB": "TALLY",
             "MYSQL_URL": "db",
             "MYSQL_USER": "root",
             "MYSQL_PASSWORD": "${MYSQL_ROOT_PASSWORD}",

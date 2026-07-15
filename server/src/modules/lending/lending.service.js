@@ -30,16 +30,34 @@ const LendingService = {
   // ── Lend ──────────────────────────────────────────────────────────────────
 
   async lend(itemId, data, userId) {
-    // Reject a second active loan on the same physical item.
-    const active = await LendingService.getActive(itemId);
-    if (active) {
-      const err = new Error('Item is already lent out');
-      err.statusCode = 409;
-      throw err;
-    }
-
-    // The lending record and the item's 'lent' status must commit together.
+    // The open-loan check and the insert must be ATOMIC. Previously getActive()
+    // ran outside the transaction with no lock, so two concurrent lend requests
+    // (or a double-click) could both pass the check and create two open loans on
+    // the same item. Lock the item row FOR UPDATE to serialize concurrent lends,
+    // then re-check inside the transaction.
     const insertId = await _db.withTransaction(async (tx) => {
+      const items = await tx.query(
+        `SELECT ID FROM TALLY.items WHERE ID = ? FOR UPDATE`,
+        [itemId]
+      );
+      if (!items.length) {
+        const err = new Error('Item not found');
+        err.statusCode = 404;
+        throw err;
+      }
+
+      // Reject a second active loan on the same physical item.
+      const open = await tx.query(
+        `SELECT 1 FROM TALLY.item_lending
+         WHERE ITEM_ID = ? AND RETURNED_AT IS NULL LIMIT 1 FOR UPDATE`,
+        [itemId]
+      );
+      if (open.length) {
+        const err = new Error('Item is already lent out');
+        err.statusCode = 409;
+        throw err;
+      }
+
       const result = await tx.query(
         `INSERT INTO TALLY.item_lending (ITEM_ID, LENT_TO, LENT_AT, DUE_AT, NOTES, CREATED_BY)
          VALUES (?, ?, NOW(), ?, ?, ?)`,

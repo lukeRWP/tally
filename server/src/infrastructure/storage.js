@@ -71,4 +71,13 @@ async function remove(key) {
   }));
 }
 
-module.exports = { init, ensureBucket, upload, getPresignedUrl, remove };
+// Readiness probe: verify the bucket is reachable. Short timeout so a hung or
+// unreachable storage endpoint fails fast instead of blocking the health check.
+async function checkConnection(timeoutMs = 3000) {
+  await Promise.race([
+    s3Client.send(new HeadBucketCommand({ Bucket: config.storage.bucket })),
+    new Promise((_, reject) => setTimeout(() => reject(new Error('storage check timed out')), timeoutMs)),
+  ]);
+}
+
+module.exports = { init, ensureBucket, upload, getPresignedUrl, remove, checkConnection };

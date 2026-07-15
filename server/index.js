@@ -76,6 +76,28 @@ app.get('/health/live', async (req, res) => {
   });
 });
 
+// Readiness: process + external deps (DB and object storage). The PW deploy
+// gate points here so a broken storage config fails the deploy instead of going
+// green (file ops would otherwise 500 at runtime). /health/live stays
+// process+DB only so a transient storage blip doesn't flap liveness.
+app.get('/health/ready', async (req, res) => {
+  let dbStatus = 'disconnected';
+  let storageStatus = 'unreachable';
+  await Promise.all([
+    db.checkConnection().then(() => { dbStatus = 'connected'; }).catch(() => {}),
+    storage.checkConnection().then(() => { storageStatus = 'reachable'; }).catch(() => {}),
+  ]);
+  const ready = dbStatus === 'connected' && storageStatus === 'reachable';
+  res.status(ready ? 200 : 503).json({
+    status: ready ? 'ok' : 'degraded',
+    version: process.env.APP_VERSION || 'unknown',
+    sha: process.env.APP_SHA || 'unknown',
+    uptime: process.uptime(),
+    db: dbStatus,
+    storage: storageStatus,
+  });
+});
+
 // ── Module Routes ───────────────────────────────────────────────────────────
 require('./src/modules/auth/auth.routes')({ app, db, logger, config });
 require('./src/modules/inventory/properties.routes')({ app, db, logger, config });
