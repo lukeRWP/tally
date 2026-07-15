@@ -225,6 +225,20 @@ const ContainersService = {
         values
       );
       await _closureTable.moveNode(id, newParentContainerId || null, tx);
+      // When the container moves to a different area, cascade AREA_ID to the
+      // whole subtree — moveNode only rewrites the closure, so without this the
+      // descendant containers keep the OLD AREA_ID (wrong breadcrumbs, and they
+      // get silently dropped from the items-by-location report which filters
+      // children by PARENT_CONTAINER_ID AND AREA_ID).
+      if (newAreaId !== undefined) {
+        await tx.query(
+          `UPDATE TALLY.containers SET AREA_ID = ?
+           WHERE ID IN (
+             SELECT DESCENDANT_ID FROM TALLY.container_paths WHERE ANCESTOR_ID = ?
+           )`,
+          [newAreaId, id]
+        );
+      }
     });
 
     const propertyId = await ContainersService.getPropertyIdForContainer(id);
@@ -236,11 +250,28 @@ const ContainersService = {
   async softDelete(id, userId) {
     const propertyId = await ContainersService.getPropertyIdForContainer(id);
     await _db.withTransaction(async (tx) => {
+      // Cascade the soft-delete to the ENTIRE subtree (this container + every
+      // descendant container) and the items inside them, using the closure
+      // table. Previously this soft-deleted only the target row and then called
+      // removeNode() to DESTROY the subtree's closure paths — which left
+      // descendant containers/items with DELETED_AT NULL (phantom value still
+      // summed in reports/search), unreachable via navigation, and unrestorable
+      // (closure gone). We keep the closure intact so the subtree stays
+      // restorable; closure destruction is reserved for a permanent delete.
       await tx.query(
-        'UPDATE TALLY.containers SET DELETED_AT = NOW() WHERE ID = ?',
+        `UPDATE TALLY.containers SET DELETED_AT = NOW()
+         WHERE DELETED_AT IS NULL AND ID IN (
+           SELECT DESCENDANT_ID FROM TALLY.container_paths WHERE ANCESTOR_ID = ?
+         )`,
         [id]
       );
-      await _closureTable.removeNode(id, tx);
+      await tx.query(
+        `UPDATE TALLY.items SET DELETED_AT = NOW()
+         WHERE DELETED_AT IS NULL AND CONTAINER_ID IN (
+           SELECT DESCENDANT_ID FROM TALLY.container_paths WHERE ANCESTOR_ID = ?
+         )`,
+        [id]
+      );
     });
     AuditService.logChange(userId, 'container', id, 'deleted', {}, propertyId);
   },
