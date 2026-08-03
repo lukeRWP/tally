@@ -291,7 +291,9 @@ CREATE TABLE IF NOT EXISTS notifications (
     TYPE        ENUM('warranty_expiry','lending_due','item_moved','item_removed','share_expiring','custom_date') NOT NULL,
     TITLE       VARCHAR(255)                                                                          NOT NULL,
     MESSAGE     TEXT                                                                                  NOT NULL,
-    ENTITY_TYPE ENUM('property','area','container','item')                                            NULL,
+    -- item_date/item_lending also added to existing DBs by SQL/migrations/001;
+    -- checkDateNotifications() inserts both. Keep this list in sync with it.
+    ENTITY_TYPE ENUM('property','area','container','item','item_date','item_lending')                 NULL,
     ENTITY_ID   INT                                                                                   NULL,
     READ_AT     DATETIME                                                                              NULL,
     CREATED_AT  DATETIME                                                                              NOT NULL DEFAULT CURRENT_TIMESTAMP,
