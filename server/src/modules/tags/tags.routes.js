@@ -129,6 +129,15 @@ module.exports = function tagsRoutes({ app, db, logger }) {
     app.locals.requireRole('owner', 'editor'),
     async (req, res) => {
       const { tagId, entityType, entityId } = req.validatedBody;
+      // resolvePropertyFromTag set req.params.propertyId to the TAG's property.
+      // The target entity must belong to that same property — otherwise an
+      // owner/editor could tag (and, via the tag report's entity join, read)
+      // an entity in another household.
+      const AuditService = require('../audit/audit.service');
+      const entityPropertyId = await AuditService.getPropertyIdForEntity(entityType, entityId);
+      if (!entityPropertyId || String(entityPropertyId) !== String(req.params.propertyId)) {
+        return error(res, 'Entity must be in the same property as the tag', 400);
+      }
       await TagsService.addToEntity(tagId, entityType, entityId);
       success(res, null, 'Tag added to entity', 201);
     }
@@ -145,6 +154,13 @@ module.exports = function tagsRoutes({ app, db, logger }) {
     app.locals.requireRole('owner', 'editor'),
     async (req, res) => {
       const { tagId, entityType, entityId } = req.params;
+      // Same-property guard as attach: the entity must belong to the tag's
+      // property (req.params.propertyId, set by resolvePropertyFromTag).
+      const AuditService = require('../audit/audit.service');
+      const entityPropertyId = await AuditService.getPropertyIdForEntity(entityType, entityId);
+      if (!entityPropertyId || String(entityPropertyId) !== String(req.params.propertyId)) {
+        return error(res, 'Entity must be in the same property as the tag', 400);
+      }
       await TagsService.removeFromEntity(tagId, entityType, entityId);
       success(res, null, 'Tag removed from entity');
     }

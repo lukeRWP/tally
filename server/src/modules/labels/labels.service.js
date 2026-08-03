@@ -24,26 +24,41 @@ const LabelsService = {
 
   // ── Code Resolution ─────────────────────────────────────────────────────────
 
-  async resolveCode(code) {
+  async resolveCode(code, userId) {
     const parsed = parseCode(code);
     if (!parsed) return { type: null, id: null, name: null, exists: false };
 
     const { type } = parsed;
 
-    const tableMap = {
-      property: 'TALLY.properties',
-      area: 'TALLY.areas',
-      container: 'TALLY.containers',
-      item: 'TALLY.items',
+    // Membership-scoped: a user may only resolve a code to an entity in a
+    // property they belong to. An unknown OR unauthorized code returns
+    // exists:false — it never leaks another household's entity name/id.
+    const queries = {
+      property:
+        `SELECT p.ID, p.NAME FROM TALLY.properties p
+         JOIN TALLY.property_members pm ON pm.PROPERTY_ID = p.ID AND pm.USER_ID = ?
+         WHERE p.QR_CODE = ?`,
+      area:
+        `SELECT a.ID, a.NAME FROM TALLY.areas a
+         JOIN TALLY.property_members pm ON pm.PROPERTY_ID = a.PROPERTY_ID AND pm.USER_ID = ?
+         WHERE a.QR_CODE = ?`,
+      container:
+        `SELECT c.ID, c.NAME FROM TALLY.containers c
+         JOIN TALLY.areas a ON c.AREA_ID = a.ID
+         JOIN TALLY.property_members pm ON pm.PROPERTY_ID = a.PROPERTY_ID AND pm.USER_ID = ?
+         WHERE c.QR_CODE = ?`,
+      item:
+        `SELECT i.ID, i.NAME FROM TALLY.items i
+         JOIN TALLY.containers c ON i.CONTAINER_ID = c.ID
+         JOIN TALLY.areas a ON c.AREA_ID = a.ID
+         JOIN TALLY.property_members pm ON pm.PROPERTY_ID = a.PROPERTY_ID AND pm.USER_ID = ?
+         WHERE i.QR_CODE = ?`,
     };
 
-    const table = tableMap[type];
-    if (!table) return { type, id: null, name: null, exists: false };
+    const sql = queries[type];
+    if (!sql) return { type, id: null, name: null, exists: false };
 
-    const rows = await _db.query(
-      `SELECT ID, NAME FROM ${table} WHERE QR_CODE = ?`,
-      [code]
-    );
+    const rows = await _db.query(sql, [userId, code]);
 
     if (rows.length > 0) {
       return { type, id: rows[0].ID, name: rows[0].NAME, exists: true };
@@ -54,9 +69,14 @@ const LabelsService = {
 
   // ── Entity Data Fetching ────────────────────────────────────────────────────
 
-  async getEntityData(type, ids) {
+  async getEntityData(type, ids, userId) {
     if (!ids || ids.length === 0) return [];
 
+    // Membership-scoped: every branch INNER-JOINs property_members so only
+    // entities in a property the caller belongs to are returned. The route's
+    // `entities.length === 0 → 404` then naturally hides out-of-scope IDs.
+    // (Inner joins on the container→area→property chain are safe: a valid
+    // item/container/area always has that chain via NOT NULL FKs.)
     const placeholders = ids.map(() => '?').join(', ');
 
     if (type === 'item') {
@@ -67,11 +87,12 @@ const LabelsService = {
            a.NAME AS AREA_NAME,
            p.NAME AS PROPERTY_NAME
          FROM TALLY.items i
-         LEFT JOIN TALLY.containers c ON i.CONTAINER_ID = c.ID
-         LEFT JOIN TALLY.areas a ON c.AREA_ID = a.ID
-         LEFT JOIN TALLY.properties p ON a.PROPERTY_ID = p.ID
+         JOIN TALLY.containers c ON i.CONTAINER_ID = c.ID
+         JOIN TALLY.areas a ON c.AREA_ID = a.ID
+         JOIN TALLY.properties p ON a.PROPERTY_ID = p.ID
+         JOIN TALLY.property_members pm ON pm.PROPERTY_ID = p.ID AND pm.USER_ID = ?
          WHERE i.ID IN (${placeholders}) AND i.DELETED_AT IS NULL`,
-        ids
+        [userId, ...ids]
       );
       return rows.map(row => ({
         id: row.ID,
@@ -90,10 +111,11 @@ const LabelsService = {
            a.NAME AS AREA_NAME,
            p.NAME AS PROPERTY_NAME
          FROM TALLY.containers c
-         LEFT JOIN TALLY.areas a ON c.AREA_ID = a.ID
-         LEFT JOIN TALLY.properties p ON a.PROPERTY_ID = p.ID
+         JOIN TALLY.areas a ON c.AREA_ID = a.ID
+         JOIN TALLY.properties p ON a.PROPERTY_ID = p.ID
+         JOIN TALLY.property_members pm ON pm.PROPERTY_ID = p.ID AND pm.USER_ID = ?
          WHERE c.ID IN (${placeholders}) AND c.DELETED_AT IS NULL`,
-        ids
+        [userId, ...ids]
       );
       return rows.map(row => ({
         id: row.ID,
@@ -111,9 +133,10 @@ const LabelsService = {
            a.ID, a.NAME, a.QR_CODE,
            p.NAME AS PROPERTY_NAME
          FROM TALLY.areas a
-         LEFT JOIN TALLY.properties p ON a.PROPERTY_ID = p.ID
+         JOIN TALLY.properties p ON a.PROPERTY_ID = p.ID
+         JOIN TALLY.property_members pm ON pm.PROPERTY_ID = p.ID AND pm.USER_ID = ?
          WHERE a.ID IN (${placeholders}) AND a.DELETED_AT IS NULL`,
-        ids
+        [userId, ...ids]
       );
       return rows.map(row => ({
         id: row.ID,

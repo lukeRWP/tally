@@ -15,7 +15,7 @@ module.exports = function labelsRoutes({ app, db, logger, config }) {
     async (req, res) => {
       const { entityType, entityIds, format } = req.body;
 
-      const entities = await LabelsService.getEntityData(entityType, entityIds);
+      const entities = await LabelsService.getEntityData(entityType, entityIds, req.user.id);
       if (entities.length === 0) {
         return error(res, 'No entities found for the given IDs', 404);
       }
@@ -43,7 +43,7 @@ module.exports = function labelsRoutes({ app, db, logger, config }) {
     app.locals.requireAuth,
     validate(resolveCode, 'params'),
     async (req, res) => {
-      const result = await LabelsService.resolveCode(req.params.code);
+      const result = await LabelsService.resolveCode(req.params.code, req.user.id);
       success(res, result);
     }
   );

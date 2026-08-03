@@ -30,7 +30,7 @@ import { useItemFiles } from '@/hooks/use-files';
 import { useAccessories } from '@/hooks/use-accessories';
 import { useLendingHistory } from '@/hooks/use-lending';
 import { ShareDialog } from '@/components/sharing/share-dialog';
-import { cn } from '@/lib/utils';
+import { cn, safeExternalUrl } from '@/lib/utils';
 
 const conditionColor: Record<string, string> = {
   new: 'bg-[var(--color-green)]',
@@ -385,7 +385,7 @@ export function ItemDetail() {
                     {item.productRetailLinks.slice(0, 5).map((link, i) => (
                       <a
                         key={i}
-                        href={link.url}
+                        href={safeExternalUrl(link.url)}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="flex items-center gap-1 px-2 py-1 rounded-[var(--radius-sm)] border border-[var(--color-border)] bg-[var(--color-elevated)] text-[11px] text-[var(--color-text-secondary)] hover:text-[var(--color-primary)] hover:border-[var(--color-primary)] transition-colors"
