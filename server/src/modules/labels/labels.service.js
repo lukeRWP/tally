@@ -2,6 +2,14 @@ const QRCode = require('qrcode');
 const PDFDocument = require('pdfkit');
 const { parseCode } = require('../../utils/qr');
 
+// Geometry for the thermal single-label + manifest presets. 72 pt = 1 inch.
+// `banner` is the left location-banner strip width in pt (0 = no banner).
+const PRESETS = {
+  small:  { widthPt: 144, heightPt: 72,  qrPt: 60,  banner: 0,  title: 11, code: 8 },
+  medium: { widthPt: 216, heightPt: 216, qrPt: 118, banner: 26, title: 15, code: 10 },
+  large:  { widthPt: 288, heightPt: 432, qrPt: 54,  banner: 22, title: 13, code: 8, row: 11, rowGap: 3 },
+};
+
 let _db = null;
 let _logger = null;
 let _baseUrl = null;
@@ -95,12 +103,9 @@ const LabelsService = {
         [userId, ...ids]
       );
       return rows.map(row => ({
-        id: row.ID,
-        name: row.NAME,
-        qrCode: row.QR_CODE,
-        breadcrumb: [row.PROPERTY_NAME, row.AREA_NAME, row.CONTAINER_NAME]
-          .filter(Boolean)
-          .join(' > '),
+        id: row.ID, name: row.NAME, qrCode: row.QR_CODE,
+        parentZone: null,
+        breadcrumb: [row.PROPERTY_NAME, row.AREA_NAME, row.CONTAINER_NAME].filter(Boolean).join(' > '),
       }));
     }
 
@@ -118,12 +123,9 @@ const LabelsService = {
         [userId, ...ids]
       );
       return rows.map(row => ({
-        id: row.ID,
-        name: row.NAME,
-        qrCode: row.QR_CODE,
-        breadcrumb: [row.PROPERTY_NAME, row.AREA_NAME]
-          .filter(Boolean)
-          .join(' > '),
+        id: row.ID, name: row.NAME, qrCode: row.QR_CODE,
+        parentZone: row.AREA_NAME || null,
+        breadcrumb: row.PROPERTY_NAME || '',
       }));
     }
 
@@ -139,10 +141,9 @@ const LabelsService = {
         [userId, ...ids]
       );
       return rows.map(row => ({
-        id: row.ID,
-        name: row.NAME,
-        qrCode: row.QR_CODE,
-        breadcrumb: row.PROPERTY_NAME || '',
+        id: row.ID, name: row.NAME, qrCode: row.QR_CODE,
+        parentZone: row.PROPERTY_NAME || null,
+        breadcrumb: '',
       }));
     }
 

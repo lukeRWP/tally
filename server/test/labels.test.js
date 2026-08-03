@@ -78,3 +78,23 @@ test('generateLabels rejects large for items (container/area only)', () => {
   assert.equal(schema.generateLabels.validate({ entityType: 'container', entityIds: [1], preset: 'large' }).error, undefined);
   assert.equal(schema.generateLabels.validate({ entityType: 'area', entityIds: [1], preset: 'large' }).error, undefined);
 });
+
+// ── getEntityData — parentZone per entity type ──────────────────────────────
+
+test('getEntityData exposes parentZone per type (Area for container, Property for area)', async () => {
+  Labels.init({ db: fakeDb((sql) => {
+    if (/FROM TALLY\.containers c/i.test(sql)) return [{ ID: 5, NAME: 'Camping Gear', QR_CODE: 'TLY-C-1', AREA_NAME: 'Garage', PROPERTY_NAME: 'Home' }];
+    return [];
+  }), logger, config });
+  const [c] = await Labels.getEntityData('container', [5], 42);
+  assert.equal(c.parentZone, 'Garage');   // banner
+  assert.equal(c.breadcrumb, 'Home');     // header remainder
+
+  Labels.init({ db: fakeDb((sql) => {
+    if (/FROM TALLY\.areas a/i.test(sql)) return [{ ID: 3, NAME: 'Garage', QR_CODE: 'TLY-A-1', PROPERTY_NAME: 'Home' }];
+    return [];
+  }), logger, config });
+  const [a] = await Labels.getEntityData('area', [3], 42);
+  assert.equal(a.parentZone, 'Home');
+  assert.equal(a.breadcrumb, '');
+});
