@@ -1,5 +1,5 @@
 const path = require('path');
-const { v4: uuidv4 } = require('uuid');
+const { randomUUID } = require('node:crypto');
 const sharp = require('sharp');
 const storage = require('../../infrastructure/storage');
 const { sniffMime } = require('../../utils/fileType');
@@ -75,7 +75,7 @@ const FilesService = {
     }
     const contentType = sniffed || file.mimetype; // server-derived, never trust the client for inline-able types
 
-    const uuid = uuidv4();
+    const uuid = randomUUID();
     const key = `items/${itemId}/${fileType}/${uuid}-${safeName(file.originalname)}`;
 
     // Track uploaded objects so they can be rolled back if the DB insert fails.

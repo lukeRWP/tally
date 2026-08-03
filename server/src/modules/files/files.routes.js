@@ -23,6 +23,7 @@ module.exports = function filesRoutes({ app, db, logger, config }) {
   FilesService.init({ db, logger });
 
   const { success, error } = require('../../utils/response');
+  const { uploadFile } = require('./files.schema');
   const { requireAuth, resolvePropertyRole, requireRole } = app.locals;
   const ItemsService = require('../inventory/items.service');
 
@@ -44,8 +45,13 @@ module.exports = function filesRoutes({ app, db, logger, config }) {
   // POST /api/files/_y_/item/:itemId/upload — upload file (owner/editor)
   app.post('/api/files/_y_/item/:itemId/upload', requireAuth, resolvePropertyFromItem, resolvePropertyRole, requireRole('owner', 'editor'), upload.single('file'), async (req, res) => {
     if (!req.file) return error(res, 'No file provided', 400);
-    const fileType = req.body.fileType || 'other';
-    const result = await FilesService.upload(req.params.itemId, req.file, fileType, req.user.id);
+    // Validate fileType against the known set before it's interpolated into the
+    // storage object key — an arbitrary/unsanitized value would otherwise let a
+    // caller shape the key namespace. (Wires up the previously-dead uploadFile
+    // schema.)
+    const { error: verr, value } = uploadFile.validate({ fileType: req.body.fileType || 'other' });
+    if (verr) return error(res, 'Validation failed', 422, verr.details.map(d => d.message));
+    const result = await FilesService.upload(req.params.itemId, req.file, value.fileType, req.user.id);
     success(res, result, 'File uploaded', 201);
   });
 

@@ -261,6 +261,9 @@ CREATE TABLE IF NOT EXISTS entity_tags (
     ENTITY_TYPE ENUM('item','container','area')      NOT NULL,
     ENTITY_ID   INT                                  NOT NULL,
     UNIQUE KEY uq_entity_tags (TAG_ID, ENTITY_TYPE, ENTITY_ID),
+    -- entity-led lookups (getForEntity, tag-filtered search join); the UNIQUE
+    -- key above leads with TAG_ID so it can't seek by entity. See migration 002.
+    KEY idx_entity_tags_entity (ENTITY_TYPE, ENTITY_ID),
     CONSTRAINT fk_entity_tags_tag FOREIGN KEY (TAG_ID) REFERENCES tags (ID)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -278,6 +281,8 @@ CREATE TABLE IF NOT EXISTS change_log (
     CREATED_AT  DATETIME                                                             NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (ID),
     KEY idx_change_log_property_created (PROPERTY_ID, CREATED_AT),
+    -- entity-history endpoint (GET /audit/entity/:type/:id). See migration 002.
+    KEY idx_change_log_entity (ENTITY_TYPE, ENTITY_ID, CREATED_AT),
     CONSTRAINT fk_change_log_user     FOREIGN KEY (USER_ID)     REFERENCES users (ID),
     CONSTRAINT fk_change_log_property FOREIGN KEY (PROPERTY_ID) REFERENCES properties (ID)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
