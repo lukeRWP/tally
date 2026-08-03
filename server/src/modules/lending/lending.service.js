@@ -37,10 +37,13 @@ const LendingService = {
     // then re-check inside the transaction.
     const insertId = await _db.withTransaction(async (tx) => {
       const items = await tx.query(
-        `SELECT ID FROM TALLY.items WHERE ID = ? FOR UPDATE`,
+        `SELECT ID FROM TALLY.items WHERE ID = ? AND DELETED_AT IS NULL FOR UPDATE`,
         [itemId]
       );
       if (!items.length) {
+        // Not found OR soft-deleted (recycled). A recycled item must not be
+        // lent — its loan record would then be destroyed when the item is
+        // purged after 30 days.
         const err = new Error('Item not found');
         err.statusCode = 404;
         throw err;

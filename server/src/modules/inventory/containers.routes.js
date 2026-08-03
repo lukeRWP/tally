@@ -101,6 +101,16 @@ module.exports = function containersRoutes({ app, db, logger }) {
       // Resolve property from the area in body
       const propertyId = await AreasService.getPropertyIdForArea(value.areaId);
       if (!propertyId) return error(res, 'Area not found', 404);
+      // If nesting under a parent, it must be a LIVE container in the SAME area
+      // (a container's area always equals its parent's). Blocks cross-area /
+      // cross-property nesting and nesting under a recycled container.
+      if (value.parentContainerId != null) {
+        const parentAreaId = await ContainersService.getActiveAreaId(value.parentContainerId);
+        if (parentAreaId == null) return error(res, 'Parent container not found', 404);
+        if (String(parentAreaId) !== String(value.areaId)) {
+          return error(res, 'Parent container must be in the same area', 400);
+        }
+      }
       req.params.propertyId = propertyId;
       next();
     },

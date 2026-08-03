@@ -211,6 +211,18 @@ const ItemsService = {
 
   async softDelete(id, userId) {
     const propertyId = await ItemsService.getPropertyIdForItem(id);
+    // Block deleting an item that is currently lent out — otherwise the open
+    // loan record is orphaned and then destroyed when the item is purged after
+    // 30 days (the recycle bin loses the lending history silently).
+    const openLoan = await _db.query(
+      'SELECT 1 FROM TALLY.item_lending WHERE ITEM_ID = ? AND RETURNED_AT IS NULL LIMIT 1',
+      [id]
+    );
+    if (openLoan.length) {
+      const err = new Error('Return this item before deleting it');
+      err.statusCode = 409;
+      throw err;
+    }
     await _db.query(
       "UPDATE TALLY.items SET DELETED_AT = NOW(), STATUS = 'removed' WHERE ID = ?",
       [id]
@@ -398,9 +410,16 @@ const ItemsService = {
        JOIN TALLY.property_members pm ON a.PROPERTY_ID = pm.PROPERTY_ID
        WHERE i.DELETED_AT IS NOT NULL
          AND i.DELETED_AT < DATE_SUB(NOW(), INTERVAL 30 DAY)
-         AND pm.USER_ID = ? AND pm.ROLE = 'owner'`,
+         AND pm.USER_ID = ? AND pm.ROLE = 'owner'
+         AND NOT EXISTS (
+           SELECT 1 FROM TALLY.item_lending il
+           WHERE il.ITEM_ID = i.ID AND il.RETURNED_AT IS NULL
+         )`,
       [userId]
     );
+    // Items with an open loan are skipped above so the purge can't destroy an
+    // active loan record (defense in depth — softDelete already blocks
+    // deleting a lent item, but pre-existing recycled rows may still have one).
     for (const row of rows) {
       await ItemsService.permanentDelete(row.ID);
     }
