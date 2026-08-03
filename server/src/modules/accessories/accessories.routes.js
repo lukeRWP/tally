@@ -46,6 +46,15 @@ module.exports = function accessoriesRoutes({ app, db, logger }) {
       if (validationError) {
         return error(res, 'Validation failed', 422, validationError.details.map(d => d.message));
       }
+      // The accessory must live in the SAME property as the source item.
+      // Without this, an owner/editor of their own item could link a victim
+      // item ID from another household and then read its name/QR/condition
+      // back via GET .../item/:itemId (getForItem JOINs items on ACCESSORY_ID).
+      // Mirrors the same-property guard on item move (items.routes.js).
+      const accessoryPropertyId = await ItemsService.getPropertyIdForItem(value.accessoryId);
+      if (!accessoryPropertyId || String(accessoryPropertyId) !== String(req.params.propertyId)) {
+        return error(res, 'Accessory must be in the same property', 400);
+      }
       await AccessoriesService.link(req.params.itemId, value.accessoryId);
       success(res, null, 'Accessory linked', 201);
     }

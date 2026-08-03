@@ -87,8 +87,13 @@ const AuditService = {
       container: 'SELECT a.PROPERTY_ID FROM TALLY.containers c JOIN TALLY.areas a ON c.AREA_ID = a.ID WHERE c.ID = ?',
       item: 'SELECT a.PROPERTY_ID FROM TALLY.items i JOIN TALLY.containers c ON i.CONTAINER_ID = c.ID JOIN TALLY.areas a ON c.AREA_ID = a.ID WHERE i.ID = ?',
     };
+    // Guard on `typeof === 'string'`, not just truthiness: entityType is
+    // sometimes a raw route param, and a prototype-chain key like '__proto__'
+    // or 'constructor' would make `queries[entityType]` resolve to a truthy
+    // inherited value (Object.prototype / a function) that then reaches
+    // db.query() as a non-string. Only the four real entries are strings.
     const sql = queries[entityType];
-    if (!sql) return null;
+    if (typeof sql !== 'string') return null;
     const rows = await _db.query(sql, [entityId]);
     return rows[0]?.PROPERTY_ID || null;
   },

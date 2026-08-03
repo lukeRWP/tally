@@ -2,6 +2,7 @@ import { Package, Search, Plus, XCircle, ExternalLink, ShoppingCart } from 'luci
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { safeExternalUrl } from '@/lib/utils';
 
 interface RetailLink {
   retailer: string;
@@ -101,7 +102,7 @@ export function ScanResult({
             {retailLinks.slice(0, 4).map((link, i) => (
               <a
                 key={i}
-                href={link.url}
+                href={safeExternalUrl(link.url)}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="flex items-center gap-1 px-2 py-1 rounded-[var(--radius-sm)] border border-[var(--color-border)] bg-[var(--color-elevated)] text-[10px] text-[var(--color-text-secondary)] hover:text-[var(--color-primary)] hover:border-[var(--color-primary)] transition-colors"
