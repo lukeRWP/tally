@@ -213,20 +213,26 @@ const ItemsService = {
     const propertyId = await ItemsService.getPropertyIdForItem(id);
     // Block deleting an item that is currently lent out — otherwise the open
     // loan record is orphaned and then destroyed when the item is purged after
-    // 30 days (the recycle bin loses the lending history silently).
-    const openLoan = await _db.query(
-      'SELECT 1 FROM TALLY.item_lending WHERE ITEM_ID = ? AND RETURNED_AT IS NULL LIMIT 1',
-      [id]
-    );
-    if (openLoan.length) {
-      const err = new Error('Return this item before deleting it');
-      err.statusCode = 409;
-      throw err;
-    }
-    await _db.query(
-      "UPDATE TALLY.items SET DELETED_AT = NOW(), STATUS = 'removed' WHERE ID = ?",
-      [id]
-    );
+    // 30 days. The lock + open-loan check + delete run in ONE transaction so a
+    // concurrent lend() (which also locks the item row FOR UPDATE) can't slip
+    // an open loan in between our check and our delete — the two serialize:
+    // whichever commits first, the other sees it (409 here, or 404 in lend).
+    await _db.withTransaction(async (tx) => {
+      await tx.query('SELECT ID FROM TALLY.items WHERE ID = ? FOR UPDATE', [id]);
+      const openLoan = await tx.query(
+        'SELECT 1 FROM TALLY.item_lending WHERE ITEM_ID = ? AND RETURNED_AT IS NULL LIMIT 1',
+        [id]
+      );
+      if (openLoan.length) {
+        const err = new Error('Return this item before deleting it');
+        err.statusCode = 409;
+        throw err;
+      }
+      await tx.query(
+        "UPDATE TALLY.items SET DELETED_AT = NOW(), STATUS = 'removed' WHERE ID = ?",
+        [id]
+      );
+    });
     AuditService.logChange(userId, 'item', id, 'deleted', {}, propertyId);
   },
 

@@ -230,8 +230,13 @@ const ContainersService = {
           throw err;
         }
 
+        // Parent must be a LIVE container in a LIVE area (join areas — checking
+        // only the container's DELETED_AT would let a "live container in a dead
+        // area" slip through if that invariant ever loosened).
         const parentRows = await tx.query(
-          'SELECT AREA_ID FROM TALLY.containers WHERE ID = ? AND DELETED_AT IS NULL',
+          `SELECT c.AREA_ID FROM TALLY.containers c
+           JOIN TALLY.areas a ON c.AREA_ID = a.ID
+           WHERE c.ID = ? AND c.DELETED_AT IS NULL AND a.DELETED_AT IS NULL`,
           [newParentContainerId]
         );
         if (!parentRows.length) {
@@ -246,6 +251,20 @@ const ContainersService = {
           throw err;
         }
         effectiveAreaId = parentAreaId;
+      } else if (newAreaId !== undefined) {
+        // Root move into a specific area — that area must be LIVE, or the
+        // container (and its whole subtree, via the AREA_ID cascade below)
+        // would be planted in a soft-deleted area: phantom inventory that's
+        // hidden from area navigation but still surfaces in search/reports.
+        const areaRows = await tx.query(
+          'SELECT ID FROM TALLY.areas WHERE ID = ? AND DELETED_AT IS NULL',
+          [newAreaId]
+        );
+        if (!areaRows.length) {
+          const err = new Error('Destination area not found');
+          err.statusCode = 404;
+          throw err;
+        }
       }
 
       const fields = ['PARENT_CONTAINER_ID = ?'];

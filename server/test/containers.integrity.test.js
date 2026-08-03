@@ -18,7 +18,7 @@ test('move locks rows, re-checks the cycle in-tx, and cascades the parent-derive
     sqls.push({ s: sql.replace(/\s+/g, ' ').trim(), p: params });
     if (/FROM TALLY\.containers WHERE ID IN .* FOR UPDATE/i.test(sql)) return params.map((id) => ({ ID: id }));
     if (/container_paths WHERE ANCESTOR_ID = \? AND DESCENDANT_ID = \?/i.test(sql)) return []; // no cycle
-    if (/SELECT AREA_ID FROM TALLY\.containers WHERE ID = \? AND DELETED_AT IS NULL/i.test(sql)) return [{ AREA_ID: 7 }];
+    if (/SELECT c\.AREA_ID FROM TALLY\.containers c/i.test(sql)) return [{ AREA_ID: 7 }];
     if (/SELECT a\.PROPERTY_ID/i.test(sql)) return [{ PROPERTY_ID: 1 }];
     return [];
   });
@@ -38,7 +38,7 @@ test('move rejects an areaId that disagrees with the destination parent (400)', 
   const db = txDb((sql, params) => {
     if (/FROM TALLY\.containers WHERE ID IN .* FOR UPDATE/i.test(sql)) return params.map((id) => ({ ID: id }));
     if (/container_paths WHERE ANCESTOR_ID = \? AND DESCENDANT_ID = \?/i.test(sql)) return [];
-    if (/SELECT AREA_ID FROM TALLY\.containers WHERE ID = \? AND DELETED_AT IS NULL/i.test(sql)) return [{ AREA_ID: 7 }];
+    if (/SELECT c\.AREA_ID FROM TALLY\.containers c/i.test(sql)) return [{ AREA_ID: 7 }];
     return [];
   });
   initAudit();
@@ -61,6 +61,18 @@ test('move into itself is rejected (400)', async () => {
   initAudit();
   Containers.init({ db: txDb(() => []), logger: noop });
   await assert.rejects(() => Containers.move(5, 5, undefined, 42), (e) => e.statusCode === 400);
+});
+
+test('root move into a soft-deleted area is rejected (404)', async () => {
+  // parentContainerId null + a target areaId that resolves to no LIVE area row.
+  const db = txDb((sql, params) => {
+    if (/FROM TALLY\.containers WHERE ID IN .* FOR UPDATE/i.test(sql)) return params.map((id) => ({ ID: id }));
+    if (/SELECT ID FROM TALLY\.areas WHERE ID = \? AND DELETED_AT IS NULL/i.test(sql)) return []; // area not live
+    return [];
+  });
+  initAudit();
+  Containers.init({ db, logger: noop });
+  await assert.rejects(() => Containers.move(5, null, 9, 42), (e) => e.statusCode === 404);
 });
 
 // ── getActiveAreaId — the phantom-container guard ───────────────────────────
