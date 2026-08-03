@@ -1,5 +1,5 @@
 const path = require('path');
-const { v4: uuidv4 } = require('uuid');
+const { randomUUID } = require('node:crypto');
 const sharp = require('sharp');
 const storage = require('../../infrastructure/storage');
 const { sniffMime } = require('../../utils/fileType');
@@ -73,7 +73,7 @@ const ConditionService = {
       throw err;
     }
 
-    const uuid = uuidv4();
+    const uuid = randomUUID();
     const key = `items/${itemId}/conditions/${uuid}-${safeName(photoFile.originalname)}`;
 
     // Upload original photo to MinIO with the server-derived content type
