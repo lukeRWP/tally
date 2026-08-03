@@ -106,14 +106,9 @@ const ReportsService = {
         currentValue = parseFloat(row.CURRENT_VALUE);
       }
 
-      let photoUrl = null;
-      if (row.LATEST_PHOTO_KEY) {
-        try {
-          photoUrl = await storage.getPresignedUrl(row.LATEST_PHOTO_KEY, { inline: true });
-        } catch (err) {
-          _logger.warn('Failed to get presigned URL for condition photo', { key: row.LATEST_PHOTO_KEY, error: err.message });
-        }
-      }
+      // (Removed a per-item presigned-URL call here — neither the PDF nor the
+      // CSV output ever read the resulting photoUrl, so it was pure dead work:
+      // one sequential S3 sign per row on every insurance report.)
 
       items.push({
         itemId: row.ITEM_ID,
@@ -125,7 +120,6 @@ const ReportsService = {
         condition: row.LATEST_CONDITION || row.CONDITION || null,
         areaName: row.AREA_NAME,
         containerName: row.CONTAINER_NAME,
-        photoUrl,
       });
     }
 
