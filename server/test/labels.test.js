@@ -1,6 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const Labels = require('../src/modules/labels/labels.service');
+const schema = require('../src/modules/labels/labels.schema');
 
 // Same fakeDb pattern as lending.test.js: a scriptable query() so we can both
 // capture the SQL/params and script the returned rows without a real DB.
@@ -57,4 +58,23 @@ test('resolveCode rejects a malformed code without touching the db', async () =>
   const res = await Labels.resolveCode('not-a-code', 42);
   assert.equal(res.exists, false);
   assert.equal(queried, false, 'no db query for an unparseable code');
+});
+
+// ── generateLabels schema — preset field ─────────────────────────────────
+
+test('generateLabels accepts a preset and defaults to small', () => {
+  const ok = schema.generateLabels.validate({ entityType: 'item', entityIds: [1] });
+  assert.equal(ok.error, undefined);
+  assert.equal(ok.value.preset, 'small');
+  assert.equal(schema.generateLabels.validate({ entityType: 'container', entityIds: [1], preset: 'medium' }).error, undefined);
+});
+
+test('generateLabels rejects an unknown preset', () => {
+  assert.ok(schema.generateLabels.validate({ entityType: 'item', entityIds: [1], preset: 'giant' }).error);
+});
+
+test('generateLabels rejects large for items (container/area only)', () => {
+  assert.ok(schema.generateLabels.validate({ entityType: 'item', entityIds: [1], preset: 'large' }).error);
+  assert.equal(schema.generateLabels.validate({ entityType: 'container', entityIds: [1], preset: 'large' }).error, undefined);
+  assert.equal(schema.generateLabels.validate({ entityType: 'area', entityIds: [1], preset: 'large' }).error, undefined);
 });
