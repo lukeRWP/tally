@@ -122,52 +122,49 @@ const AreasService = {
   async cascadeDelete(areaId, userId, executor = _db) {
     const propertyId = await AreasService.getPropertyIdForArea(areaId, executor);
 
-    // 1. Find all containers in this area
-    const containers = await executor.query(
-      'SELECT ID FROM TALLY.containers WHERE AREA_ID = ? AND DELETED_AT IS NULL',
+    // Set-based cascade (was a per-container × per-item loop issuing thousands
+    // of statements for a large area). Every container in an area carries that
+    // AREA_ID (denormalized across the subtree), so a single AREA_ID predicate
+    // reaches the whole area — no per-row iteration needed.
+
+    // 1. Return any open loans so a later purge can't destroy the loan record.
+    await executor.query(
+      `UPDATE TALLY.item_lending SET RETURNED_AT = NOW()
+       WHERE RETURNED_AT IS NULL AND ITEM_ID IN (
+         SELECT i.ID FROM TALLY.items i
+         JOIN TALLY.containers c ON i.CONTAINER_ID = c.ID
+         WHERE c.AREA_ID = ? AND i.DELETED_AT IS NULL
+       )`,
       [areaId]
     );
 
-    // 2. For each container, soft-delete all items inside and clean up
-    for (const container of containers) {
-      const items = await executor.query(
-        'SELECT ID FROM TALLY.items WHERE CONTAINER_ID = ? AND DELETED_AT IS NULL',
-        [container.ID]
-      );
+    // 2. Soft-delete every item in the area's containers.
+    await executor.query(
+      `UPDATE TALLY.items SET DELETED_AT = NOW(), STATUS = 'removed'
+       WHERE DELETED_AT IS NULL AND CONTAINER_ID IN (
+         SELECT ID FROM TALLY.containers WHERE AREA_ID = ?
+       )`,
+      [areaId]
+    );
 
-      for (const item of items) {
-        // Return active lending
-        await executor.query(
-          'UPDATE TALLY.item_lending SET RETURNED_AT = NOW() WHERE ITEM_ID = ? AND RETURNED_AT IS NULL',
-          [item.ID]
-        );
-        // Soft-delete the item
-        await executor.query(
-          "UPDATE TALLY.items SET DELETED_AT = NOW(), STATUS = 'removed' WHERE ID = ?",
-          [item.ID]
-        );
-      }
+    // 3. Soft-delete every container in the area. Closure paths are LEFT
+    // INTACT so the subtree stays restorable — mirroring the #75 container
+    // softDelete fix. (Previously this DELETEd container_paths during a SOFT
+    // delete, leaving descendants phantom and the subtree unrestorable, and
+    // could orphan a container whose parent lived in another area. Closure
+    // destruction belongs to permanent delete only.)
+    await executor.query(
+      'UPDATE TALLY.containers SET DELETED_AT = NOW() WHERE DELETED_AT IS NULL AND AREA_ID = ?',
+      [areaId]
+    );
 
-      // Remove closure table entries for this container
-      await executor.query(
-        'DELETE FROM TALLY.container_paths WHERE ANCESTOR_ID = ? OR DESCENDANT_ID = ?',
-        [container.ID, container.ID]
-      );
-
-      // Soft-delete the container
-      await executor.query(
-        'UPDATE TALLY.containers SET DELETED_AT = NOW() WHERE ID = ?',
-        [container.ID]
-      );
-    }
-
-    // 3. Soft-delete the area
+    // 4. Soft-delete the area.
     await executor.query(
       'UPDATE TALLY.areas SET DELETED_AT = NOW() WHERE ID = ?',
       [areaId]
     );
 
-    // 4. Audit
+    // 5. Audit
     AuditService.logChange(userId, 'area', areaId, 'deleted', {}, propertyId);
   },
 
