@@ -46,7 +46,7 @@ const ConditionService = {
 
   async getByItem(itemId) {
     const rows = await _db.query(
-      `SELECT cs.*, u.NAME AS RECORDED_BY_NAME
+      `SELECT cs.*, u.DISPLAY_NAME AS RECORDED_BY_NAME
        FROM TALLY.condition_snapshots cs
        LEFT JOIN TALLY.users u ON cs.RECORDED_BY = u.ID
        WHERE cs.ITEM_ID = ?
@@ -101,7 +101,7 @@ const ConditionService = {
 
     // Fetch and return the new snapshot with presigned URL
     const rows = await _db.query(
-      `SELECT cs.*, u.NAME AS RECORDED_BY_NAME
+      `SELECT cs.*, u.DISPLAY_NAME AS RECORDED_BY_NAME
        FROM TALLY.condition_snapshots cs
        LEFT JOIN TALLY.users u ON cs.RECORDED_BY = u.ID
        WHERE cs.ID = ?`,

@@ -379,7 +379,7 @@ This allows rapid relocation of many items without navigating away from the scan
 
 - Soft-deleted items are retained for 30 days before permanent purge.
 - `GET /api/items/_x_/deleted` lists all soft-deleted items for a property.
-- `POST /api/items/_y_/:id/restore` recovers a soft-deleted item.
+- `PATCH /api/items/_p_/:itemId/restore` recovers a soft-deleted item.
 - `DELETE /api/items/_d_/:id/purge` permanently removes a soft-deleted item immediately.
 - Automatic purge of items older than 30 days is handled server-side.
 
