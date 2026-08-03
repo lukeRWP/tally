@@ -84,6 +84,7 @@ export function useLendItem() {
       qc.invalidateQueries({ queryKey: queryKeys.lending.byItem(vars.itemId) });
       qc.invalidateQueries({ queryKey: queryKeys.lending.active(vars.itemId) });
       qc.invalidateQueries({ queryKey: queryKeys.items.detail(vars.itemId) });
+      qc.invalidateQueries({ queryKey: queryKeys.items.all }); // STATUS changed → list/search/badges
     },
   });
 }
@@ -97,6 +98,7 @@ export function useReturnItem() {
       qc.invalidateQueries({ queryKey: queryKeys.lending.byItem(vars.itemId) });
       qc.invalidateQueries({ queryKey: queryKeys.lending.active(vars.itemId) });
       qc.invalidateQueries({ queryKey: queryKeys.items.detail(vars.itemId) });
+      qc.invalidateQueries({ queryKey: queryKeys.items.all }); // STATUS changed → list/search/badges
     },
   });
 }

@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { api, getCsrfToken } from '@/lib/api';
+import { api, getCsrfToken, parseEnvelope } from '@/lib/api';
 import { queryKeys } from '@/lib/query-client';
 import type { ItemFile, ConditionSnapshot } from '@/types/files';
 
@@ -39,11 +39,7 @@ export function useUploadFile() {
         headers: { ...(csrf ? { 'X-CSRF-Token': csrf } : {}) },
         body: formData,
       });
-      const json = await res.json();
-      if (!res.ok || !json.success) {
-        throw new Error(json.message || 'Upload failed');
-      }
-      return json.data as ItemFile;
+      return parseEnvelope<ItemFile>(res);
     },
     onSuccess: (_: unknown, vars: { itemId: number; file: File; fileType: string }) => {
       qc.invalidateQueries({ queryKey: queryKeys.files.byItem(vars.itemId) });
@@ -101,14 +97,14 @@ export function useCreateCondition() {
         headers: { ...(csrf ? { 'X-CSRF-Token': csrf } : {}) },
         body: formData,
       });
-      const json = await res.json();
-      if (!res.ok || !json.success) {
-        throw new Error(json.message || 'Failed to record condition');
-      }
-      return json.data as ConditionSnapshot;
+      return parseEnvelope<ConditionSnapshot>(res);
     },
     onSuccess: (_: unknown, vars: { itemId: number; condition: string; notes?: string; photo?: File }) => {
       qc.invalidateQueries({ queryKey: queryKeys.conditions.byItem(vars.itemId) });
+      // A snapshot also updates the item's CONDITION, so refresh the item detail
+      // + lists (was left stale on the same page).
+      qc.invalidateQueries({ queryKey: queryKeys.items.detail(vars.itemId) });
+      qc.invalidateQueries({ queryKey: queryKeys.items.all });
     },
   });
 }

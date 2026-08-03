@@ -34,8 +34,16 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     headers,
   });
 
-  // Guard against non-JSON responses (e.g. a 502/504 HTML page from the proxy),
-  // which would otherwise throw an opaque SyntaxError.
+  return parseEnvelope<T>(res);
+}
+
+/**
+ * Reads a { success, data, message } envelope off a Response, guarding against
+ * non-JSON bodies (e.g. a 502/504 HTML page from the proxy) that would
+ * otherwise throw an opaque SyntaxError. Exported so raw-fetch call sites
+ * (multipart uploads, blob downloads) share the same guard as request().
+ */
+export async function parseEnvelope<T>(res: Response): Promise<T> {
   let json: { success?: boolean; message?: string; data?: T } | null = null;
   try {
     json = await res.json();

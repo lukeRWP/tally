@@ -80,7 +80,13 @@ export function CameraScanner({ onBarcodeScanned, onClose, isActive }: CameraSca
         { fps: 15, qrbox: { width: qrboxSize, height: Math.floor(qrboxSize * 0.6) } },
         (text: string) => {
           const now = Date.now();
-          if (text === lastScannedRef.current && now - lastScannedTimeRef.current < 2000) return;
+          if (text === lastScannedRef.current && now - lastScannedTimeRef.current < 2000) {
+            // Refresh the timestamp while the same code stays in view, so a
+            // continuously-visible code fires exactly once (not every 2s — which
+            // in move-mode re-moved the same item repeatedly).
+            lastScannedTimeRef.current = now;
+            return;
+          }
           lastScannedRef.current = text;
           lastScannedTimeRef.current = now;
           callbackRef.current(text);

@@ -29,11 +29,19 @@ interface AccessoryPickerProps {
 
 export function AccessoryPicker({ itemId, isOpen, onOpenChange }: AccessoryPickerProps) {
   const [query, setQuery] = React.useState('');
-  const { data: results } = useSearchItems(query);
+  // Debounce the search so we don't fire a request on every keystroke (and skip
+  // 1-char queries, which match too broadly and defeat the FULLTEXT index).
+  const [debouncedQuery, setDebouncedQuery] = React.useState('');
+  React.useEffect(() => {
+    const timer = setTimeout(() => setDebouncedQuery(query.trim().length >= 2 ? query : ''), 300);
+    return () => clearTimeout(timer);
+  }, [query]);
+  const { data: results } = useSearchItems(debouncedQuery);
   const linkAccessory = useLinkAccessory();
 
   function reset() {
     setQuery('');
+    setDebouncedQuery('');
   }
 
   // Filter out the current item from results

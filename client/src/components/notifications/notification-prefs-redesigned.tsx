@@ -59,7 +59,9 @@ export function NotificationPrefsRedesigned() {
   return (
     <div className="flex flex-col gap-3">
       {NOTIFICATION_TYPES.map(({ type, label }) => {
-        const enabled = prefs ? (prefs[type] ?? true) : true;
+        // Notifications are opt-in (server default OFF), so default to false —
+        // also the safe fallback if prefs failed to load (was defaulting ON).
+        const enabled = prefs?.[type] ?? false;
         return (
           <div key={type} className="flex items-center justify-between gap-3">
             <span className="text-sm text-[var(--color-text)]">{label}</span>
