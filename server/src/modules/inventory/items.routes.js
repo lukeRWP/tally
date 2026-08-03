@@ -203,4 +203,19 @@ module.exports = function itemsRoutes({ app, db, logger }) {
       success(res, null, 'Item deleted');
     }
   );
+
+  // PATCH /api/items/_p_/:itemId/restore — recover a soft-deleted item from the
+  // recycle bin. resolvePropertyFromItem works on soft-deleted rows (its
+  // property lookup doesn't filter DELETED_AT), same as the /permanent route.
+  app.patch(
+    '/api/items/_p_/:itemId/restore',
+    app.locals.requireAuth,
+    resolvePropertyFromItem,
+    app.locals.resolvePropertyRole,
+    app.locals.requireRole('owner'),
+    async (req, res) => {
+      const item = await ItemsService.restore(req.params.itemId, req.user.id);
+      success(res, { item }, 'Item restored');
+    }
+  );
 };
