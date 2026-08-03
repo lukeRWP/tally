@@ -18,7 +18,7 @@ test('lend rejects a second active loan on the same item (409)', async () => {
     // open loan, both inside the transaction. Mock the item as existing and an
     // open loan as present so the 409 path is exercised.
     db: fakeDb((sql) => {
-      if (/FROM TALLY\.items WHERE ID = \? FOR UPDATE/.test(sql)) return [{ ID: 5 }];
+      if (/FROM TALLY\.items WHERE ID = \? AND DELETED_AT IS NULL FOR UPDATE/.test(sql)) return [{ ID: 5 }];
       if (/WHERE ITEM_ID = \? AND RETURNED_AT IS NULL/.test(sql)) return [{ ID: 1, ITEM_ID: 5 }];
       return [];
     }),
@@ -31,7 +31,7 @@ test('lend inserts and marks the item lent when it is free', async () => {
   let statusSet = false;
   Lending.init({
     db: fakeDb((sql) => {
-      if (/FROM TALLY\.items WHERE ID = \? FOR UPDATE/.test(sql)) return [{ ID: 5 }];
+      if (/FROM TALLY\.items WHERE ID = \? AND DELETED_AT IS NULL FOR UPDATE/.test(sql)) return [{ ID: 5 }];
       if (/SELECT 1 FROM TALLY\.item_lending WHERE ITEM_ID = \? AND RETURNED_AT IS NULL/.test(sql)) return []; // no open loan
       if (/INSERT INTO TALLY\.item_lending/.test(sql)) return { insertId: 42 };
       if (/UPDATE TALLY\.items SET STATUS = 'lent'/.test(sql)) { statusSet = true; return { affectedRows: 1 }; }
@@ -43,6 +43,17 @@ test('lend inserts and marks the item lent when it is free', async () => {
   const result = await Lending.lend(5, { lentTo: 'Bob' }, 1);
   assert.ok(result && result.id === 42 && result.itemId === 5);
   assert.equal(statusSet, true);
+});
+
+test('lend refuses a soft-deleted (recycled) item — 404', async () => {
+  // The lock query filters DELETED_AT IS NULL, so a recycled item returns no
+  // row → 404. This stops a loan being created on an item that will be purged
+  // (which would then destroy the loan record).
+  Lending.init({
+    db: fakeDb(() => []), // no live item row for any query
+    logger,
+  });
+  await assert.rejects(() => Lending.lend(5, { lentTo: 'Bob' }, 1), (e) => e.statusCode === 404);
 });
 
 test('return rejects a double-return (409, affectedRows 0)', async () => {

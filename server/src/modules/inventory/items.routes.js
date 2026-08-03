@@ -133,6 +133,12 @@ module.exports = function itemsRoutes({ app, db, logger }) {
       // Resolve property from the container in body
       const propertyId = await ContainersService.getPropertyIdForContainer(value.containerId);
       if (!propertyId) return error(res, 'Container not found', 404);
+      // The target container must be LIVE — creating an item inside a recycled
+      // container makes phantom inventory (active row hidden under a deleted
+      // parent, invisible in navigation but still counted in reports/search).
+      if (await ContainersService.getActiveAreaId(value.containerId) == null) {
+        return error(res, 'Container not found', 404);
+      }
       req.params.propertyId = propertyId;
       next();
     },
@@ -184,6 +190,11 @@ module.exports = function itemsRoutes({ app, db, logger }) {
       if (!destPropertyId || String(destPropertyId) !== String(srcPropertyId)) {
         return error(res, 'Destination container must be in the same property', 400);
       }
+      // ...and it must be LIVE — moving an item into a recycled container would
+      // hide it (phantom inventory), the same trap as create.
+      if (await ContainersService.getActiveAreaId(value.containerId) == null) {
+        return error(res, 'Destination container not found', 404);
+      }
       const item = await ItemsService.move(req.params.itemId, value.containerId, req.user.id);
       success(res, { item });
     }
@@ -214,6 +225,15 @@ module.exports = function itemsRoutes({ app, db, logger }) {
     app.locals.resolvePropertyRole,
     app.locals.requireRole('owner'),
     async (req, res) => {
+      // Don't restore an item into a still-recycled container — it would become
+      // phantom inventory (active row hidden under a deleted parent). Require
+      // the container be restored first. (Completes the create/move/restore
+      // phantom-prevention set.)
+      const rows = await db.query('SELECT CONTAINER_ID FROM TALLY.items WHERE ID = ?', [req.params.itemId]);
+      const containerId = rows[0]?.CONTAINER_ID;
+      if (containerId && (await ContainersService.getActiveAreaId(containerId)) == null) {
+        return error(res, 'Restore the container this item was in before restoring the item', 409);
+      }
       const item = await ItemsService.restore(req.params.itemId, req.user.id);
       success(res, { item }, 'Item restored');
     }

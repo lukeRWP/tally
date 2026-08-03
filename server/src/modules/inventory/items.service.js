@@ -211,10 +211,28 @@ const ItemsService = {
 
   async softDelete(id, userId) {
     const propertyId = await ItemsService.getPropertyIdForItem(id);
-    await _db.query(
-      "UPDATE TALLY.items SET DELETED_AT = NOW(), STATUS = 'removed' WHERE ID = ?",
-      [id]
-    );
+    // Block deleting an item that is currently lent out — otherwise the open
+    // loan record is orphaned and then destroyed when the item is purged after
+    // 30 days. The lock + open-loan check + delete run in ONE transaction so a
+    // concurrent lend() (which also locks the item row FOR UPDATE) can't slip
+    // an open loan in between our check and our delete — the two serialize:
+    // whichever commits first, the other sees it (409 here, or 404 in lend).
+    await _db.withTransaction(async (tx) => {
+      await tx.query('SELECT ID FROM TALLY.items WHERE ID = ? FOR UPDATE', [id]);
+      const openLoan = await tx.query(
+        'SELECT 1 FROM TALLY.item_lending WHERE ITEM_ID = ? AND RETURNED_AT IS NULL LIMIT 1',
+        [id]
+      );
+      if (openLoan.length) {
+        const err = new Error('Return this item before deleting it');
+        err.statusCode = 409;
+        throw err;
+      }
+      await tx.query(
+        "UPDATE TALLY.items SET DELETED_AT = NOW(), STATUS = 'removed' WHERE ID = ?",
+        [id]
+      );
+    });
     AuditService.logChange(userId, 'item', id, 'deleted', {}, propertyId);
   },
 
@@ -398,9 +416,16 @@ const ItemsService = {
        JOIN TALLY.property_members pm ON a.PROPERTY_ID = pm.PROPERTY_ID
        WHERE i.DELETED_AT IS NOT NULL
          AND i.DELETED_AT < DATE_SUB(NOW(), INTERVAL 30 DAY)
-         AND pm.USER_ID = ? AND pm.ROLE = 'owner'`,
+         AND pm.USER_ID = ? AND pm.ROLE = 'owner'
+         AND NOT EXISTS (
+           SELECT 1 FROM TALLY.item_lending il
+           WHERE il.ITEM_ID = i.ID AND il.RETURNED_AT IS NULL
+         )`,
       [userId]
     );
+    // Items with an open loan are skipped above so the purge can't destroy an
+    // active loan record (defense in depth — softDelete already blocks
+    // deleting a lent item, but pre-existing recycled rows may still have one).
     for (const row of rows) {
       await ItemsService.permanentDelete(row.ID);
     }
