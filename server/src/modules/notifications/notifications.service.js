@@ -153,8 +153,14 @@ const NotificationsService = {
   // ── Check Date Notifications ────────────────────────────────────────────────
 
   async checkDateNotifications(userId) {
+    // Each section — and each row within it — is isolated in its own try/catch
+    // so a single failed insert can never abort the rest of the pass. A prior
+    // single outer try/catch meant the first failure (e.g. an ENTITY_TYPE the
+    // column ENUM rejected) swallowed the entire run, including the unrelated
+    // overdue-lending checks below.
+
+    // ── 1. Upcoming custom dates (within 30 days) ──────────────────────────
     try {
-      // ── 1. Upcoming custom dates (within 30 days) ──────────────────────────
       const upcomingDates = await _db.query(
         `SELECT id.ID, id.ITEM_ID, id.DATE_TYPE, id.DATE_VALUE, i.NAME AS ITEM_NAME
          FROM TALLY.item_dates id
@@ -168,33 +174,41 @@ const NotificationsService = {
       );
 
       for (const row of upcomingDates) {
-        // Check for a recent duplicate notification (within last 24 hours)
-        const existing = await _db.query(
-          `SELECT ID FROM TALLY.notifications
-           WHERE USER_ID = ?
-             AND TYPE = 'custom_date'
-             AND ENTITY_TYPE = 'item_date'
-             AND ENTITY_ID = ?
-             AND CREATED_AT > DATE_SUB(NOW(), INTERVAL 24 HOUR)
-           LIMIT 1`,
-          [userId, row.ID]
-        );
-
-        if (existing.length === 0) {
-          const dateLabel = row.DATE_TYPE || 'Date';
-          const dateStr = new Date(row.DATE_VALUE).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-          await NotificationsService.create(
-            userId,
-            'custom_date',
-            `Upcoming: ${dateLabel}`,
-            `${row.ITEM_NAME} — ${dateLabel} on ${dateStr}`,
-            'item_date',
-            row.ID
+        try {
+          // Check for a recent duplicate notification (within last 24 hours)
+          const existing = await _db.query(
+            `SELECT ID FROM TALLY.notifications
+             WHERE USER_ID = ?
+               AND TYPE = 'custom_date'
+               AND ENTITY_TYPE = 'item_date'
+               AND ENTITY_ID = ?
+               AND CREATED_AT > DATE_SUB(NOW(), INTERVAL 24 HOUR)
+             LIMIT 1`,
+            [userId, row.ID]
           );
+
+          if (existing.length === 0) {
+            const dateLabel = row.DATE_TYPE || 'Date';
+            const dateStr = new Date(row.DATE_VALUE).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+            await NotificationsService.create(
+              userId,
+              'custom_date',
+              `Upcoming: ${dateLabel}`,
+              `${row.ITEM_NAME} — ${dateLabel} on ${dateStr}`,
+              'item_date',
+              row.ID
+            );
+          }
+        } catch (err) {
+          _logger.warn('checkDateNotifications: date row failed', { userId, dateId: row.ID, error: err.message });
         }
       }
+    } catch (err) {
+      _logger.warn('checkDateNotifications: upcoming-dates section failed', { userId, error: err.message });
+    }
 
-      // ── 2. Overdue lendings ────────────────────────────────────────────────
+    // ── 2. Overdue lendings ────────────────────────────────────────────────
+    try {
       const overdueLendings = await _db.query(
         `SELECT il.ID, il.ITEM_ID, il.DUE_AT, il.LENT_TO, i.NAME AS ITEM_NAME
          FROM TALLY.item_lending il
@@ -209,32 +223,36 @@ const NotificationsService = {
       );
 
       for (const row of overdueLendings) {
-        // Check for a recent duplicate notification (within last 24 hours)
-        const existing = await _db.query(
-          `SELECT ID FROM TALLY.notifications
-           WHERE USER_ID = ?
-             AND TYPE = 'lending_due'
-             AND ENTITY_TYPE = 'item_lending'
-             AND ENTITY_ID = ?
-             AND CREATED_AT > DATE_SUB(NOW(), INTERVAL 24 HOUR)
-           LIMIT 1`,
-          [userId, row.ID]
-        );
-
-        if (existing.length === 0) {
-          const dueStr = new Date(row.DUE_AT).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-          await NotificationsService.create(
-            userId,
-            'lending_due',
-            `Overdue: ${row.ITEM_NAME}`,
-            `${row.ITEM_NAME} lent to ${row.LENT_TO} was due ${dueStr}`,
-            'item_lending',
-            row.ID
+        try {
+          // Check for a recent duplicate notification (within last 24 hours)
+          const existing = await _db.query(
+            `SELECT ID FROM TALLY.notifications
+             WHERE USER_ID = ?
+               AND TYPE = 'lending_due'
+               AND ENTITY_TYPE = 'item_lending'
+               AND ENTITY_ID = ?
+               AND CREATED_AT > DATE_SUB(NOW(), INTERVAL 24 HOUR)
+             LIMIT 1`,
+            [userId, row.ID]
           );
+
+          if (existing.length === 0) {
+            const dueStr = new Date(row.DUE_AT).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+            await NotificationsService.create(
+              userId,
+              'lending_due',
+              `Overdue: ${row.ITEM_NAME}`,
+              `${row.ITEM_NAME} lent to ${row.LENT_TO} was due ${dueStr}`,
+              'item_lending',
+              row.ID
+            );
+          }
+        } catch (err) {
+          _logger.warn('checkDateNotifications: lending row failed', { userId, lendingId: row.ID, error: err.message });
         }
       }
     } catch (err) {
-      _logger.warn('checkDateNotifications failed', { userId, error: err.message });
+      _logger.warn('checkDateNotifications: overdue-lendings section failed', { userId, error: err.message });
     }
   },
 };
