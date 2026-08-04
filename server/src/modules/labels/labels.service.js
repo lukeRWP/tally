@@ -97,6 +97,133 @@ const LabelsService = {
     });
   },
 
+  // ── Contents manifest (large) ─────────────────────────────────────────────
+
+  // Layout constants shared by the pagination math and the renderer.
+  _manifestLayout(P) {
+    const pad = 10, headerH = 66, colHdrH = 14, footerH = 18;
+    const rowH = P.row + P.rowGap;
+    const listTop = pad + headerH + colHdrH;
+    const listBottom = P.heightPt - pad - footerH;
+    const rowsPerPage = Math.max(1, Math.floor((listBottom - listTop) / rowH));
+    return { pad, headerH, colHdrH, footerH, rowH, listTop, rowsPerPage };
+  },
+
+  manifestPageCount(rowCount, presetKey) {
+    const { rowsPerPage } = LabelsService._manifestLayout(PRESETS[presetKey]);
+    return Math.max(1, Math.ceil((rowCount || 0) / rowsPerPage));
+  },
+
+  async getManifest(entityType, id, userId) {
+    const [header] = await LabelsService.getEntityData(entityType, [id], userId);
+    if (!header) return null; // not found OR not the caller's — route 404s
+
+    let rows;
+    if (entityType === 'container') {
+      rows = await _db.query(
+        `SELECT i.NAME AS name, i.QUANTITY AS qty
+         FROM TALLY.items i
+         JOIN TALLY.containers c ON i.CONTAINER_ID = c.ID
+         JOIN TALLY.areas a ON c.AREA_ID = a.ID
+         JOIN TALLY.property_members pm ON pm.PROPERTY_ID = a.PROPERTY_ID AND pm.USER_ID = ?
+         WHERE i.CONTAINER_ID = ? AND i.DELETED_AT IS NULL
+         ORDER BY i.NAME`,
+        [userId, id]
+      );
+    } else { // area → its direct containers, qty = # items inside each
+      rows = await _db.query(
+        `SELECT c.NAME AS name,
+                (SELECT COUNT(*) FROM TALLY.items i2 WHERE i2.CONTAINER_ID = c.ID AND i2.DELETED_AT IS NULL) AS qty
+         FROM TALLY.containers c
+         JOIN TALLY.areas a ON c.AREA_ID = a.ID
+         JOIN TALLY.property_members pm ON pm.PROPERTY_ID = a.PROPERTY_ID AND pm.USER_ID = ?
+         WHERE c.AREA_ID = ? AND c.DELETED_AT IS NULL
+         ORDER BY c.NAME`,
+        [userId, id]
+      );
+    }
+    return { header, rows: rows.map(r => ({ name: r.name, qty: Number(r.qty) })) };
+  },
+
+  // One drawing routine for a single manifest — draws its own paginated pages
+  // into an existing doc, calling startNewPage() at the top of each page. Both
+  // the single-manifest and multi-manifest entry points go through this (DRY).
+  async _drawManifest(doc, manifest, presetKey, startNewPage) {
+    const P = PRESETS[presetKey];
+    const W = P.widthPt, H = P.heightPt;
+    const { header, rows } = manifest;
+    const L = LabelsService._manifestLayout(P);
+    const pageCount = LabelsService.manifestPageCount(rows.length, presetKey);
+    const qrBuf = await LabelsService.generateQrBuffer(header.qrCode, P.qrPt * 3);
+    const bannerW = header.parentZone ? P.banner : 0;
+
+    for (let pg = 0; pg < pageCount; pg++) {
+      startNewPage();
+      if (bannerW) LabelsService._verticalBanner(doc, header.parentZone, H, bannerW, 13);
+      const cx = bannerW;
+
+      // Header: QR + inverted title + breadcrumb + code, bottom-bordered.
+      doc.image(qrBuf, cx + L.pad, L.pad, { width: P.qrPt });
+      const hx = cx + L.pad + P.qrPt + 8, hw = W - hx - L.pad;
+      LabelsService._invertedTitle(doc, header.name, hx, L.pad, hw, P.title);
+      doc.fontSize(8).font('Helvetica').fillColor('#333333')
+        .text(header.breadcrumb || '', hx, L.pad + 24, { width: hw, lineBreak: false, ellipsis: true });
+      doc.fontSize(7).font('Courier').fillColor('#666666')
+        .text(String(header.qrCode).toUpperCase(), hx, L.pad + 36, { width: hw, lineBreak: false });
+      doc.save().moveTo(cx + L.pad, L.pad + L.headerH).lineTo(W - L.pad, L.pad + L.headerH)
+        .lineWidth(1.5).strokeColor('#000000').stroke().restore();
+
+      // Column header.
+      doc.fontSize(7).font('Courier').fillColor('#666666')
+        .text('CONTENTS', cx + L.pad, L.pad + L.headerH + 3, { width: 120, lineBreak: false });
+      doc.text('QTY', W - L.pad - 34, L.pad + L.headerH + 3, { width: 34, align: 'right' });
+
+      // Rows for this page.
+      const start = pg * L.rowsPerPage, end = Math.min(start + L.rowsPerPage, rows.length);
+      let ry = L.listTop;
+      for (let r = start; r < end; r++) {
+        if ((r - start) % 2 === 1)
+          doc.save().rect(cx + L.pad, ry - 1, W - cx - L.pad * 2, L.rowH).fill('#f0f0f0').restore();
+        doc.fontSize(P.row).font('Helvetica').fillColor('#000000')
+          .text(rows[r].name, cx + L.pad + 2, ry, { width: W - cx - L.pad * 2 - 38, lineBreak: false, ellipsis: true });
+        doc.font('Courier').fillColor('#000000')
+          .text(String(rows[r].qty), W - L.pad - 34, ry, { width: 30, align: 'right' });
+        ry += L.rowH;
+      }
+
+      // Footer: total count + page x of n.
+      const fy = H - L.pad - L.footerH + 5;
+      doc.save().moveTo(cx + L.pad, fy - 5).lineTo(W - L.pad, fy - 5).lineWidth(1).strokeColor('#000000').stroke().restore();
+      doc.fontSize(8).font('Courier').fillColor('#333333')
+        .text(`${rows.length} item${rows.length === 1 ? '' : 's'}`, cx + L.pad, fy, { width: 120, lineBreak: false });
+      doc.text(`Page ${pg + 1} of ${pageCount}`, W - L.pad - 100, fy, { width: 100, align: 'right' });
+    }
+  },
+
+  // Render one or more manifests into a single PDF (each manifest's own pages,
+  // concatenated). startNewPage() suppresses the first addPage so pdfkit's
+  // implicit first page is reused.
+  async renderManifestBundle(manifests, presetKey) {
+    const P = PRESETS[presetKey];
+    return new Promise((resolve, reject) => {
+      const doc = new PDFDocument({ size: [P.widthPt, P.heightPt], margin: 0 });
+      const bufs = [];
+      doc.on('data', b => bufs.push(b));
+      doc.on('end', () => resolve(Buffer.concat(bufs)));
+      doc.on('error', reject);
+      let first = true;
+      const startNewPage = () => { if (!first) doc.addPage({ size: [P.widthPt, P.heightPt], margin: 0 }); first = false; };
+      (async () => {
+        for (const m of manifests) await LabelsService._drawManifest(doc, m, presetKey, startNewPage);
+        doc.end();
+      })().catch(reject);
+    });
+  },
+
+  async renderManifestPdf(manifest, presetKey) {
+    return LabelsService.renderManifestBundle([manifest], presetKey);
+  },
+
   // ── Code Resolution ─────────────────────────────────────────────────────────
 
   async resolveCode(code, userId) {

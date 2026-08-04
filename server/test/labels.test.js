@@ -118,3 +118,52 @@ test('renderLabelPdf makes one page per entity and is a PDF', async () => {
   assert.ok(med.slice(0, 4).toString() === '%PDF');
   assert.equal(pdfPageCount(med), 1);
 });
+
+// ── Contents manifest (large) ────────────────────────────────────────────
+
+test('manifestPageCount paginates by the large preset row capacity', () => {
+  const n1 = Labels.manifestPageCount(1, 'large');
+  const many = Labels.manifestPageCount(500, 'large');
+  assert.equal(n1, 1);
+  assert.ok(many > 1, 'a long list spans multiple pages');
+  assert.equal(Labels.manifestPageCount(0, 'large'), 1, 'empty manifest is still one page');
+});
+
+test('getManifest is membership-scoped and returns name+qty rows for a container', async () => {
+  let itemSql = '';
+  Labels.init({ db: fakeDb((sql, params) => {
+    if (/FROM TALLY\.containers c/i.test(sql) && /property_members/i.test(sql) && /IN \(/i.test(sql))
+      return [{ ID: 5, NAME: 'Camping Gear', QR_CODE: 'TLY-C-1', AREA_NAME: 'Garage', PROPERTY_NAME: 'Home' }]; // getEntityData header
+    if (/FROM TALLY\.items i/i.test(sql)) { itemSql = sql; return [{ name: 'Tent', qty: 1 }, { name: 'Lantern', qty: 2 }]; }
+    return [];
+  }), logger, config });
+  const m = await Labels.getManifest('container', 5, 42);
+  assert.equal(m.header.name, 'Camping Gear');
+  assert.deepEqual(m.rows, [{ name: 'Tent', qty: 1 }, { name: 'Lantern', qty: 2 }]);
+  assert.match(itemSql, /property_members/i, 'the manifest item query is membership-scoped');
+  assert.match(itemSql, /pm\.USER_ID = \?/i);
+});
+
+test('getManifest returns null for an entity the caller does not own', async () => {
+  Labels.init({ db: fakeDb(() => []), logger, config }); // getEntityData yields no header
+  assert.equal(await Labels.getManifest('container', 999, 42), null);
+});
+
+test('renderManifestPdf produces a PDF (paginated by row count)', async () => {
+  Labels.init({ db: fakeDb(() => []), logger, config });
+  const rows = Array.from({ length: 60 }, (_, i) => ({ name: `Item ${i + 1}`, qty: (i % 3) + 1 }));
+  const buf = await Labels.renderManifestPdf(
+    { header: { name: 'Camping Gear', qrCode: 'TLY-C-1', parentZone: 'Garage', breadcrumb: 'Home' }, rows }, 'large');
+  assert.ok(buf.slice(0, 4).toString() === '%PDF');
+  assert.equal(pdfPageCount(buf), Labels.manifestPageCount(60, 'large'));
+});
+
+test('renderManifestBundle concatenates several manifests into one PDF', async () => {
+  Labels.init({ db: fakeDb(() => []), logger, config });
+  const mk = (n, count) => ({ header: { name: n, qrCode: 'TLY-C-1', parentZone: 'Garage', breadcrumb: 'Home' },
+    rows: Array.from({ length: count }, (_, i) => ({ name: `x${i}`, qty: 1 })) });
+  const buf = await Labels.renderManifestBundle([mk('A', 3), mk('B', 3)], 'large');
+  assert.ok(buf.slice(0, 4).toString() === '%PDF');
+  // Two single-page manifests → two pages total (no blank leading page).
+  assert.equal(pdfPageCount(buf), Labels.manifestPageCount(3, 'large') * 2);
+});
