@@ -45,3 +45,61 @@ test('agentAck requires ok and carries an optional error string', () => {
   assert.equal(schema.agentAck.validate({ ok: false, error: 'media-empty' }).error, undefined);
   assert.ok(schema.agentAck.validate({}).error);
 });
+
+// ── agent auth middleware ────────────────────────────────────────────────────
+
+const crypto = require('crypto');
+const { hashToken, generateToken, requireAgent } = require('../src/modules/print/agent.middleware');
+
+function fakeRes() {
+  return {
+    statusCode: null, body: null,
+    status(c) { this.statusCode = c; return this; },
+    json(b) { this.body = b; return this; },
+  };
+}
+
+test('generateToken is prefixed and hashToken is a stable sha256', () => {
+  const t = generateToken();
+  assert.match(t, /^tp_[0-9a-f]{64}$/);
+  assert.equal(hashToken(t), crypto.createHash('sha256').update(t).digest('hex'));
+  assert.equal(hashToken(t), hashToken(t), 'hashing is deterministic');
+  assert.notEqual(hashToken(t), t, 'the plaintext is never the stored value');
+});
+
+test('requireAgent looks the agent up BY HASH, never by plaintext', async () => {
+  const token = generateToken();
+  let boundParam = null;
+  const db = { query: async (sql, params) => {
+    boundParam = params[0];
+    return [{ ID: 7, PROPERTY_ID: 3, LOADED_MEDIA: 'large', NAME: 'Garage Pi' }];
+  } };
+  const req = { headers: { authorization: `Bearer ${token}` } };
+  const res = fakeRes();
+  let nexted = false;
+  await requireAgent({ db })(req, res, () => { nexted = true; });
+
+  assert.ok(nexted, 'a valid token calls next()');
+  assert.equal(boundParam, hashToken(token), 'the query binds the HASH');
+  assert.notEqual(boundParam, token, 'the plaintext token is never sent to the db');
+  assert.deepEqual(req.agent, { id: 7, propertyId: 3, loadedMedia: 'large', name: 'Garage Pi' });
+});
+
+test('requireAgent rejects a missing, malformed, or unknown token with 401', async () => {
+  const db = { query: async () => [] }; // no agent matches
+  const mw = requireAgent({ db });
+
+  for (const headers of [{}, { authorization: 'Bearer' }, { authorization: 'Basic abc' }]) {
+    const res = fakeRes();
+    let nexted = false;
+    await mw({ headers }, res, () => { nexted = true; });
+    assert.equal(nexted, false, 'malformed auth must not call next()');
+    assert.equal(res.statusCode, 401);
+  }
+
+  const res = fakeRes();
+  let nexted = false;
+  await mw({ headers: { authorization: `Bearer ${generateToken()}` } }, res, () => { nexted = true; });
+  assert.equal(nexted, false, 'an unknown token must not call next()');
+  assert.equal(res.statusCode, 401);
+});
