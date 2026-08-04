@@ -113,7 +113,12 @@ const config = { clientUrl: 'https://tally.example' };
 
 test('resolveProperty is membership-scoped and binds userId first', async () => {
   let sql = '', params = null;
-  PrintService.init({ db: fakeDb((s, p) => { sql = s; params = p; return [{ PROPERTY_ID: 3 }]; }), logger, config });
+  PrintService.init({
+    db: fakeDb((s, p) => {
+      sql = s; params = p;
+      return [{ ENTITY_ID: 5, PROPERTY_ID: 3 }, { ENTITY_ID: 6, PROPERTY_ID: 3 }];
+    }), logger, config,
+  });
   const out = await PrintService.resolveProperty('container', [5, 6], 42);
   assert.deepEqual(out, { propertyId: 3 });
   assert.match(sql, /property_members/i, 'must join property_members');
@@ -126,13 +131,39 @@ test('resolveProperty refuses entities the caller cannot see, and mixed properti
   PrintService.init({ db: fakeDb(() => []), logger, config });
   assert.deepEqual(await PrintService.resolveProperty('item', [999], 42), { error: 'not_found' });
 
-  PrintService.init({ db: fakeDb(() => [{ PROPERTY_ID: 3 }, { PROPERTY_ID: 4 }]), logger, config });
+  PrintService.init({ db: fakeDb(() => [{ ENTITY_ID: 1, PROPERTY_ID: 3 }, { ENTITY_ID: 2, PROPERTY_ID: 4 }]), logger, config });
   assert.deepEqual(await PrintService.resolveProperty('item', [1, 2], 42), { error: 'mixed' });
+});
+
+test('resolveProperty refuses a partially-visible batch instead of silently narrowing it', async () => {
+  // item 5 is visible (property 3); item 999 is foreign/nonexistent and yields no row.
+  PrintService.init({ db: fakeDb(() => [{ ENTITY_ID: 5, PROPERTY_ID: 3 }]), logger, config });
+  assert.deepEqual(await PrintService.resolveProperty('item', [5, 999], 42), { error: 'not_found' });
+});
+
+test('resolveProperty succeeds for a fully-visible multi-id batch', async () => {
+  PrintService.init({
+    db: fakeDb(() => [{ ENTITY_ID: 5, PROPERTY_ID: 3 }, { ENTITY_ID: 6, PROPERTY_ID: 3 }]),
+    logger, config,
+  });
+  assert.deepEqual(await PrintService.resolveProperty('item', [5, 6], 42), { propertyId: 3 });
+});
+
+test('resolveProperty tolerates duplicate ids in the request', async () => {
+  PrintService.init({ db: fakeDb(() => [{ ENTITY_ID: 5, PROPERTY_ID: 3 }]), logger, config });
+  assert.deepEqual(await PrintService.resolveProperty('item', [5, 5], 42), { propertyId: 3 }, 'a duplicate id must not spuriously trip the not_found count check');
+});
+
+test('resolveProperty rejects an empty id array without querying the db', async () => {
+  let queried = false;
+  PrintService.init({ db: fakeDb(() => { queried = true; return []; }), logger, config });
+  assert.deepEqual(await PrintService.resolveProperty('item', [], 42), { error: 'not_found' });
+  assert.equal(queried, false, 'an empty id array must be guarded before any SQL is built/run');
 });
 
 test('createJob queues when the loaded roll matches and holds when it does not', async () => {
   const mk = (loaded) => fakeDb((sql) => {
-    if (/property_members/i.test(sql) && /SELECT DISTINCT/i.test(sql)) return [{ PROPERTY_ID: 3 }];
+    if (/property_members/i.test(sql)) return [{ ENTITY_ID: 5, PROPERTY_ID: 3 }];
     if (/FROM TALLY\.printer_agents/i.test(sql)) return [{ LOADED_MEDIA: loaded }];
     if (/INSERT INTO TALLY\.print_jobs/i.test(sql)) return { insertId: 11 };
     return [];
@@ -151,7 +182,7 @@ test('createJob queues when the loaded roll matches and holds when it does not',
 
 test('createJob queues normally when no agent is registered yet', async () => {
   PrintService.init({ db: fakeDb((sql) => {
-    if (/SELECT DISTINCT/i.test(sql)) return [{ PROPERTY_ID: 3 }];
+    if (/property_members/i.test(sql)) return [{ ENTITY_ID: 1, PROPERTY_ID: 3 }];
     if (/FROM TALLY\.printer_agents/i.test(sql)) return [];      // no agent
     if (/INSERT INTO TALLY\.print_jobs/i.test(sql)) return { insertId: 12 };
     return [];
@@ -169,6 +200,30 @@ test('createJob propagates the not_found error instead of inserting', async () =
   const out = await PrintService.createJob({ entityType: 'item', entityIds: [999], preset: 'small', userId: 42 });
   assert.deepEqual(out, { error: 'not_found' });
   assert.equal(inserted, false, 'an unauthorized entity must never create a job');
+});
+
+test('createJob refuses a partially-visible batch and never inserts', async () => {
+  let inserted = false;
+  PrintService.init({ db: fakeDb((sql) => {
+    if (/INSERT/i.test(sql)) { inserted = true; return { insertId: 1 }; }
+    if (/property_members/i.test(sql)) return [{ ENTITY_ID: 5, PROPERTY_ID: 3 }]; // 999 never resolves
+    return [];
+  }), logger, config });
+  const out = await PrintService.createJob({ entityType: 'item', entityIds: [5, 999], preset: 'small', userId: 42 });
+  assert.deepEqual(out, { error: 'not_found' });
+  assert.equal(inserted, false, 'a partially-visible batch must never create a job for the subset that resolved');
+});
+
+test('createJob picks the printer agent deterministically when more than one is registered', async () => {
+  let agentSql = '';
+  PrintService.init({ db: fakeDb((sql) => {
+    if (/property_members/i.test(sql)) return [{ ENTITY_ID: 5, PROPERTY_ID: 3 }];
+    if (/FROM TALLY\.printer_agents/i.test(sql)) { agentSql = sql; return [{ LOADED_MEDIA: 'small' }]; }
+    if (/INSERT INTO TALLY\.print_jobs/i.test(sql)) return { insertId: 1 };
+    return [];
+  }), logger, config });
+  await PrintService.createJob({ entityType: 'item', entityIds: [5], preset: 'small', userId: 42 });
+  assert.match(agentSql, /ORDER BY ID\s+LIMIT 1/i, 'the agent pick must be deterministic — no ORDER BY makes it depend on storage order');
 });
 
 test('listJobs, cancelJob and retryJob are all membership-scoped', async () => {
