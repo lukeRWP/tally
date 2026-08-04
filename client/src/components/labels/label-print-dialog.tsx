@@ -9,7 +9,7 @@ import {
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { LabelPreview } from './label-preview';
-import { useGenerateLabels, type LabelPreset } from '@/hooks/use-labels';
+import { useGenerateLabels, useQrImageUrl, type LabelPreset } from '@/hooks/use-labels';
 import { toast } from '@/components/ui/toast';
 
 interface LabelEntity {
@@ -18,6 +18,10 @@ interface LabelEntity {
   qrCode: string;
   type: string;
   breadcrumb?: string;
+  // Optional explicit override for the printed banner's parent-zone text.
+  // Callers don't need to pass this — LabelPreview derives it from
+  // `breadcrumb` when omitted — but it's here so one can later.
+  parentZone?: string | null;
 }
 
 interface LabelPrintDialogProps {
@@ -42,7 +46,7 @@ export function LabelPrintDialog({ entities, entityType, isOpen, onOpenChange }:
   }, [entityType, entities.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const firstEntity = entities[0];
-  const qrImageUrl = firstEntity ? `/api/labels/_x_/qr/${firstEntity.qrCode}` : '';
+  const qrImageUrl = useQrImageUrl(firstEntity?.qrCode ?? '');
 
   function handleGenerate() {
     if (entities.length === 0) return;
