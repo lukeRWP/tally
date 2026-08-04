@@ -509,18 +509,18 @@ let _logger = null;
 // JOINs property_members, so an entity the caller cannot see simply yields no
 // row — the caller then 404s and never learns whether the id exists.
 const PROPERTY_SQL = {
-  item: `SELECT DISTINCT a.PROPERTY_ID
+  item: `SELECT i.ID AS ENTITY_ID, a.PROPERTY_ID
            FROM TALLY.items i
            JOIN TALLY.containers c ON i.CONTAINER_ID = c.ID
            JOIN TALLY.areas a ON c.AREA_ID = a.ID
            JOIN TALLY.property_members pm ON pm.PROPERTY_ID = a.PROPERTY_ID AND pm.USER_ID = ?
           WHERE i.ID IN (:ids) AND i.DELETED_AT IS NULL`,
-  container: `SELECT DISTINCT a.PROPERTY_ID
+  container: `SELECT c.ID AS ENTITY_ID, a.PROPERTY_ID
            FROM TALLY.containers c
            JOIN TALLY.areas a ON c.AREA_ID = a.ID
            JOIN TALLY.property_members pm ON pm.PROPERTY_ID = a.PROPERTY_ID AND pm.USER_ID = ?
           WHERE c.ID IN (:ids) AND c.DELETED_AT IS NULL`,
-  area: `SELECT DISTINCT a.PROPERTY_ID
+  area: `SELECT a.ID AS ENTITY_ID, a.PROPERTY_ID
            FROM TALLY.areas a
            JOIN TALLY.property_members pm ON pm.PROPERTY_ID = a.PROPERTY_ID AND pm.USER_ID = ?
           WHERE a.ID IN (:ids) AND a.DELETED_AT IS NULL`,
@@ -553,10 +553,28 @@ const PrintService = {
   async resolveProperty(entityType, entityIds, userId) {
     const template = PROPERTY_SQL[entityType];
     if (!template) return { error: 'not_found' };
-    const sql = template.replace(':ids', entityIds.map(() => '?').join(', '));
-    const rows = await _db.query(sql, [userId, ...entityIds]);
-    if (rows.length === 0) return { error: 'not_found' };
-    if (rows.length > 1) return { error: 'mixed' };
+
+    // Dedupe first so a caller passing e.g. [5,5] isn't penalized by the
+    // "every id resolved" check below — it's still one entity, not two.
+    const uniqueIds = [...new Set(entityIds)];
+    // Guard before building SQL: an empty array would otherwise produce an
+    // invalid `IN ()` clause. Joi guards the route, but this method is
+    // exported and called directly elsewhere.
+    if (uniqueIds.length === 0) return { error: 'not_found' };
+
+    const sql = template.replace(':ids', uniqueIds.map(() => '?').join(', '));
+    const rows = await _db.query(sql, [userId, ...uniqueIds]);
+
+    // Every requested id must resolve. Checking only that the *matched* rows
+    // share one property would silently accept a partially-visible batch —
+    // the user asks for 2 labels, one id is foreign, and they get 1 with no
+    // error. It would also leave correctness resting on the downstream
+    // render re-scoping, which is fragile.
+    const resolvedIds = new Set(rows.map(r => r.ENTITY_ID));
+    if (resolvedIds.size !== uniqueIds.length) return { error: 'not_found' };
+
+    const propertyIds = new Set(rows.map(r => r.PROPERTY_ID));
+    if (propertyIds.size > 1) return { error: 'mixed' };
     return { propertyId: rows[0].PROPERTY_ID };
   },
 
@@ -568,7 +586,9 @@ const PrintService = {
     // Hold the job when a roll is loaded that does not match. With no agent
     // registered yet the job simply waits as `queued`.
     const agents = await _db.query(
-      'SELECT LOADED_MEDIA FROM TALLY.printer_agents WHERE PROPERTY_ID = ? LIMIT 1',
+      // ORDER BY ID: the UI assumes one printer per property, but there is no
+      // uniqueness constraint — this keeps the choice stable if a second is added.
+      'SELECT LOADED_MEDIA FROM TALLY.printer_agents WHERE PROPERTY_ID = ? ORDER BY ID LIMIT 1',
       [propertyId]
     );
     const status = agents.length > 0 && agents[0].LOADED_MEDIA !== preset ? 'held' : 'queued';
