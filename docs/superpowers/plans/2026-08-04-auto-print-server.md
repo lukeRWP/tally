@@ -1238,13 +1238,21 @@ module.exports = function printRoutes({ app, db, logger, config }) {
 Add the limiter beside the existing `authLimiter` / `shareLimiter` definitions (after line ~51):
 
 ```js
-// The Pi agent polls every 2s and, while draining a batch, fires claim+pdf+ack
-// per label — a 50-label burst is ~150 requests. The global 200/min limiter
-// would throttle that, so the agent paths get their own, higher budget.
 const agentLimiter = rateLimit({ windowMs: 60 * 1000, max: 600, standardHeaders: true, legacyHeaders: false });
-app.use('/api/print/_y_/agent', agentLimiter);
-app.use('/api/print/_x_/agent', agentLimiter);
+AGENT_PATHS.forEach(p => app.use(p, agentLimiter));
 ```
+
+**This alone is NOT enough** — middleware runs in registration order, so the
+unconditional global limiter (200/min, registered earlier) still matches first
+and 429s before the agent limiter is ever reached. Mounting a more permissive
+limiter later does not raise the ceiling. The global limiter must SKIP these
+paths. Add above the global limiter in `server/index.js`:
+
+```js
+const AGENT_PATHS = ['/api/print/_y_/agent', '/api/print/_x_/agent'];
+const isAgentPath = (req) => AGENT_PATHS.some(p => req.path.startsWith(p));
+```
+and add `skip: isAgentPath,` to the existing global `rateLimit({...})` options.
 
 Add the module registration alongside the others (after the `labels.routes` line):
 
