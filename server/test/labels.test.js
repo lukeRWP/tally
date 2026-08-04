@@ -90,6 +90,17 @@ test('generateLabels rejects large for items (container/area only)', () => {
   assert.equal(schema.generateLabels.validate({ entityType: 'area', entityIds: [1], preset: 'large' }).error, undefined);
 });
 
+test('generateLabels still rejects the legacy format:"zpl" body', () => {
+  // Spec §6: ZPL is gone. The schema is strict (no `.unknown(true)`), so a body
+  // carrying the old field must be refused rather than silently ignored — this
+  // guards against a future loosening quietly re-accepting ZPL requests.
+  const zpl = schema.generateLabels.validate({ entityType: 'item', entityIds: [1], format: 'zpl' });
+  assert.ok(zpl.error, 'a body with format:"zpl" is rejected');
+  assert.match(zpl.error.message, /format/, 'the rejection names the offending field');
+  assert.ok(schema.generateLabels.validate({ entityType: 'item', entityIds: [1], format: 'pdf' }).error,
+    'even format:"pdf" is rejected — the field no longer exists at all');
+});
+
 // ── getEntityData — parentZone per entity type ──────────────────────────────
 
 test('getEntityData exposes parentZone per type (Area for container, Property for area)', async () => {
@@ -203,12 +214,22 @@ test('manifestPageCount paginates by the large preset row capacity', () => {
   assert.equal(Labels.manifestPageCount(0, 'large'), 1, 'empty manifest is still one page');
 });
 
+// Hard-coded so a geometry change that silently alters capacity fails here
+// rather than being rubber-stamped by a test that derives its own expectation.
+test('manifestPageCount pins the documented large-preset capacity of 22 rows/page', () => {
+  assert.equal(Labels.manifestPageCount(22, 'large'), 1, '22 rows is exactly one full page');
+  assert.equal(Labels.manifestPageCount(23, 'large'), 2, 'the 23rd row starts a second page');
+  assert.equal(Labels.manifestPageCount(44, 'large'), 2);
+  assert.equal(Labels.manifestPageCount(45, 'large'), 3);
+});
+
 test('getManifest is membership-scoped and returns name+qty rows for a container', async () => {
   let itemSql = '';
+  let itemParams = null;
   Labels.init({ db: fakeDb((sql, params) => {
     if (/FROM TALLY\.containers c/i.test(sql) && /property_members/i.test(sql) && /IN \(/i.test(sql))
       return [{ ID: 5, NAME: 'Camping Gear', QR_CODE: 'TLY-C-1', AREA_NAME: 'Garage', PROPERTY_NAME: 'Home' }]; // getEntityData header
-    if (/FROM TALLY\.items i/i.test(sql)) { itemSql = sql; return [{ name: 'Tent', qty: 1 }, { name: 'Lantern', qty: 2 }]; }
+    if (/FROM TALLY\.items i/i.test(sql)) { itemSql = sql; itemParams = params; return [{ name: 'Tent', qty: 1 }, { name: 'Lantern', qty: 2 }]; }
     return [];
   }), logger, config });
   const m = await Labels.getManifest('container', 5, 42);
@@ -216,6 +237,34 @@ test('getManifest is membership-scoped and returns name+qty rows for a container
   assert.deepEqual(m.rows, [{ name: 'Tent', qty: 1 }, { name: 'Lantern', qty: 2 }]);
   assert.match(itemSql, /property_members/i, 'the manifest item query is membership-scoped');
   assert.match(itemSql, /pm\.USER_ID = \?/i);
+  // The binds matter as much as the SQL: swapping them would scope the
+  // membership join by the container id and filter contents by the user id —
+  // an IDOR the SQL-text assertions alone would happily pass.
+  assert.equal(itemParams[0], 42, 'userId is bound first (into the membership join)');
+  assert.equal(itemParams[1], 5, 'the container id is bound second (into the WHERE)');
+});
+
+test('getManifest is membership-scoped for an area and counts items per container', async () => {
+  let containerSql = '';
+  let containerParams = null;
+  Labels.init({ db: fakeDb((sql, params) => {
+    if (/FROM TALLY\.areas a/i.test(sql) && /IN \(/i.test(sql))
+      return [{ ID: 3, NAME: 'Garage', QR_CODE: 'TLY-A-1', PROPERTY_NAME: 'Home' }]; // getEntityData header
+    if (/FROM TALLY\.containers c/i.test(sql)) {
+      containerSql = sql; containerParams = params;
+      return [{ name: 'Camping Gear', qty: 7 }, { name: 'Tools', qty: '0' }];
+    }
+    return [];
+  }), logger, config });
+  const m = await Labels.getManifest('area', 3, 42);
+  assert.equal(m.header.name, 'Garage');
+  assert.equal(m.header.parentZone, 'Home');
+  assert.match(containerSql, /property_members/i, 'the area manifest container query is membership-scoped');
+  assert.match(containerSql, /pm\.USER_ID = \?/i);
+  assert.deepEqual(containerParams, [42, 3], 'userId first, then the area id');
+  // COUNT(*) can come back as a string/BigInt from mysql2 — the mapping coerces.
+  assert.deepEqual(m.rows, [{ name: 'Camping Gear', qty: 7 }, { name: 'Tools', qty: 0 }]);
+  assert.ok(m.rows.every(r => typeof r.qty === 'number'), 'qty is always a Number');
 });
 
 test('getManifest returns null for an entity the caller does not own', async () => {
@@ -230,6 +279,30 @@ test('renderManifestPdf produces a PDF (paginated by row count)', async () => {
     { header: { name: 'Camping Gear', qrCode: 'TLY-C-1', parentZone: 'Garage', breadcrumb: 'Home' }, rows }, 'large');
   assert.ok(buf.slice(0, 4).toString() === '%PDF');
   assert.equal(pdfPageCount(buf), Labels.manifestPageCount(60, 'large'));
+  assert.equal(pdfPageCount(buf), 3, '60 rows at 22/page is 3 pages');
+});
+
+test('a multi-page manifest repeats the header and column header on every page', async () => {
+  Labels.init({ db: fakeDb(() => []), logger, config });
+  const rows = Array.from({ length: 50 }, (_, i) => ({ name: `Item ${i + 1}`, qty: 1 }));
+  const buf = await Labels.renderManifestPdf(
+    { header: { name: 'Camping Gear', qrCode: 'TLY-C-1', parentZone: 'Garage', breadcrumb: 'Home' }, rows }, 'large');
+  const pages = pdfPageCount(buf);
+  assert.equal(pages, 3, '50 rows at 22/page is 3 pages');
+  // Spec §3: every page is self-contained — header block + column header.
+  assert.equal(pdfTextCount(buf, 'CAMPING GEAR'), pages, 'the inverted title repeats per page');
+  assert.equal(pdfTextCount(buf, 'TLY-C-1'), pages, 'the TLY code repeats per page');
+  assert.equal(pdfTextCount(buf, 'Home'), pages, 'the breadcrumb repeats per page');
+  assert.equal(pdfTextCount(buf, 'CONTENTS'), pages, 'the CONTENTS column header repeats per page');
+  assert.equal(pdfTextCount(buf, 'QTY'), pages, 'the QTY column header repeats per page');
+  // ...and the footer paginates rather than repeating a constant.
+  for (let p = 1; p <= pages; p++) {
+    assert.equal(pdfTextCount(buf, `Page ${p} of ${pages}`), 1, `page ${p} names itself in the footer`);
+  }
+  assert.equal(pdfTextCount(buf, '50 items'), pages, 'the total is restated on every page');
+  // Rows are not repeated — each page carries its own slice.
+  assert.equal(pdfTextCount(buf, 'Item 1 '), 0, 'sanity: exact-prefix matching is in play');
+  assert.equal(pdfTextCount(buf, 'Item 23'), 1, 'the 23rd row appears exactly once (on page 2)');
 });
 
 test('manifest rows stay on one line — a long name / big qty cannot overlap the next row', async () => {
