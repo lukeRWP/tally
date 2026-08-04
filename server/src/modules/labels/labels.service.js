@@ -30,6 +30,73 @@ const LabelsService = {
     return QRCode.toBuffer(url, { width: size, margin: 1 });
   },
 
+  // ── Thermal single-label rendering ───────────────────────────────────────
+
+  _invertedTitle(doc, text, x, y, w, fontSize, align = 'left') {
+    const padX = 5, padY = 3, lineH = fontSize * 1.15, boxH = lineH + padY * 2;
+    doc.save().roundedRect(x, y, w, boxH, 2).fill('#000000').restore();
+    doc.fontSize(fontSize).font('Helvetica-Bold').fillColor('#ffffff')
+      .text(String(text).toUpperCase(), x + padX, y + padY,
+        { width: w - padX * 2, height: lineH, align, lineBreak: false, ellipsis: true });
+    doc.fillColor('#000000');
+    return boxH;
+  },
+
+  _verticalBanner(doc, text, H, bannerW, fontSize) {
+    doc.save().rect(0, 0, bannerW, H).fill('#000000').restore();
+    doc.save();
+    doc.rotate(-90, { origin: [bannerW / 2, H / 2] });
+    // After rotating -90° about the banner centre, a normal horizontal text box
+    // of width H (the label height) reads bottom-to-top down the strip.
+    doc.fontSize(fontSize).font('Helvetica-Bold').fillColor('#ffffff')
+      .text(String(text).toUpperCase(), bannerW / 2 - H / 2, H / 2 - fontSize / 2 - 1,
+        { width: H, align: 'center', lineBreak: false, ellipsis: true, characterSpacing: 1 });
+    doc.restore();
+    doc.fillColor('#000000');
+  },
+
+  _drawTag(doc, e, qrBuf, P, presetKey) {
+    const W = P.widthPt, H = P.heightPt, pad = 6;
+    const bannerW = (P.banner && e.parentZone) ? P.banner : 0;
+    if (bannerW) LabelsService._verticalBanner(doc, e.parentZone, H, bannerW, Math.min(P.title, 12));
+    const cx = bannerW, cw = W - bannerW;
+
+    if (presetKey === 'small') {
+      const qr = Math.min(P.qrPt, H - pad * 2);
+      doc.image(qrBuf, cx + pad, (H - qr) / 2, { width: qr });
+      const tx = cx + pad + qr + pad, tw = W - tx - pad;
+      LabelsService._invertedTitle(doc, e.name, tx, pad + 2, tw, P.title);
+      doc.fontSize(P.code).font('Courier').fillColor('#000000')
+        .text(String(e.qrCode).toUpperCase(), tx, H - pad - P.code - 1, { width: tw, lineBreak: false, ellipsis: true });
+    } else { // medium
+      LabelsService._invertedTitle(doc, e.name, cx + pad, pad, cw - pad * 2, P.title, 'center');
+      const qr = P.qrPt, qrX = cx + (cw - qr) / 2, qrY = pad + P.title + 16;
+      doc.image(qrBuf, qrX, qrY, { width: qr });
+      const fy = H - pad - P.code - 3;
+      doc.save().moveTo(cx + pad, fy - 5).lineTo(W - pad, fy - 5).lineWidth(1).strokeColor('#000000').stroke().restore();
+      doc.fontSize(P.code).font('Courier').fillColor('#000000')
+        .text(String(e.qrCode).toUpperCase(), cx + pad, fy, { width: cw - pad * 2, lineBreak: false, ellipsis: true });
+    }
+    doc.fillColor('#000000');
+  },
+
+  async renderLabelPdf(entities, presetKey) {
+    const P = PRESETS[presetKey];
+    const qrBuffers = await Promise.all(entities.map(e => LabelsService.generateQrBuffer(e.qrCode, P.qrPt * 3)));
+    return new Promise((resolve, reject) => {
+      const doc = new PDFDocument({ size: [P.widthPt, P.heightPt], margin: 0 });
+      const bufs = [];
+      doc.on('data', b => bufs.push(b));
+      doc.on('end', () => resolve(Buffer.concat(bufs)));
+      doc.on('error', reject);
+      entities.forEach((e, i) => {
+        if (i > 0) doc.addPage({ size: [P.widthPt, P.heightPt], margin: 0 });
+        LabelsService._drawTag(doc, e, qrBuffers[i], P, presetKey);
+      });
+      doc.end();
+    });
+  },
+
   // ── Code Resolution ─────────────────────────────────────────────────────────
 
   async resolveCode(code, userId) {

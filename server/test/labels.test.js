@@ -98,3 +98,23 @@ test('getEntityData exposes parentZone per type (Area for container, Property fo
   assert.equal(a.parentZone, 'Home');
   assert.equal(a.breadcrumb, '');
 });
+
+// ── renderLabelPdf — thermal single-label rendering (small/medium) ──────────
+
+function pdfPageCount(buf) { return (buf.toString('latin1').match(/\/Type\s*\/Page[^s]/g) || []).length; }
+
+test('renderLabelPdf makes one page per entity and is a PDF', async () => {
+  Labels.init({ db: fakeDb(() => []), logger, config });
+  const entities = [
+    { id: 1, name: 'Cordless Drill', qrCode: 'TLY-I-3A9F2C', parentZone: null, breadcrumb: 'Home > Garage > Bin 4' },
+    { id: 2, name: 'Circular Saw', qrCode: 'TLY-I-7B2E1D', parentZone: null, breadcrumb: 'Home > Garage > Bin 4' },
+  ];
+  const buf = await Labels.renderLabelPdf(entities, 'small');
+  assert.ok(Buffer.isBuffer(buf) && buf.slice(0, 4).toString() === '%PDF');
+  assert.equal(pdfPageCount(buf), 2);
+
+  const med = await Labels.renderLabelPdf(
+    [{ id: 5, name: 'Holiday Decorations', qrCode: 'TLY-C-8B1E2D', parentZone: 'Garage', breadcrumb: 'Home' }], 'medium');
+  assert.ok(med.slice(0, 4).toString() === '%PDF');
+  assert.equal(pdfPageCount(med), 1);
+});
