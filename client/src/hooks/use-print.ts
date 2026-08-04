@@ -36,7 +36,11 @@ export function usePrinters(propertyId?: number) {
     queryFn: () => api.get<Printer[]>(`/api/print/_x_/agents?propertyId=${propertyId}`),
     enabled: !!propertyId,
     // The agent refreshes LAST_SEEN_AT every 2s; poll often enough that the
-    // online indicator and printer status stay believable while the dialog is open.
+    // online indicator and printer status stay believable while this hook is
+    // mounted with an active propertyId. Callers that render conditionally
+    // (e.g. a dialog) must pass `undefined` when hidden so polling stops —
+    // passing `propertyId` unconditionally polls for as long as the
+    // component stays mounted, dialog closed or not.
     refetchInterval: 15000,
   });
 }

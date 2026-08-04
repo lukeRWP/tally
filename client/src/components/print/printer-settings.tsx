@@ -87,7 +87,11 @@ agent_token = ${issuedToken}`}
               {problem ?? (online ? 'Online' : 'Offline')}
             </span>
             <Button variant="outline" size="sm" className="ml-auto"
-                    onClick={() => revokePrinter.mutate(printer.id)}>
+                    disabled={revokePrinter.isPending}
+                    onClick={() => revokePrinter.mutate(printer.id, {
+                      onSuccess: () => setIssuedToken(null),
+                      onError: (e) => toast(e instanceof Error ? e.message : 'Could not remove the printer'),
+                    })}>
               <Trash2 className="w-3.5 h-3.5" />
             </Button>
           </div>
@@ -102,6 +106,7 @@ agent_token = ${issuedToken}`}
                     onSuccess: (res) => toast(res.released > 0
                       ? `Released ${res.released} waiting job${res.released === 1 ? '' : 's'}`
                       : 'Loaded roll updated'),
+                    onError: (e) => toast(e instanceof Error ? e.message : 'Could not change the loaded roll'),
                   })}>
                   {r.label}
                 </Button>
@@ -126,12 +131,19 @@ agent_token = ${issuedToken}`}
                 </span>
                 {j.status === 'failed' && (
                   <Button variant="outline" size="sm" title={j.lastError ?? undefined}
-                          onClick={() => retryJob.mutate(j.id)}>
+                          disabled={retryJob.isPending}
+                          onClick={() => retryJob.mutate(j.id, {
+                            onError: (e) => toast(e instanceof Error ? e.message : 'Could not retry that job'),
+                          })}>
                     <RotateCw className="w-3 h-3" />
                   </Button>
                 )}
                 {['queued', 'held'].includes(j.status) && (
-                  <Button variant="outline" size="sm" onClick={() => cancelJob.mutate(j.id)}>
+                  <Button variant="outline" size="sm"
+                          disabled={cancelJob.isPending}
+                          onClick={() => cancelJob.mutate(j.id, {
+                            onError: (e) => toast(e instanceof Error ? e.message : 'Could not cancel that job'),
+                          })}>
                     <Trash2 className="w-3 h-3" />
                   </Button>
                 )}

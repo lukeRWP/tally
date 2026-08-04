@@ -25,6 +25,13 @@ interface LabelEntity {
   parentZone?: string | null;
 }
 
+const PROBLEM_TEXT: Record<string, string> = {
+  'media-empty': 'out of labels',
+  'cover-open': 'cover open',
+  'media-jam': 'jammed',
+  offline: 'offline',
+};
+
 interface LabelPrintDialogProps {
   entities: LabelEntity[];
   entityType: 'item' | 'container' | 'area';
@@ -38,7 +45,7 @@ export function LabelPrintDialog({ entities, entityType, isOpen, onOpenChange, p
   const generateLabels = useGenerateLabels();
   React.useEffect(() => { if (!isOpen) generateLabels.reset(); }, [isOpen]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const { data: printers } = usePrinters(propertyId);
+  const { data: printers } = usePrinters(isOpen ? propertyId : undefined);
   const printer = printers?.[0];
   const createPrintJob = useCreatePrintJob();
 
@@ -49,13 +56,6 @@ export function LabelPrintDialog({ entities, entityType, isOpen, onOpenChange, p
     ? (printer.printerStateReasons[0] ?? 'stopped')
     : null;
   const rollMatches = printer?.loadedMedia === preset;
-
-  const PROBLEM_TEXT: Record<string, string> = {
-    'media-empty': 'out of labels',
-    'cover-open': 'cover open',
-    'media-jam': 'jammed',
-    offline: 'offline',
-  };
 
   function handlePrint() {
     createPrintJob.mutate(
