@@ -99,6 +99,28 @@ test('getEntityData exposes parentZone per type (Area for container, Property fo
   assert.equal(a.breadcrumb, '');
 });
 
+// ── _fullLocation — Avery sheet recombines breadcrumb + parentZone ──────────
+
+// REGRESSION GUARD: the redesign split the location path across `breadcrumb`
+// (ancestors) and `parentZone` (the thermal banner zone). The Avery sheet has
+// no banner, so it must print the recombined path — printing `breadcrumb`
+// alone silently dropped the Area from container labels and left area labels
+// with no location line at all.
+test('_fullLocation recombines breadcrumb + parentZone for every entity type', () => {
+  assert.equal(
+    Labels._fullLocation({ parentZone: null, breadcrumb: 'Home > Garage > Bin 4' }),
+    'Home > Garage > Bin 4', 'item: full path already in breadcrumb');
+  assert.equal(
+    Labels._fullLocation({ parentZone: 'Garage', breadcrumb: 'Home' }),
+    'Home > Garage', 'container: property then area');
+  assert.equal(
+    Labels._fullLocation({ parentZone: 'Home', breadcrumb: '' }),
+    'Home', 'area: property only, no leading separator');
+  assert.equal(
+    Labels._fullLocation({ parentZone: null, breadcrumb: '' }), '',
+    'nothing to show yields an empty string (renderer skips the line)');
+});
+
 // ── renderLabelPdf — thermal single-label rendering (small/medium) ──────────
 
 function pdfPageCount(buf) { return (buf.toString('latin1').match(/\/Type\s*\/Page[^s]/g) || []).length; }

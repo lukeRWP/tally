@@ -346,6 +346,16 @@ const LabelsService = {
 
   // ── PDF Label Generation ────────────────────────────────────────────────────
 
+  // The thermal presets split an entity's location path in two: `parentZone`
+  // is the zone printed in the rotated banner and `breadcrumb` is whatever sits
+  // above it. The Avery sheet has no banner, so it recombines them back into
+  // the single full path it printed before that split
+  // (item → "Property > Area > Container", container → "Property > Area",
+  // area → "Property").
+  _fullLocation(entity) {
+    return [entity.breadcrumb, entity.parentZone].filter(Boolean).join(' > ');
+  },
+
   async generatePdf(entities, labelType) {
     // Label dimensions in points (1 inch = 72 points)
     const layouts = {
@@ -464,10 +474,11 @@ const LabelsService = {
             width: textW, lineBreak: false, ellipsis: true,
           });
 
-        // Breadcrumb
-        if (entity.breadcrumb) {
+        // Location — the full path, recombined from breadcrumb + parentZone.
+        const loc = LabelsService._fullLocation(entity);
+        if (loc) {
           doc.fontSize(fs.bc).font('Helvetica').fillColor('#888888')
-            .text(entity.breadcrumb.toUpperCase(), textX, textCenterY + 4 + fs.code * 1.8, {
+            .text(loc.toUpperCase(), textX, textCenterY + 4 + fs.code * 1.8, {
               width: textW, lineBreak: false, ellipsis: true,
             });
         }
