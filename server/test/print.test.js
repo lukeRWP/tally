@@ -429,3 +429,18 @@ test('setLoadedMedia is membership-scoped and returns null for a foreign agent',
   PrintService.init({ db: fakeDb(() => ({ affectedRows: 0 })), logger, config });
   assert.equal(await PrintService.setLoadedMedia(7, 'small', 42), null);
 });
+
+test('revokeAgent is membership-scoped and binds the caller', async () => {
+  // The DELETE ... JOIN form is unique to this module, so pin its scoping.
+  let sql = '', params = null;
+  PrintService.init({ db: fakeDb((s, p) => { sql = s; params = p; return { affectedRows: 1 }; }), logger, config });
+  assert.equal(await PrintService.revokeAgent(7, 42), true);
+  assert.match(sql, /property_members/i, 'the delete must join property_members');
+  assert.match(sql, /pm\.USER_ID = \?/i);
+  assert.deepEqual(params, [42, 7], 'userId is bound before the agent id');
+});
+
+test('revokeAgent returns false for an agent the caller cannot reach', async () => {
+  PrintService.init({ db: fakeDb(() => ({ affectedRows: 0 })), logger, config });
+  assert.equal(await PrintService.revokeAgent(7, 42), false);
+});
