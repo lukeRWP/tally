@@ -255,3 +255,101 @@ test('cancelJob refuses to cancel a job already in a terminal state', async () =
   assert.equal(await PrintService.cancelJob(11, 42), false);
   assert.match(sql, /STATUS\s+IN\s*\(/i, 'the update is guarded by a non-terminal status set');
 });
+
+// ── agent-side job operations ────────────────────────────────────────────────
+
+test('claimNext persists telemetry and derives property/preset from the AGENT, not the request', async () => {
+  const seen = [];
+  PrintService.init({ db: fakeDb((sql, params) => {
+    seen.push({ sql, params });
+    if (/UPDATE TALLY\.printer_agents/i.test(sql)) return { affectedRows: 1 };
+    if (/SET STATUS\s*=\s*'queued'/i.test(sql)) return { affectedRows: 0 };   // stale sweep
+    if (/SET STATUS\s*=\s*'claimed'/i.test(sql)) return { affectedRows: 1 };  // claim
+    if (/SELECT .* FROM TALLY\.print_jobs/i.test(sql)) {
+      return [{ ID: 11, PROPERTY_ID: 3, CREATED_BY: 42, ENTITY_TYPE: 'container',
+                ENTITY_IDS: '[5]', PRESET: 'large', STATUS: 'claimed', ATTEMPTS: 0 }];
+    }
+    return [];
+  }), logger, config });
+
+  const agent = { id: 7, propertyId: 3, loadedMedia: 'large' };
+  const job = await PrintService.claimNext(agent, { printerState: 'idle', printerStateReasons: ['media-empty'] });
+
+  assert.equal(job.id, 11);
+  const telem = seen.find(s => /UPDATE TALLY\.printer_agents/i.test(s.sql));
+  assert.ok(telem, 'telemetry must be written on every claim');
+  assert.ok(telem.params.includes('idle'), 'printerState persisted');
+  assert.match(telem.sql, /LAST_SEEN_AT/i, 'liveness is refreshed on the claim');
+
+  const claim = seen.find(s => /SET STATUS\s*=\s*'claimed'/i.test(s.sql));
+  assert.ok(claim.params.includes(3), 'propertyId comes from the agent row');
+  assert.ok(claim.params.includes('large'), 'preset comes from the agent LOADED_MEDIA');
+  assert.match(claim.sql, /STATUS\s*=\s*'queued'/i, 'only queued jobs are claimable');
+  assert.match(claim.sql, /LIMIT 1/i);
+});
+
+test('claimNext returns null when nothing is claimable', async () => {
+  PrintService.init({ db: fakeDb((sql) => {
+    if (/UPDATE/i.test(sql)) return { affectedRows: 0 };
+    return [];
+  }), logger, config });
+  assert.equal(await PrintService.claimNext({ id: 7, propertyId: 3, loadedMedia: 'small' }, {}), null);
+});
+
+test('sweepStaleClaims requeues abandoned claims and increments attempts', async () => {
+  let sql = '';
+  PrintService.init({ db: fakeDb((s) => { sql = s; return { affectedRows: 2 }; }), logger, config });
+  assert.equal(await PrintService.sweepStaleClaims(3), 2);
+  assert.match(sql, /STATUS\s*=\s*'claimed'/i, 'only claimed rows are swept');
+  assert.match(sql, /ATTEMPTS\s*=\s*ATTEMPTS\s*\+\s*1/i);
+  assert.match(sql, /CLAIMED_AT\s*<\s*DATE_SUB/i, 'swept by claim age');
+});
+
+test('getClaimedJob refuses a job this agent does not currently hold', async () => {
+  let params = null;
+  PrintService.init({ db: fakeDb((sql, p) => { params = p; return []; }), logger, config });
+  assert.equal(await PrintService.getClaimedJob(11, 7), null);
+  assert.deepEqual(params, [11, 7], 'both the job id AND the agent id are bound');
+});
+
+test('ackJob(ok) marks done; ack(fail) requeues until the attempt cap then fails', async () => {
+  // ok -> done
+  let sql = '';
+  PrintService.init({ db: fakeDb((s) => { sql = s; return { affectedRows: 1 }; }), logger, config });
+  assert.equal(await PrintService.ackJob(11, 7, true, null), 'done');
+  assert.match(sql, /STATUS\s*=\s*'done'/i);
+  assert.match(sql, /PRINTED_AT/i);
+
+  // fail below the cap -> queued
+  PrintService.init({ db: fakeDb((s) => {
+    if (/SELECT/i.test(s)) return [{ ATTEMPTS: 1 }];
+    return { affectedRows: 1 };
+  }), logger, config });
+  assert.equal(await PrintService.ackJob(11, 7, false, 'media-empty'), 'queued');
+
+  // fail at the cap -> failed
+  PrintService.init({ db: fakeDb((s) => {
+    if (/SELECT/i.test(s)) return [{ ATTEMPTS: 2 }];   // this ack makes 3
+    return { affectedRows: 1 };
+  }), logger, config });
+  assert.equal(await PrintService.ackJob(11, 7, false, 'media-empty'), 'failed');
+});
+
+test('renderJobPdf renders as the queuing user so Phase 1 scoping still applies', async () => {
+  const Labels = require('../src/modules/labels/labels.service');
+  const calls = [];
+  const origGet = Labels.getEntityData;
+  const origRender = Labels.renderLabelPdf;
+  Labels.getEntityData = async (type, ids, userId) => { calls.push({ type, ids, userId }); return [{ name: 'x', qrCode: 'TLY-C-1' }]; };
+  Labels.renderLabelPdf = async () => Buffer.from('%PDF-fake');
+  try {
+    PrintService.init({ db: fakeDb(() => []), logger, config });
+    const buf = await PrintService.renderJobPdf({ id: 11, createdBy: 42, entityType: 'container', entityIds: [5], preset: 'medium' });
+    assert.ok(Buffer.isBuffer(buf));
+    assert.deepEqual(calls[0], { type: 'container', ids: [5], userId: 42 },
+      'the job is rendered as its CREATED_BY user, never unscoped');
+  } finally {
+    Labels.getEntityData = origGet;
+    Labels.renderLabelPdf = origRender;
+  }
+});

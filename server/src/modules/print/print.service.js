@@ -1,7 +1,11 @@
 const crypto = require('crypto');   // used by claimNext's randomUUID in Task 4
+const LabelsService = require('../labels/labels.service');
 
 let _db = null;
 let _logger = null;
+
+const STALE_CLAIM_MINUTES = 5;
+const MAX_ATTEMPTS = 3;
 
 // Membership-scoped property resolution per entity type. Every branch INNER
 // JOINs property_members, so an entity the caller cannot see simply yields no
@@ -136,6 +140,112 @@ const PrintService = {
       [userId, id]
     );
     return result.affectedRows > 0;
+  },
+
+  // ── Agent-side ────────────────────────────────────────────────────────────
+
+  async sweepStaleClaims(propertyId) {
+    // An agent that dies mid-job would otherwise strand its row in `claimed`
+    // forever. Lazy sweep on each claim — no cron, no scheduler.
+    const result = await _db.query(
+      `UPDATE TALLY.print_jobs
+          SET STATUS = 'queued', ATTEMPTS = ATTEMPTS + 1,
+              CLAIM_ID = NULL, CLAIMED_BY = NULL, CLAIMED_AT = NULL
+        WHERE PROPERTY_ID = ? AND STATUS = 'claimed'
+          AND CLAIMED_AT < DATE_SUB(NOW(), INTERVAL ? MINUTE)`,
+      [propertyId, STALE_CLAIM_MINUTES]
+    );
+    return result.affectedRows;
+  },
+
+  async claimNext(agent, telemetry = {}) {
+    // Telemetry rides the claim: liveness + printer state in one write.
+    await _db.query(
+      `UPDATE TALLY.printer_agents
+          SET LAST_SEEN_AT = NOW(), PRINTER_STATE = ?, PRINTER_STATE_REASONS = ?
+        WHERE ID = ?`,
+      [telemetry.printerState || 'unknown',
+       JSON.stringify(telemetry.printerStateReasons || []),
+       agent.id]
+    );
+
+    await PrintService.sweepStaleClaims(agent.propertyId);
+
+    // PROPERTY_ID and PRESET come from the agent row — never from the request,
+    // so an agent cannot reach another property or pull a roll it hasn't loaded.
+    const claimId = crypto.randomUUID();
+    const claimed = await _db.query(
+      `UPDATE TALLY.print_jobs
+          SET STATUS = 'claimed', CLAIM_ID = ?, CLAIMED_BY = ?, CLAIMED_AT = NOW()
+        WHERE PROPERTY_ID = ? AND STATUS = 'queued' AND PRESET = ?
+        ORDER BY CREATED_AT
+        LIMIT 1`,
+      [claimId, agent.id, agent.propertyId, agent.loadedMedia]
+    );
+    if (claimed.affectedRows === 0) return null;
+
+    const rows = await _db.query(
+      'SELECT * FROM TALLY.print_jobs WHERE CLAIM_ID = ?', [claimId]
+    );
+    return rows.length > 0 ? PrintService._mapJob(rows[0]) : null;
+  },
+
+  async getClaimedJob(jobId, agentId) {
+    const rows = await _db.query(
+      `SELECT * FROM TALLY.print_jobs
+        WHERE ID = ? AND CLAIMED_BY = ? AND STATUS = 'claimed'`,
+      [jobId, agentId]
+    );
+    return rows.length > 0 ? PrintService._mapJob(rows[0]) : null;
+  },
+
+  async renderJobPdf(job) {
+    // Rendered AS THE QUEUING USER: Phase 1's renderers are membership-scoped,
+    // so this inherits that scoping instead of inventing an unscoped path. If
+    // the user has since lost access the render yields nothing and the job fails.
+    if (job.preset === 'large') {
+      const manifests = [];
+      for (const id of job.entityIds) {
+        const m = await LabelsService.getManifest(job.entityType, id, job.createdBy);
+        if (m) manifests.push(m);
+      }
+      if (manifests.length === 0) return null;
+      return LabelsService.renderManifestBundle(manifests, 'large');
+    }
+
+    const entities = await LabelsService.getEntityData(job.entityType, job.entityIds, job.createdBy);
+    if (entities.length === 0) return null;
+    return LabelsService.renderLabelPdf(entities, job.preset);
+  },
+
+  async ackJob(jobId, agentId, ok, errorText) {
+    if (ok) {
+      const result = await _db.query(
+        `UPDATE TALLY.print_jobs
+            SET STATUS = 'done', PRINTED_AT = NOW(), LAST_ERROR = NULL
+          WHERE ID = ? AND CLAIMED_BY = ? AND STATUS = 'claimed'`,
+        [jobId, agentId]
+      );
+      return result.affectedRows > 0 ? 'done' : null;
+    }
+
+    const rows = await _db.query(
+      `SELECT ATTEMPTS FROM TALLY.print_jobs
+        WHERE ID = ? AND CLAIMED_BY = ? AND STATUS = 'claimed'`,
+      [jobId, agentId]
+    );
+    if (rows.length === 0) return null;
+
+    const nextAttempts = rows[0].ATTEMPTS + 1;
+    const nextStatus = nextAttempts >= MAX_ATTEMPTS ? 'failed' : 'queued';
+    await _db.query(
+      `UPDATE TALLY.print_jobs
+          SET STATUS = ?, ATTEMPTS = ?, LAST_ERROR = ?,
+              CLAIM_ID = NULL, CLAIMED_BY = NULL, CLAIMED_AT = NULL
+        WHERE ID = ? AND CLAIMED_BY = ?`,
+      [nextStatus, nextAttempts, errorText || null, jobId, agentId]
+    );
+    return nextStatus;
   },
 };
 
