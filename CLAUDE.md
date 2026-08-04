@@ -129,7 +129,7 @@ Each feature lives in `server/src/modules/{feature}/` with three files:
 | files       | `/api/files`      | Upload, download (presigned URLs), list by item, delete    |
 | conditions  | `/api/conditions` | Create snapshot (photo + rating), history by item, delete  |
 | tags          | `/api/tags`          | Tag CRUD, polymorphic entity tagging                       |
-| labels        | `/api/labels`        | QR generation, PDF/ZPL label printing, code resolution     |
+| labels        | `/api/labels`        | QR generation, PDF label printing (4 presets), code resolution |
 | lending       | `/api/lending`       | Lend, return, history, overdue tracking                    |
 | dates         | `/api/dates`         | User-defined date types per item, upcoming dates           |
 | accessories   | `/api/accessories`   | Link/unlink items as accessories                           |
@@ -324,12 +324,24 @@ The scan page supports a two-scan move flow:
 
 This allows rapid relocation of many items without navigating away from the scan page.
 
-### Label Printing (PDF Avery sheets + ZPL thermal)
+### Label Printing (PDF, 4 presets)
 
-- `POST /api/labels/_y_/generate` — accepts an array of `{ entityType, entityId }` objects and returns either a PDF (Avery 5160 / 30-up sheet layout) or a ZPL string for thermal printers, depending on the `format` field (`pdf` | `zpl`).
-- PDF labels are generated server-side using `pdfkit` and returned as `application/pdf`.
-- ZPL labels are plain text returned as `text/plain`, ready to spool directly to a Zebra-compatible printer.
-- The label UI (`/labels`) lets users build a print queue, choose format, and download or print.
+- `POST /api/labels/_y_/generate` — accepts `{ entityType, entityIds, preset }` and **always** returns `application/pdf`. All output is rendered server-side with `pdfkit`. There is no ZPL output and no `format` field.
+- `entityType` is one of `item` | `container` | `area`; `entityIds` is an array of IDs (max 100), all of the same type.
+- `preset` selects the geometry:
+
+| Preset   | Size    | Output                                                            |
+|----------|---------|-------------------------------------------------------------------|
+| `small`  | 2 × 1"  | Item tag — QR left, name right                                     |
+| `medium` | 3 × 3"  | Bin / location tag — QR centred, TLY code + entity type in footer  |
+| `large`  | 4 × 6"  | Contents manifest — paginated list of what's inside                |
+| `sheet`  | Letter  | Avery 5160, 30-up sheet                                            |
+
+- `preset` defaults to `small` for items and `medium` for containers/areas.
+- `large` is a contents manifest and is **containers/areas only** — requesting it for an item fails Joi validation (400).
+- The thermal presets (`small`/`medium`/`large`) share a common look: an inverted (white-on-black) title bar plus a rotated parent-zone location banner down the left edge — the Area for a container, the Property for an area. `sheet` is unchanged legacy geometry and prints the full location path as one line instead.
+- All geometry lives in the `PRESETS` table at the top of `labels.service.js` — it is the single source of truth; renderers must not hard-code sizes.
+- There is **no `/labels` page**. Printing is launched from a label dialog on the item, container, and area detail pages (`client/src/components/labels/label-print-dialog.tsx`), which shows a to-scale preview and downloads the PDF.
 
 ### Tags System (property-scoped, polymorphic)
 
@@ -469,6 +481,6 @@ These rules exist because every one of them was learned from a production failur
 |-------|-------------|
 | **Phase 1** — Core Inventory | Properties, Areas, Containers (closure-table hierarchy), Items (CRUD + FULLTEXT search), React frontend with Radix UI + Tailwind v4, Microsoft Entra ID (OIDC) auth, MySQL + MinIO infrastructure, Docker Compose stack |
 | **Phase 2** — Files & Products | File upload/download (presigned MinIO URLs), Condition snapshots (photo + rating history), Product catalog with barcode lookup (Open Food Facts + UPC Database), camera barcode scanning (`html5-qrcode`) |
-| **Phase 3** — Labels & Tags | QR code generation (`TLY-{TYPE}-{HEX}` format), PDF Avery 5160 label sheets + ZPL thermal printing, QR deep-link resolution, Scan-Scan-Done move workflow, polymorphic tag system (property-scoped, works across items/containers/areas) |
+| **Phase 3** — Labels & Tags | QR code generation (`TLY-{TYPE}-{HEX}` format), PDF label printing with 4 presets (2×1 item tag, 3×3 bin/location tag, 4×6 contents manifest, Avery 5160 sheet), QR deep-link resolution, Scan-Scan-Done move workflow, polymorphic tag system (property-scoped, works across items/containers/areas) |
 | **Phase 4** — Advanced Features | Lending (lend/return/overdue tracking), User-defined dates (warranty, service, etc.) with upcoming alerts, Accessories (item-to-item links), Audit trail (full change log), Notifications (opt-in, per-type preferences), Recycle bin (30-day soft delete), Client-side depreciation calculation |
 | **Phase 5** — Reports, Sharing & Deployment | 6 report types in PDF/CSV, Time-limited public share links (no-auth viewer page), PW app.yml deployment manifest (VLAN 130), GitHub Actions CI (`ci.yml`) + build+deploy (`build.yml`) pipeline |

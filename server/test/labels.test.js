@@ -90,15 +90,25 @@ test('generateLabels rejects large for items (container/area only)', () => {
   assert.equal(schema.generateLabels.validate({ entityType: 'area', entityIds: [1], preset: 'large' }).error, undefined);
 });
 
-test('generateLabels still rejects the legacy format:"zpl" body', () => {
-  // Spec §6: ZPL is gone. The schema is strict (no `.unknown(true)`), so a body
-  // carrying the old field must be refused rather than silently ignored — this
-  // guards against a future loosening quietly re-accepting ZPL requests.
-  const zpl = schema.generateLabels.validate({ entityType: 'item', entityIds: [1], format: 'zpl' });
-  assert.ok(zpl.error, 'a body with format:"zpl" is rejected');
-  assert.match(zpl.error.message, /format/, 'the rejection names the offending field');
+test('generateLabels never accepts the legacy format:"zpl" field', () => {
+  // Spec §6: ZPL is gone, so `format` must never reach the route handler.
+  // Asserted under BOTH validation modes, because they differ:
+  const body = { entityType: 'item', entityIds: [1], format: 'zpl' };
+
+  // (1) The schema itself is strict — no `.unknown(true)` — so it rejects.
+  const strict = schema.generateLabels.validate(body);
+  assert.ok(strict.error, 'the schema rejects an unknown `format` key');
+  assert.match(strict.error.message, /format/, 'the rejection names the offending field');
   assert.ok(schema.generateLabels.validate({ entityType: 'item', entityIds: [1], format: 'pdf' }).error,
     'even format:"pdf" is rejected — the field no longer exists at all');
+
+  // (2) The route validates with `stripUnknown: true` (see middleware/validate.js),
+  // which drops the key instead of erroring. Either way ZPL cannot be requested:
+  // the handler only ever sees entityType/entityIds/preset and always sends a PDF.
+  const stripped = schema.generateLabels.validate(body, { abortEarly: false, stripUnknown: true });
+  assert.equal(stripped.error, undefined);
+  assert.deepEqual(Object.keys(stripped.value).sort(), ['entityIds', 'entityType', 'preset'],
+    'no `format` survives into the validated body');
 });
 
 // ── getEntityData — parentZone per entity type ──────────────────────────────
