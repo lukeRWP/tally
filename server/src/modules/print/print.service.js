@@ -1,5 +1,6 @@
 const crypto = require('crypto');   // used by claimNext's randomUUID in Task 4
 const LabelsService = require('../labels/labels.service');
+const { generateToken, hashToken } = require('./agent.middleware');
 
 let _db = null;
 let _logger = null;
@@ -251,6 +252,78 @@ const PrintService = {
       [nextStatus, nextAttempts, errorText || null, jobId, agentId]
     );
     return written.affectedRows > 0 ? nextStatus : null;
+  },
+
+  // ── Agent registration & roll state ───────────────────────────────────────
+
+  async createAgent({ propertyId, name, userId }) {
+    const member = await _db.query(
+      'SELECT PROPERTY_ID FROM TALLY.property_members WHERE PROPERTY_ID = ? AND USER_ID = ?',
+      [propertyId, userId]
+    );
+    if (member.length === 0) return { error: 'not_found' };
+
+    // Plaintext is handed back exactly once and never persisted.
+    const token = generateToken();
+    const result = await _db.query(
+      'INSERT INTO TALLY.printer_agents (PROPERTY_ID, NAME, TOKEN_HASH) VALUES (?, ?, ?)',
+      [propertyId, name, hashToken(token)]
+    );
+    return { id: result.insertId, name, token };
+  },
+
+  async listAgents(propertyId, userId) {
+    const rows = await _db.query(
+      `SELECT a.ID, a.PROPERTY_ID, a.NAME, a.LOADED_MEDIA, a.PRINTER_STATE,
+              a.PRINTER_STATE_REASONS, a.LAST_SEEN_AT
+         FROM TALLY.printer_agents a
+         JOIN TALLY.property_members pm ON pm.PROPERTY_ID = a.PROPERTY_ID AND pm.USER_ID = ?
+        WHERE a.PROPERTY_ID = ?`,
+      [userId, propertyId]
+    );
+    // TOKEN_HASH is deliberately not selected — it must never reach the client.
+    return rows.map(r => ({
+      id: r.ID,
+      propertyId: r.PROPERTY_ID,
+      name: r.NAME,
+      loadedMedia: r.LOADED_MEDIA,
+      printerState: r.PRINTER_STATE,
+      printerStateReasons: typeof r.PRINTER_STATE_REASONS === 'string'
+        ? JSON.parse(r.PRINTER_STATE_REASONS || '[]')
+        : (r.PRINTER_STATE_REASONS || []),
+      lastSeenAt: r.LAST_SEEN_AT,
+    }));
+  },
+
+  async revokeAgent(id, userId) {
+    const result = await _db.query(
+      `DELETE a FROM TALLY.printer_agents a
+         JOIN TALLY.property_members pm ON pm.PROPERTY_ID = a.PROPERTY_ID AND pm.USER_ID = ?
+        WHERE a.ID = ?`,
+      [userId, id]
+    );
+    return result.affectedRows > 0;
+  },
+
+  async setLoadedMedia(agentId, loadedMedia, userId) {
+    const updated = await _db.query(
+      `UPDATE TALLY.printer_agents a
+         JOIN TALLY.property_members pm ON pm.PROPERTY_ID = a.PROPERTY_ID AND pm.USER_ID = ?
+          SET a.LOADED_MEDIA = ?
+        WHERE a.ID = ?`,
+      [userId, loadedMedia, agentId]
+    );
+    if (updated.affectedRows === 0) return null;
+
+    // Loading a roll releases everything that was waiting on exactly that roll.
+    const released = await _db.query(
+      `UPDATE TALLY.print_jobs j
+         JOIN TALLY.printer_agents a ON a.PROPERTY_ID = j.PROPERTY_ID
+          SET j.STATUS = 'queued'
+        WHERE a.ID = ? AND j.STATUS = 'held' AND j.PRESET = ?`,
+      [agentId, loadedMedia]
+    );
+    return { released: released.affectedRows };
   },
 };
 

@@ -369,3 +369,63 @@ test('ackJob(fail) reports null when a concurrent sweep already requeued the cla
   assert.match(sql, /STATUS\s*=\s*'claimed'/i,
     "the failure UPDATE must re-assert STATUS='claimed', not just CLAIMED_BY");
 });
+
+// ── agent registration & roll-state release ──────────────────────────────────
+
+test('createAgent stores only a hash and returns the plaintext token once', async () => {
+  let insertParams = null;
+  PrintService.init({ db: fakeDb((sql, params) => {
+    if (/FROM TALLY\.property_members/i.test(sql)) return [{ PROPERTY_ID: 3 }];
+    if (/INSERT INTO TALLY\.printer_agents/i.test(sql)) { insertParams = params; return { insertId: 7 }; }
+    return [];
+  }), logger, config });
+
+  const out = await PrintService.createAgent({ propertyId: 3, name: 'Garage Pi', userId: 42 });
+  assert.equal(out.id, 7);
+  assert.match(out.token, /^tp_[0-9a-f]{64}$/, 'plaintext is returned to the caller');
+  assert.ok(insertParams.includes(hashToken(out.token)), 'the HASH is what gets stored');
+  assert.ok(!insertParams.includes(out.token), 'the plaintext must never be stored');
+});
+
+test('createAgent refuses a property the caller is not a member of', async () => {
+  let inserted = false;
+  PrintService.init({ db: fakeDb((sql) => {
+    if (/INSERT/i.test(sql)) { inserted = true; return { insertId: 1 }; }
+    return [];   // membership check finds nothing
+  }), logger, config });
+  assert.deepEqual(await PrintService.createAgent({ propertyId: 999, name: 'x', userId: 42 }), { error: 'not_found' });
+  assert.equal(inserted, false);
+});
+
+test('listAgents never returns a token or its hash', async () => {
+  PrintService.init({ db: fakeDb(() => [{
+    ID: 7, PROPERTY_ID: 3, NAME: 'Garage Pi', TOKEN_HASH: 'deadbeef',
+    LOADED_MEDIA: 'large', PRINTER_STATE: 'idle', PRINTER_STATE_REASONS: '[]', LAST_SEEN_AT: null,
+  }]), logger, config });
+  const [agent] = await PrintService.listAgents(3, 42);
+  assert.equal(agent.name, 'Garage Pi');
+  assert.equal(agent.token, undefined);
+  assert.equal(agent.tokenHash, undefined);
+  assert.ok(!JSON.stringify(agent).includes('deadbeef'), 'no hash may leak to the client');
+});
+
+test('setLoadedMedia releases exactly the held jobs matching the new roll', async () => {
+  const seen = [];
+  PrintService.init({ db: fakeDb((sql, params) => {
+    seen.push({ sql, params });
+    if (/UPDATE TALLY\.printer_agents/i.test(sql)) return { affectedRows: 1 };
+    return { affectedRows: 4 };
+  }), logger, config });
+
+  const out = await PrintService.setLoadedMedia(7, 'medium', 42);
+  assert.deepEqual(out, { released: 4 });
+
+  const release = seen.find(s => /STATUS\s*=\s*'queued'/i.test(s.sql));
+  assert.match(release.sql, /STATUS\s*=\s*'held'/i, 'only held jobs are released');
+  assert.ok(release.params.includes('medium'), 'released only for the newly loaded roll');
+});
+
+test('setLoadedMedia is membership-scoped and returns null for a foreign agent', async () => {
+  PrintService.init({ db: fakeDb(() => ({ affectedRows: 0 })), logger, config });
+  assert.equal(await PrintService.setLoadedMedia(7, 'small', 42), null);
+});
