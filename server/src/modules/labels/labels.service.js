@@ -3,11 +3,13 @@ const PDFDocument = require('pdfkit');
 const { parseCode } = require('../../utils/qr');
 
 // Geometry for the thermal single-label + manifest presets. 72 pt = 1 inch.
-// `banner` is the left location-banner strip width in pt (0 = no banner).
+// `banner` is the left location-banner strip width in pt (0 = no banner) and
+// `bannerFont` its type size. This table is the single source of geometry
+// truth — renderers must not hard-code sizes.
 const PRESETS = {
-  small:  { widthPt: 144, heightPt: 72,  qrPt: 60,  banner: 0,  title: 11, code: 8 },
-  medium: { widthPt: 216, heightPt: 216, qrPt: 118, banner: 26, title: 15, code: 10 },
-  large:  { widthPt: 288, heightPt: 432, qrPt: 54,  banner: 22, title: 13, code: 8, row: 11, rowGap: 3 },
+  small:  { widthPt: 144, heightPt: 72,  qrPt: 60,  banner: 0,  bannerFont: 0,  title: 11, code: 8 },
+  medium: { widthPt: 216, heightPt: 216, qrPt: 118, banner: 26, bannerFont: 12, title: 15, code: 10 },
+  large:  { widthPt: 288, heightPt: 432, qrPt: 54,  banner: 22, bannerFont: 13, title: 13, code: 8, row: 11, rowGap: 3 },
 };
 
 let _db = null;
@@ -58,7 +60,7 @@ const LabelsService = {
   _drawTag(doc, e, qrBuf, P, presetKey) {
     const W = P.widthPt, H = P.heightPt, pad = 6;
     const bannerW = (P.banner && e.parentZone) ? P.banner : 0;
-    if (bannerW) LabelsService._verticalBanner(doc, e.parentZone, H, bannerW, Math.min(P.title, 12));
+    if (bannerW) LabelsService._verticalBanner(doc, e.parentZone, H, bannerW, P.bannerFont);
     const cx = bannerW, cw = W - bannerW;
 
     if (presetKey === 'small') {
@@ -164,7 +166,7 @@ const LabelsService = {
 
     for (let pg = 0; pg < pageCount; pg++) {
       startNewPage();
-      if (bannerW) LabelsService._verticalBanner(doc, header.parentZone, H, bannerW, 13);
+      if (bannerW) LabelsService._verticalBanner(doc, header.parentZone, H, bannerW, P.bannerFont);
       const cx = bannerW;
 
       // Header: QR + inverted title + breadcrumb + code, bottom-bordered.
@@ -189,10 +191,15 @@ const LabelsService = {
       for (let r = start; r < end; r++) {
         if ((r - start) % 2 === 1)
           doc.save().rect(cx + L.pad, ry - 1, W - cx - L.pad * 2, L.rowH).fill('#f0f0f0').restore();
+        // `height` is what actually clamps these to one line: pdfkit only wraps
+        // when a `width` is given, and it only honours `ellipsis` once a
+        // `height` bounds the box — `lineBreak: false` alone does not stop a
+        // long name or a 5+ digit qty from spilling onto a second line and
+        // overlapping the next row's shading.
         doc.fontSize(P.row).font('Helvetica').fillColor('#000000')
-          .text(rows[r].name, cx + L.pad + 2, ry, { width: W - cx - L.pad * 2 - 38, lineBreak: false, ellipsis: true });
+          .text(rows[r].name, cx + L.pad + 2, ry, { width: W - cx - L.pad * 2 - 38, height: P.row, lineBreak: false, ellipsis: true });
         doc.font('Courier').fillColor('#000000')
-          .text(String(rows[r].qty), W - L.pad - 34, ry, { width: 30, align: 'right' });
+          .text(String(rows[r].qty), W - L.pad - 34, ry, { width: 30, height: P.row, align: 'right', lineBreak: false, ellipsis: true });
         ry += L.rowH;
       }
 

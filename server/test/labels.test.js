@@ -1,5 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert');
+const zlib = require('node:zlib');
 const Labels = require('../src/modules/labels/labels.service');
 const schema = require('../src/modules/labels/labels.schema');
 
@@ -148,6 +149,34 @@ test('_fullLocation recombines breadcrumb + parentZone for every entity type', (
 
 function pdfPageCount(buf) { return (buf.toString('latin1').match(/\/Type\s*\/Page[^s]/g) || []).length; }
 
+// pdfkit deflates its content streams and writes text as hex inside `[...] TJ`
+// arrays (split at kerning pairs), so the rendered strings are not greppable in
+// the raw bytes. Inflate every stream and rebuild one string per drawn text
+// run, with the baseline y it was placed at, so tests can assert on real
+// rendered content rather than on byte size.
+function pdfTextRuns(buf) {
+  const src = buf.toString('latin1');
+  const runs = [];
+  const re = /stream\r?\n/g;
+  let m;
+  while ((m = re.exec(src))) {
+    const start = m.index + m[0].length;
+    const end = src.indexOf('endstream', start);
+    if (end < 0) continue;
+    let content;
+    try { content = zlib.inflateSync(Buffer.from(src.slice(start, end), 'latin1')).toString('latin1'); }
+    catch { continue; } // not a deflated content stream (e.g. an embedded PNG)
+    for (const block of content.match(/BT[\s\S]*?ET/g) || []) {
+      const hex = (block.match(/<([0-9a-fA-F]*)>/g) || []).map(h => h.slice(1, -1)).join('');
+      if (!hex) continue;
+      const tm = block.match(/1 0 0 1 ([-\d.]+) ([-\d.]+) Tm/);
+      runs.push({ text: Buffer.from(hex, 'hex').toString('latin1'), y: tm ? Number(tm[2]) : null });
+    }
+  }
+  return runs;
+}
+const pdfTextCount = (buf, needle) => pdfTextRuns(buf).filter(r => r.text.startsWith(needle)).length;
+
 test('renderLabelPdf makes one page per entity and is a PDF', async () => {
   Labels.init({ db: fakeDb(() => []), logger, config });
   const entities = [
@@ -201,6 +230,24 @@ test('renderManifestPdf produces a PDF (paginated by row count)', async () => {
     { header: { name: 'Camping Gear', qrCode: 'TLY-C-1', parentZone: 'Garage', breadcrumb: 'Home' }, rows }, 'large');
   assert.ok(buf.slice(0, 4).toString() === '%PDF');
   assert.equal(pdfPageCount(buf), Labels.manifestPageCount(60, 'large'));
+});
+
+test('manifest rows stay on one line — a long name / big qty cannot overlap the next row', async () => {
+  Labels.init({ db: fakeDb(() => []), logger, config });
+  const buf = await Labels.renderManifestPdf({
+    header: { name: 'Camping Gear', qrCode: 'TLY-C-1', parentZone: 'Garage', breadcrumb: 'Home' },
+    rows: [
+      { name: 'An extremely long unbreakable item name that cannot possibly fit', qty: 123456 },
+      { name: 'Lantern', qty: 2 },
+    ],
+  }, 'large');
+  // The two rows sit one rowH (14pt) apart. If either cell wrapped, a third
+  // baseline would appear between them and paint over the next row's shading.
+  const rowRuns = pdfTextRuns(buf).filter(r => r.y !== null && r.y > 300 && r.y < 340);
+  assert.equal(rowRuns.length, 4, `expected exactly 4 row cells (2 rows x name+qty), got ${JSON.stringify(rowRuns)}`);
+  const baselines = [...new Set(rowRuns.map(r => Math.round(r.y)))].sort((a, b) => b - a);
+  assert.equal(baselines.length, 4, 'name and qty share a row but not an exact baseline');
+  assert.ok(baselines[0] - baselines[2] === 14, 'consecutive rows are exactly one rowH apart');
 });
 
 test('renderManifestBundle concatenates several manifests into one PDF', async () => {
