@@ -1644,7 +1644,7 @@ git commit -m "feat(print): Settings → Printing (printer, loaded roll, job que
 
 **Spec coverage:** §2 pull model → Tasks 4/6 (agent claims, no inbound). §4 data model → Task 1. §4a transitions → Tasks 3–5. §4b sheet download-only → Task 1 (Joi) + Task 7 (`isPrintable`). §5 API → Task 6. §5a telemetry → Tasks 1, 4, 8. §6 security (hashed token, once-only plaintext, server-derived authority, PDF only for held jobs) → Tasks 2, 4, 5, 6. §9 client → Tasks 7–8. §10 testing → each task's tests. §3/§7/§8 (backends, image, bring-up) are explicitly out of scope for this plan.
 
-**Placeholder scan:** none. Two transcription notes are deliberate and concrete (drop unused `crypto`/`CANCELABLE` in Task 3 if unreferenced; fix the `PrintableePreset` typo in Task 7).
+**Placeholder scan:** none. Every step carries the actual code or command to run. Two clarifying notes explain cross-task details (why `crypto` is imported in Task 3 but first used in Task 4; why `PrintablePreset` narrows Phase 1's `LabelPreset`) — neither defers work.
 
 **Type consistency:** `PrintService` method names are consistent across Tasks 3–6 (`resolveProperty`, `createJob`, `listJobs`, `cancelJob`, `retryJob`, `sweepStaleClaims`, `claimNext`, `getClaimedJob`, `renderJobPdf`, `ackJob`, `createAgent`, `listAgents`, `revokeAgent`, `setLoadedMedia`). `hashToken`/`generateToken`/`requireAgent` (Task 2) are consumed with those exact names in Tasks 5–6. Client `Printer`/`PrintJob`/`PrintablePreset` (Task 7) are used unchanged in Task 8. Preset vocabulary is `small|medium|large` server-side for jobs and rolls, with `sheet` existing only in Phase 1's label presets.
 
