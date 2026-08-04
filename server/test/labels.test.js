@@ -69,6 +69,16 @@ test('generateLabels accepts a preset and defaults to small', () => {
   assert.equal(schema.generateLabels.validate({ entityType: 'container', entityIds: [1], preset: 'medium' }).error, undefined);
 });
 
+test('generateLabels defaults the preset per entity type (small item, medium bin/location)', () => {
+  const def = (entityType) => schema.generateLabels.validate({ entityType, entityIds: [1] });
+  assert.equal(def('item').error, undefined);
+  assert.equal(def('item').value.preset, 'small', 'an item tag defaults to the 2x1 small preset');
+  assert.equal(def('container').error, undefined);
+  assert.equal(def('container').value.preset, 'medium', 'a container defaults to the 3x3 bin tag');
+  assert.equal(def('area').error, undefined);
+  assert.equal(def('area').value.preset, 'medium', 'an area defaults to the 3x3 location tag');
+});
+
 test('generateLabels rejects an unknown preset', () => {
   assert.ok(schema.generateLabels.validate({ entityType: 'item', entityIds: [1], preset: 'giant' }).error);
 });
@@ -97,6 +107,19 @@ test('getEntityData exposes parentZone per type (Area for container, Property fo
   const [a] = await Labels.getEntityData('area', [3], 42);
   assert.equal(a.parentZone, 'Home');
   assert.equal(a.breadcrumb, '');
+});
+
+test('getEntityData tags every row with its entity type (medium footer label)', async () => {
+  const scripted = {
+    item:      [{ ID: 1, NAME: 'Drill', QR_CODE: 'TLY-I-1', CONTAINER_NAME: 'Bin 4', AREA_NAME: 'Garage', PROPERTY_NAME: 'Home' }],
+    container: [{ ID: 5, NAME: 'Camping Gear', QR_CODE: 'TLY-C-1', AREA_NAME: 'Garage', PROPERTY_NAME: 'Home' }],
+    area:      [{ ID: 3, NAME: 'Garage', QR_CODE: 'TLY-A-1', PROPERTY_NAME: 'Home' }],
+  };
+  for (const type of ['item', 'container', 'area']) {
+    Labels.init({ db: fakeDb(() => scripted[type]), logger, config });
+    const [row] = await Labels.getEntityData(type, [1], 42);
+    assert.equal(row.type, type, `${type} rows carry type:'${type}'`);
+  }
 });
 
 // ── _fullLocation — Avery sheet recombines breadcrumb + parentZone ──────────

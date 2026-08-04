@@ -72,12 +72,17 @@ const LabelsService = {
       LabelsService._invertedTitle(doc, e.name, cx + pad, pad, cw - pad * 2, P.title, 'center');
       const qr = P.qrPt, qrX = cx + (cw - qr) / 2, qrY = pad + P.title + 16;
       doc.image(qrBuf, qrX, qrY, { width: qr });
-      const fy = H - pad - P.code - 3;
+      // Footer: TLY code on the left, entity type on the right. The code's box
+      // stops short of typeW so a long code can never run under the type.
+      const fy = H - pad - P.code - 3, typeW = 60;
       doc.save().moveTo(cx + pad, fy - 5).lineTo(W - pad, fy - 5).lineWidth(1).strokeColor('#000000').stroke().restore();
       doc.fontSize(P.code).font('Courier').fillColor('#000000')
-        .text(String(e.qrCode).toUpperCase(), cx + pad, fy, { width: cw - pad * 2, lineBreak: false, ellipsis: true });
+        .text(String(e.qrCode).toUpperCase(), cx + pad, fy, { width: cw - pad * 2 - typeW, lineBreak: false, ellipsis: true });
+      if (e.type) {
+        doc.fontSize(P.code - 1).font('Courier').fillColor('#555555')
+          .text(String(e.type).toUpperCase(), W - pad - typeW, fy, { width: typeW, align: 'right', lineBreak: false, ellipsis: true });
+      }
     }
-    doc.fillColor('#000000');
   },
 
   async renderLabelPdf(entities, presetKey) {
@@ -297,7 +302,7 @@ const LabelsService = {
         [userId, ...ids]
       );
       return rows.map(row => ({
-        id: row.ID, name: row.NAME, qrCode: row.QR_CODE,
+        id: row.ID, name: row.NAME, qrCode: row.QR_CODE, type: 'item',
         parentZone: null,
         breadcrumb: [row.PROPERTY_NAME, row.AREA_NAME, row.CONTAINER_NAME].filter(Boolean).join(' > '),
       }));
@@ -317,7 +322,7 @@ const LabelsService = {
         [userId, ...ids]
       );
       return rows.map(row => ({
-        id: row.ID, name: row.NAME, qrCode: row.QR_CODE,
+        id: row.ID, name: row.NAME, qrCode: row.QR_CODE, type: 'container',
         parentZone: row.AREA_NAME || null,
         breadcrumb: row.PROPERTY_NAME || '',
       }));
@@ -335,7 +340,7 @@ const LabelsService = {
         [userId, ...ids]
       );
       return rows.map(row => ({
-        id: row.ID, name: row.NAME, qrCode: row.QR_CODE,
+        id: row.ID, name: row.NAME, qrCode: row.QR_CODE, type: 'area',
         parentZone: row.PROPERTY_NAME || null,
         breadcrumb: '',
       }));
