@@ -353,3 +353,19 @@ test('renderJobPdf renders as the queuing user so Phase 1 scoping still applies'
     Labels.renderLabelPdf = origRender;
   }
 });
+
+test('ackJob(fail) reports null when a concurrent sweep already requeued the claim', async () => {
+  // The SELECT sees the row still claimed, but by the time the UPDATE runs a
+  // concurrent claimNext() has swept it stale — the write matches nothing.
+  let sql = '';
+  PrintService.init({ db: fakeDb((s) => {
+    if (/SELECT/i.test(s)) return [{ ATTEMPTS: 0 }];
+    sql = s;
+    return { affectedRows: 0 };
+  }), logger, config });
+
+  assert.equal(await PrintService.ackJob(11, 7, false, 'media-empty'), null,
+    'a no-op write must not report a status the row never took');
+  assert.match(sql, /STATUS\s*=\s*'claimed'/i,
+    "the failure UPDATE must re-assert STATUS='claimed', not just CLAIMED_BY");
+});

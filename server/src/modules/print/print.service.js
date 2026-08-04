@@ -238,14 +238,19 @@ const PrintService = {
 
     const nextAttempts = rows[0].ATTEMPTS + 1;
     const nextStatus = nextAttempts >= MAX_ATTEMPTS ? 'failed' : 'queued';
-    await _db.query(
+    // Re-assert STATUS = 'claimed' here, not just in the SELECT above: a
+    // concurrent claimNext() can sweep this very claim as stale in between,
+    // which already requeues the row and clears CLAIMED_BY. Without this guard
+    // the UPDATE silently matches nothing while we return a status the row
+    // never took. Report null instead so the caller knows the ack didn't land.
+    const written = await _db.query(
       `UPDATE TALLY.print_jobs
           SET STATUS = ?, ATTEMPTS = ?, LAST_ERROR = ?,
               CLAIM_ID = NULL, CLAIMED_BY = NULL, CLAIMED_AT = NULL
-        WHERE ID = ? AND CLAIMED_BY = ?`,
+        WHERE ID = ? AND CLAIMED_BY = ? AND STATUS = 'claimed'`,
       [nextStatus, nextAttempts, errorText || null, jobId, agentId]
     );
-    return nextStatus;
+    return written.affectedRows > 0 ? nextStatus : null;
   },
 };
 
