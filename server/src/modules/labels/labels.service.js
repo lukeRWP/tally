@@ -2,6 +2,16 @@ const QRCode = require('qrcode');
 const PDFDocument = require('pdfkit');
 const { parseCode } = require('../../utils/qr');
 
+// Geometry for the thermal single-label + manifest presets. 72 pt = 1 inch.
+// `banner` is the left location-banner strip width in pt (0 = no banner) and
+// `bannerFont` its type size. This table is the single source of geometry
+// truth — renderers must not hard-code sizes.
+const PRESETS = {
+  small:  { widthPt: 144, heightPt: 72,  qrPt: 60,  banner: 0,  bannerFont: 0,  title: 11, code: 8 },
+  medium: { widthPt: 216, heightPt: 216, qrPt: 118, banner: 26, bannerFont: 12, title: 15, code: 10 },
+  large:  { widthPt: 288, heightPt: 432, qrPt: 54,  banner: 22, bannerFont: 13, title: 13, code: 8, row: 11, rowGap: 3 },
+};
+
 let _db = null;
 let _logger = null;
 let _baseUrl = null;
@@ -20,6 +30,210 @@ const LabelsService = {
   async generateQrBuffer(code, size = 200) {
     const url = `${_baseUrl}/s/${code}`;
     return QRCode.toBuffer(url, { width: size, margin: 1 });
+  },
+
+  // ── Thermal single-label rendering ───────────────────────────────────────
+
+  _invertedTitle(doc, text, x, y, w, fontSize, align = 'left') {
+    const padX = 5, padY = 3, lineH = fontSize * 1.15, boxH = lineH + padY * 2;
+    doc.save().roundedRect(x, y, w, boxH, 2).fill('#000000').restore();
+    doc.fontSize(fontSize).font('Helvetica-Bold').fillColor('#ffffff')
+      .text(String(text).toUpperCase(), x + padX, y + padY,
+        { width: w - padX * 2, height: lineH, align, lineBreak: false, ellipsis: true });
+    doc.fillColor('#000000');
+    return boxH;
+  },
+
+  _verticalBanner(doc, text, H, bannerW, fontSize) {
+    doc.save().rect(0, 0, bannerW, H).fill('#000000').restore();
+    doc.save();
+    doc.rotate(-90, { origin: [bannerW / 2, H / 2] });
+    // After rotating -90° about the banner centre, a normal horizontal text box
+    // of width H (the label height) reads bottom-to-top down the strip.
+    doc.fontSize(fontSize).font('Helvetica-Bold').fillColor('#ffffff')
+      .text(String(text).toUpperCase(), bannerW / 2 - H / 2, H / 2 - fontSize / 2 - 1,
+        { width: H, align: 'center', lineBreak: false, ellipsis: true, characterSpacing: 1 });
+    doc.restore();
+    doc.fillColor('#000000');
+  },
+
+  _drawTag(doc, e, qrBuf, P, presetKey) {
+    const W = P.widthPt, H = P.heightPt, pad = 6;
+    const bannerW = (P.banner && e.parentZone) ? P.banner : 0;
+    if (bannerW) LabelsService._verticalBanner(doc, e.parentZone, H, bannerW, P.bannerFont);
+    const cx = bannerW, cw = W - bannerW;
+
+    if (presetKey === 'small') {
+      const qr = Math.min(P.qrPt, H - pad * 2);
+      doc.image(qrBuf, cx + pad, (H - qr) / 2, { width: qr });
+      const tx = cx + pad + qr + pad, tw = W - tx - pad;
+      LabelsService._invertedTitle(doc, e.name, tx, pad + 2, tw, P.title);
+      doc.fontSize(P.code).font('Courier').fillColor('#000000')
+        .text(String(e.qrCode).toUpperCase(), tx, H - pad - P.code - 1, { width: tw, lineBreak: false, ellipsis: true });
+    } else { // medium
+      LabelsService._invertedTitle(doc, e.name, cx + pad, pad, cw - pad * 2, P.title, 'center');
+      const qr = P.qrPt, qrX = cx + (cw - qr) / 2, qrY = pad + P.title + 16;
+      doc.image(qrBuf, qrX, qrY, { width: qr });
+      // Footer: TLY code on the left, entity type on the right. The code's box
+      // stops short of typeW so a long code can never run under the type.
+      const fy = H - pad - P.code - 3, typeW = 60;
+      doc.save().moveTo(cx + pad, fy - 5).lineTo(W - pad, fy - 5).lineWidth(1).strokeColor('#000000').stroke().restore();
+      doc.fontSize(P.code).font('Courier').fillColor('#000000')
+        .text(String(e.qrCode).toUpperCase(), cx + pad, fy, { width: cw - pad * 2 - typeW, lineBreak: false, ellipsis: true });
+      if (e.type) {
+        doc.fontSize(P.code - 1).font('Courier').fillColor('#555555')
+          .text(String(e.type).toUpperCase(), W - pad - typeW, fy, { width: typeW, align: 'right', lineBreak: false, ellipsis: true });
+      }
+    }
+  },
+
+  async renderLabelPdf(entities, presetKey) {
+    const P = PRESETS[presetKey];
+    const qrBuffers = await Promise.all(entities.map(e => LabelsService.generateQrBuffer(e.qrCode, P.qrPt * 3)));
+    return new Promise((resolve, reject) => {
+      const doc = new PDFDocument({ size: [P.widthPt, P.heightPt], margin: 0 });
+      const bufs = [];
+      doc.on('data', b => bufs.push(b));
+      doc.on('end', () => resolve(Buffer.concat(bufs)));
+      doc.on('error', reject);
+      entities.forEach((e, i) => {
+        if (i > 0) doc.addPage({ size: [P.widthPt, P.heightPt], margin: 0 });
+        LabelsService._drawTag(doc, e, qrBuffers[i], P, presetKey);
+      });
+      doc.end();
+    });
+  },
+
+  // ── Contents manifest (large) ─────────────────────────────────────────────
+
+  // Layout constants shared by the pagination math and the renderer.
+  _manifestLayout(P) {
+    const pad = 10, headerH = 66, colHdrH = 14, footerH = 18;
+    const rowH = P.row + P.rowGap;
+    const listTop = pad + headerH + colHdrH;
+    const listBottom = P.heightPt - pad - footerH;
+    const rowsPerPage = Math.max(1, Math.floor((listBottom - listTop) / rowH));
+    return { pad, headerH, colHdrH, footerH, rowH, listTop, rowsPerPage };
+  },
+
+  manifestPageCount(rowCount, presetKey) {
+    const { rowsPerPage } = LabelsService._manifestLayout(PRESETS[presetKey]);
+    return Math.max(1, Math.ceil((rowCount || 0) / rowsPerPage));
+  },
+
+  async getManifest(entityType, id, userId) {
+    const [header] = await LabelsService.getEntityData(entityType, [id], userId);
+    if (!header) return null; // not found OR not the caller's — route 404s
+
+    let rows;
+    if (entityType === 'container') {
+      rows = await _db.query(
+        `SELECT i.NAME AS name, i.QUANTITY AS qty
+         FROM TALLY.items i
+         JOIN TALLY.containers c ON i.CONTAINER_ID = c.ID
+         JOIN TALLY.areas a ON c.AREA_ID = a.ID
+         JOIN TALLY.property_members pm ON pm.PROPERTY_ID = a.PROPERTY_ID AND pm.USER_ID = ?
+         WHERE i.CONTAINER_ID = ? AND i.DELETED_AT IS NULL
+         ORDER BY i.NAME`,
+        [userId, id]
+      );
+    } else { // area → its direct containers, qty = # items inside each
+      rows = await _db.query(
+        `SELECT c.NAME AS name,
+                (SELECT COUNT(*) FROM TALLY.items i2 WHERE i2.CONTAINER_ID = c.ID AND i2.DELETED_AT IS NULL) AS qty
+         FROM TALLY.containers c
+         JOIN TALLY.areas a ON c.AREA_ID = a.ID
+         JOIN TALLY.property_members pm ON pm.PROPERTY_ID = a.PROPERTY_ID AND pm.USER_ID = ?
+         WHERE c.AREA_ID = ? AND c.DELETED_AT IS NULL
+         ORDER BY c.NAME`,
+        [userId, id]
+      );
+    }
+    return { header, rows: rows.map(r => ({ name: r.name, qty: Number(r.qty) })) };
+  },
+
+  // One drawing routine for a single manifest — draws its own paginated pages
+  // into an existing doc, calling startNewPage() at the top of each page. Both
+  // the single-manifest and multi-manifest entry points go through this (DRY).
+  async _drawManifest(doc, manifest, presetKey, startNewPage) {
+    const P = PRESETS[presetKey];
+    const W = P.widthPt, H = P.heightPt;
+    const { header, rows } = manifest;
+    const L = LabelsService._manifestLayout(P);
+    const pageCount = LabelsService.manifestPageCount(rows.length, presetKey);
+    const qrBuf = await LabelsService.generateQrBuffer(header.qrCode, P.qrPt * 3);
+    const bannerW = header.parentZone ? P.banner : 0;
+
+    for (let pg = 0; pg < pageCount; pg++) {
+      startNewPage();
+      if (bannerW) LabelsService._verticalBanner(doc, header.parentZone, H, bannerW, P.bannerFont);
+      const cx = bannerW;
+
+      // Header: QR + inverted title + breadcrumb + code, bottom-bordered.
+      doc.image(qrBuf, cx + L.pad, L.pad, { width: P.qrPt });
+      const hx = cx + L.pad + P.qrPt + 8, hw = W - hx - L.pad;
+      LabelsService._invertedTitle(doc, header.name, hx, L.pad, hw, P.title);
+      doc.fontSize(8).font('Helvetica').fillColor('#333333')
+        .text(header.breadcrumb || '', hx, L.pad + 24, { width: hw, lineBreak: false, ellipsis: true });
+      doc.fontSize(7).font('Courier').fillColor('#666666')
+        .text(String(header.qrCode).toUpperCase(), hx, L.pad + 36, { width: hw, lineBreak: false });
+      doc.save().moveTo(cx + L.pad, L.pad + L.headerH).lineTo(W - L.pad, L.pad + L.headerH)
+        .lineWidth(1.5).strokeColor('#000000').stroke().restore();
+
+      // Column header.
+      doc.fontSize(7).font('Courier').fillColor('#666666')
+        .text('CONTENTS', cx + L.pad, L.pad + L.headerH + 3, { width: 120, lineBreak: false });
+      doc.text('QTY', W - L.pad - 34, L.pad + L.headerH + 3, { width: 34, align: 'right' });
+
+      // Rows for this page.
+      const start = pg * L.rowsPerPage, end = Math.min(start + L.rowsPerPage, rows.length);
+      let ry = L.listTop;
+      for (let r = start; r < end; r++) {
+        if ((r - start) % 2 === 1)
+          doc.save().rect(cx + L.pad, ry - 1, W - cx - L.pad * 2, L.rowH).fill('#f0f0f0').restore();
+        // `height` is what actually clamps these to one line: pdfkit only wraps
+        // when a `width` is given, and it only honours `ellipsis` once a
+        // `height` bounds the box — `lineBreak: false` alone does not stop a
+        // long name or a 5+ digit qty from spilling onto a second line and
+        // overlapping the next row's shading.
+        doc.fontSize(P.row).font('Helvetica').fillColor('#000000')
+          .text(rows[r].name, cx + L.pad + 2, ry, { width: W - cx - L.pad * 2 - 38, height: P.row, lineBreak: false, ellipsis: true });
+        doc.font('Courier').fillColor('#000000')
+          .text(String(rows[r].qty), W - L.pad - 34, ry, { width: 30, height: P.row, align: 'right', lineBreak: false, ellipsis: true });
+        ry += L.rowH;
+      }
+
+      // Footer: total count + page x of n.
+      const fy = H - L.pad - L.footerH + 5;
+      doc.save().moveTo(cx + L.pad, fy - 5).lineTo(W - L.pad, fy - 5).lineWidth(1).strokeColor('#000000').stroke().restore();
+      doc.fontSize(8).font('Courier').fillColor('#333333')
+        .text(`${rows.length} item${rows.length === 1 ? '' : 's'}`, cx + L.pad, fy, { width: 120, lineBreak: false });
+      doc.text(`Page ${pg + 1} of ${pageCount}`, W - L.pad - 100, fy, { width: 100, align: 'right' });
+    }
+  },
+
+  // Render one or more manifests into a single PDF (each manifest's own pages,
+  // concatenated). startNewPage() suppresses the first addPage so pdfkit's
+  // implicit first page is reused.
+  async renderManifestBundle(manifests, presetKey) {
+    const P = PRESETS[presetKey];
+    return new Promise((resolve, reject) => {
+      const doc = new PDFDocument({ size: [P.widthPt, P.heightPt], margin: 0 });
+      const bufs = [];
+      doc.on('data', b => bufs.push(b));
+      doc.on('end', () => resolve(Buffer.concat(bufs)));
+      doc.on('error', reject);
+      let first = true;
+      const startNewPage = () => { if (!first) doc.addPage({ size: [P.widthPt, P.heightPt], margin: 0 }); first = false; };
+      (async () => {
+        for (const m of manifests) await LabelsService._drawManifest(doc, m, presetKey, startNewPage);
+        doc.end();
+      })().catch(reject);
+    });
+  },
+
+  async renderManifestPdf(manifest, presetKey) {
+    return LabelsService.renderManifestBundle([manifest], presetKey);
   },
 
   // ── Code Resolution ─────────────────────────────────────────────────────────
@@ -95,12 +309,9 @@ const LabelsService = {
         [userId, ...ids]
       );
       return rows.map(row => ({
-        id: row.ID,
-        name: row.NAME,
-        qrCode: row.QR_CODE,
-        breadcrumb: [row.PROPERTY_NAME, row.AREA_NAME, row.CONTAINER_NAME]
-          .filter(Boolean)
-          .join(' > '),
+        id: row.ID, name: row.NAME, qrCode: row.QR_CODE, type: 'item',
+        parentZone: null,
+        breadcrumb: [row.PROPERTY_NAME, row.AREA_NAME, row.CONTAINER_NAME].filter(Boolean).join(' > '),
       }));
     }
 
@@ -118,12 +329,9 @@ const LabelsService = {
         [userId, ...ids]
       );
       return rows.map(row => ({
-        id: row.ID,
-        name: row.NAME,
-        qrCode: row.QR_CODE,
-        breadcrumb: [row.PROPERTY_NAME, row.AREA_NAME]
-          .filter(Boolean)
-          .join(' > '),
+        id: row.ID, name: row.NAME, qrCode: row.QR_CODE, type: 'container',
+        parentZone: row.AREA_NAME || null,
+        breadcrumb: row.PROPERTY_NAME || '',
       }));
     }
 
@@ -139,10 +347,9 @@ const LabelsService = {
         [userId, ...ids]
       );
       return rows.map(row => ({
-        id: row.ID,
-        name: row.NAME,
-        qrCode: row.QR_CODE,
-        breadcrumb: row.PROPERTY_NAME || '',
+        id: row.ID, name: row.NAME, qrCode: row.QR_CODE, type: 'area',
+        parentZone: row.PROPERTY_NAME || null,
+        breadcrumb: '',
       }));
     }
 
@@ -150,6 +357,16 @@ const LabelsService = {
   },
 
   // ── PDF Label Generation ────────────────────────────────────────────────────
+
+  // The thermal presets split an entity's location path in two: `parentZone`
+  // is the zone printed in the rotated banner and `breadcrumb` is whatever sits
+  // above it. The Avery sheet has no banner, so it recombines them back into
+  // the single full path it printed before that split
+  // (item → "Property > Area > Container", container → "Property > Area",
+  // area → "Property").
+  _fullLocation(entity) {
+    return [entity.breadcrumb, entity.parentZone].filter(Boolean).join(' > ');
+  },
 
   async generatePdf(entities, labelType) {
     // Label dimensions in points (1 inch = 72 points)
@@ -269,10 +486,11 @@ const LabelsService = {
             width: textW, lineBreak: false, ellipsis: true,
           });
 
-        // Breadcrumb
-        if (entity.breadcrumb) {
+        // Location — the full path, recombined from breadcrumb + parentZone.
+        const loc = LabelsService._fullLocation(entity);
+        if (loc) {
           doc.fontSize(fs.bc).font('Helvetica').fillColor('#888888')
-            .text(entity.breadcrumb.toUpperCase(), textX, textCenterY + 4 + fs.code * 1.8, {
+            .text(loc.toUpperCase(), textX, textCenterY + 4 + fs.code * 1.8, {
               width: textW, lineBreak: false, ellipsis: true,
             });
         }
@@ -282,29 +500,6 @@ const LabelsService = {
 
       doc.end();
     });
-  },
-
-  // ── ZPL Thermal Printer Output ──────────────────────────────────────────────
-
-  generateZpl(entities) {
-    if (!Array.isArray(entities)) {
-      entities = [entities];
-    }
-
-    // Sanitize text for ZPL: strip ^ and ~ which are ZPL command prefixes
-    const zplSafe = (str) => String(str || '').replace(/[\^~]/g, '');
-
-    return entities
-      .map(entity => {
-        return [
-          '^XA',
-          `^FO50,50^BQN,2,5^FDMA,${_baseUrl}/s/${entity.qrCode}^FS`,
-          `^CF0,30^FO200,60^FD${zplSafe(entity.name)}^FS`,
-          `^CF0,20^FO200,100^FD${zplSafe(entity.qrCode)}^FS`,
-          '^XZ',
-        ].join('\n');
-      })
-      .join('\n');
   },
 };
 

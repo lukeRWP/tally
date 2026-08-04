@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Download, Copy, Printer } from 'lucide-react';
+import { Printer } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -9,7 +9,7 @@ import {
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { LabelPreview } from './label-preview';
-import { useGenerateLabels, useQrImageUrl } from '@/hooks/use-labels';
+import { useGenerateLabels, useQrImageUrl, type LabelPreset } from '@/hooks/use-labels';
 import { toast } from '@/components/ui/toast';
 
 interface LabelEntity {
@@ -18,6 +18,10 @@ interface LabelEntity {
   qrCode: string;
   type: string;
   breadcrumb?: string;
+  // Optional explicit override for the printed banner's parent-zone text.
+  // Callers don't need to pass this — LabelPreview derives it from
+  // `breadcrumb` when omitted — but it's here so one can later.
+  parentZone?: string | null;
 }
 
 interface LabelPrintDialogProps {
@@ -27,64 +31,30 @@ interface LabelPrintDialogProps {
   onOpenChange: (open: boolean) => void;
 }
 
-function FirstEntityQrUrl({ qrCode }: { qrCode: string }) {
-  return useQrImageUrl(qrCode);
-}
-
 export function LabelPrintDialog({ entities, entityType, isOpen, onOpenChange }: LabelPrintDialogProps) {
-  const [format, setFormat] = React.useState<'pdf' | 'zpl'>('pdf');
-  const [zplOutput, setZplOutput] = React.useState<string | null>(null);
-
+  const [preset, setPreset] = React.useState<LabelPreset>(entityType === 'item' ? 'small' : 'medium');
   const generateLabels = useGenerateLabels();
+  React.useEffect(() => { if (!isOpen) generateLabels.reset(); }, [isOpen]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Reset ZPL output when dialog closes or format changes
+  // `large` is only offered when a single non-item entity is selected (a manifest
+  // is per-container/area). If the selection changes underneath a `large` choice,
+  // reset to a valid default before generating.
   React.useEffect(() => {
-    if (!isOpen) {
-      setZplOutput(null);
-      generateLabels.reset();
+    if (preset === 'large' && (entityType === 'item' || entities.length !== 1)) {
+      setPreset(entityType === 'item' ? 'small' : 'medium');
     }
-  }, [isOpen]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  React.useEffect(() => {
-    setZplOutput(null);
-    generateLabels.reset();
-  }, [format]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [entityType, entities.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const firstEntity = entities[0];
-  const qrImageUrl = firstEntity ? `/api/labels/_x_/qr/${firstEntity.qrCode}` : '';
+  const qrImageUrl = useQrImageUrl(firstEntity?.qrCode ?? '');
 
   function handleGenerate() {
     if (entities.length === 0) return;
-
     generateLabels.mutate(
-      {
-        entityType,
-        entityIds: entities.map((e) => e.id),
-        format,
-      },
-      {
-        onSuccess: (result) => {
-          if (result.format === 'pdf') {
-            toast('PDF downloaded');
-          } else if (result.format === 'zpl') {
-            setZplOutput(result.zpl);
-          }
-        },
-        onError: (err) => {
-          toast(err instanceof Error ? err.message : 'Failed to generate labels');
-        },
-      },
+      { entityType, entityIds: entities.map((e) => e.id), preset },
+      { onSuccess: () => toast('PDF downloaded'),
+        onError: (err) => toast(err instanceof Error ? err.message : 'Failed to generate labels') },
     );
-  }
-
-  async function handleCopyZpl() {
-    if (!zplOutput) return;
-    try {
-      await navigator.clipboard.writeText(zplOutput);
-      toast('ZPL copied to clipboard');
-    } catch {
-      toast('Failed to copy to clipboard');
-    }
   }
 
   return (
@@ -105,65 +75,27 @@ export function LabelPrintDialog({ entities, entityType, isOpen, onOpenChange }:
             {entities.length === 1 ? 'label' : 'labels'}
           </p>
 
-          {/* Preview */}
           {firstEntity && (
             <div>
               <p className="text-xs text-[var(--color-text-muted)] mb-2">Preview</p>
-              <LabelPreview entity={firstEntity} qrImageUrl={qrImageUrl} />
-              {entities.length > 1 && (
-                <p className="text-[10px] text-[var(--color-text-muted)] mt-1">
-                  + {entities.length - 1} more
-                </p>
+              <LabelPreview entity={firstEntity} qrImageUrl={qrImageUrl} preset={preset} />
+              {entities.length > 1 && preset !== 'large' && (
+                <p className="text-[10px] text-[var(--color-text-muted)] mt-1">+ {entities.length - 1} more</p>
               )}
             </div>
           )}
 
-          {/* Format selector */}
           <div>
-            <p className="text-xs text-[var(--color-text-muted)] mb-2">Format</p>
-            <div className="flex gap-2">
-              <Button
-                variant={format === 'pdf' ? 'default' : 'outline'}
-                size="sm"
-                className="flex-1"
-                onClick={() => setFormat('pdf')}
-              >
-                <Download className="w-3.5 h-3.5" />
-                PDF (Sheet Printer)
-              </Button>
-              <Button
-                variant={format === 'zpl' ? 'default' : 'outline'}
-                size="sm"
-                className="flex-1"
-                onClick={() => setFormat('zpl')}
-              >
-                <Printer className="w-3.5 h-3.5" />
-                ZPL (Thermal)
-              </Button>
+            <p className="text-xs text-[var(--color-text-muted)] mb-2">Size</p>
+            <div className="grid grid-cols-2 gap-2">
+              <Button variant={preset === 'small' ? 'default' : 'outline'} size="sm" onClick={() => setPreset('small')}>Small · 2×1</Button>
+              <Button variant={preset === 'medium' ? 'default' : 'outline'} size="sm" onClick={() => setPreset('medium')}>Medium · 3×3</Button>
+              {entityType !== 'item' && entities.length === 1 && (
+                <Button variant={preset === 'large' ? 'default' : 'outline'} size="sm" onClick={() => setPreset('large')}>Large · 4×6 list</Button>
+              )}
+              <Button variant={preset === 'sheet' ? 'default' : 'outline'} size="sm" onClick={() => setPreset('sheet')}>Avery sheet</Button>
             </div>
           </div>
-
-          {/* ZPL output */}
-          {zplOutput && format === 'zpl' && (
-            <div>
-              <p className="text-xs text-[var(--color-text-muted)] mb-2">ZPL Output</p>
-              <textarea
-                readOnly
-                value={zplOutput}
-                rows={6}
-                className="w-full rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-elevated)] text-[var(--color-text)] font-mono text-[10px] p-2 resize-none focus:outline-none"
-              />
-              <Button
-                variant="outline"
-                size="sm"
-                className="mt-2 w-full"
-                onClick={handleCopyZpl}
-              >
-                <Copy className="w-3.5 h-3.5" />
-                Copy to Clipboard
-              </Button>
-            </div>
-          )}
         </div>
 
         <DialogFooter>
