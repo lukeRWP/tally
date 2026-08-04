@@ -52,6 +52,13 @@ const shareLimiter = rateLimit({ windowMs: 60 * 1000, max: 30, standardHeaders: 
 app.use('/api/auth', authLimiter);
 app.use('/api/sharing/_x_/view', shareLimiter);
 
+// The Pi agent polls every 2s and, while draining a batch, fires claim+pdf+ack
+// per label — a 50-label burst is ~150 requests. The global 200/min limiter
+// would throttle that, so the agent paths get their own, higher budget.
+const agentLimiter = rateLimit({ windowMs: 60 * 1000, max: 600, standardHeaders: true, legacyHeaders: false });
+app.use('/api/print/_y_/agent', agentLimiter);
+app.use('/api/print/_x_/agent', agentLimiter);
+
 storage.init();
 storage.ensureBucket().catch(err => logger.warn('MinIO bucket check failed', { error: err.message }));
 
@@ -116,6 +123,7 @@ require('./src/modules/audit/audit.routes')({ app, db, logger, config });
 require('./src/modules/notifications/notifications.routes')({ app, db, logger, config });
 require('./src/modules/reports/reports.routes')({ app, db, logger, config });
 require('./src/modules/sharing/sharing.routes')({ app, db, logger, config });
+require('./src/modules/print/print.routes')({ app, db, logger, config });
 
 // ── Error Handler (must be last) ────────────────────────────────────────────
 

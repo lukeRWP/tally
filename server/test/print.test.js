@@ -444,3 +444,35 @@ test('revokeAgent returns false for an agent the caller cannot reach', async () 
   PrintService.init({ db: fakeDb(() => ({ affectedRows: 0 })), logger, config });
   assert.equal(await PrintService.revokeAgent(7, 42), false);
 });
+
+// ── routes ────────────────────────────────────────────────────────────────────
+
+test('the print module registers without throwing and wires both auth styles', () => {
+  const routes = [];
+  const app = {
+    locals: { requireAuth: (req, res, next) => next() },
+    get: (p) => routes.push(['GET', p]),
+    post: (p) => routes.push(['POST', p]),
+    put: (p) => routes.push(['PUT', p]),
+    patch: (p) => routes.push(['PATCH', p]),
+    delete: (p) => routes.push(['DELETE', p]),
+  };
+  require('../src/modules/print/print.routes')({ app, db: fakeDb(() => []), logger, config });
+
+  const paths = routes.map(([m, p]) => `${m} ${p}`);
+  for (const expected of [
+    'POST /api/print/_y_/jobs',
+    'GET /api/print/_x_/jobs',
+    'PATCH /api/print/_p_/jobs/:id/cancel',
+    'POST /api/print/_y_/jobs/:id/retry',
+    'POST /api/print/_y_/agents',
+    'GET /api/print/_x_/agents',
+    'DELETE /api/print/_d_/agents/:id',
+    'PUT /api/print/_u_/agents/:id/loaded-media',
+    'POST /api/print/_y_/agent/claim',
+    'GET /api/print/_x_/agent/jobs/:id/pdf',
+    'POST /api/print/_y_/agent/jobs/:id/ack',
+  ]) {
+    assert.ok(paths.includes(expected), `missing route: ${expected}`);
+  }
+});
