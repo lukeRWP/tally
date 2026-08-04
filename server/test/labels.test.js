@@ -167,3 +167,7 @@ test('renderManifestBundle concatenates several manifests into one PDF', async (
   // Two single-page manifests → two pages total (no blank leading page).
   assert.equal(pdfPageCount(buf), Labels.manifestPageCount(3, 'large') * 2);
 });
+
+test('generateZpl is removed from the service', () => {
+  assert.equal(typeof Labels.generateZpl, 'undefined');
+});

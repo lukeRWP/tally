@@ -6,33 +6,42 @@ module.exports = function labelsRoutes({ app, db, logger, config }) {
   const validate = require('../../middleware/validate');
   const { success, error } = require('../../utils/response');
 
-  // ── POST /api/labels/_y_/generate — generate labels (PDF or ZPL) ─────────
+  // ── POST /api/labels/_y_/generate — generate labels (PDF, dispatch on preset)
 
   app.post(
     '/api/labels/_y_/generate',
     app.locals.requireAuth,
     validate(generateLabels, 'body'),
     async (req, res) => {
-      const { entityType, entityIds, format } = req.body;
+      const { entityType, entityIds, preset } = req.body;
+
+      const sendPdf = (buf) => {
+        res.set('Content-Type', 'application/pdf');
+        res.set('Content-Disposition', 'attachment; filename="tally-labels.pdf"');
+        res.send(buf);
+      };
+
+      // Large = one contents manifest per selected container/area.
+      if (preset === 'large') {
+        const manifests = [];
+        for (const id of entityIds) {
+          const m = await LabelsService.getManifest(entityType, id, req.user.id);
+          if (m) manifests.push(m);
+        }
+        if (manifests.length === 0) return error(res, 'No entities found for the given IDs', 404);
+        return sendPdf(await LabelsService.renderManifestBundle(manifests, 'large'));
+      }
 
       const entities = await LabelsService.getEntityData(entityType, entityIds, req.user.id);
-      if (entities.length === 0) {
-        return error(res, 'No entities found for the given IDs', 404);
+      if (entities.length === 0) return error(res, 'No entities found for the given IDs', 404);
+
+      if (preset === 'sheet') {
+        const labelTypeMap = { item: 'asset', container: 'bin', area: 'location' };
+        return sendPdf(await LabelsService.generatePdf(entities, labelTypeMap[entityType] || 'asset'));
       }
 
-      if (format === 'zpl') {
-        const zpl = LabelsService.generateZpl(entities);
-        return success(res, { zpl });
-      }
-
-      // Default: PDF
-      const labelTypeMap = { item: 'asset', container: 'bin', area: 'location' };
-      const labelType = labelTypeMap[entityType] || 'asset';
-      const pdfBuffer = await LabelsService.generatePdf(entities, labelType);
-
-      res.set('Content-Type', 'application/pdf');
-      res.set('Content-Disposition', 'attachment; filename="tally-labels.pdf"');
-      res.send(pdfBuffer);
+      // small / medium
+      return sendPdf(await LabelsService.renderLabelPdf(entities, preset));
     }
   );
 
