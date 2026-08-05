@@ -1,6 +1,7 @@
 const QRCode = require('qrcode');
 const PDFDocument = require('pdfkit');
 const { parseCode } = require('../../utils/qr');
+const code128 = require('./code128');
 
 // Geometry for the thermal single-label + manifest presets. 72 pt = 1 inch.
 // `banner` is the left location-banner strip width in pt (0 = no banner) and
@@ -8,8 +9,12 @@ const { parseCode } = require('../../utils/qr');
 // truth — renderers must not hard-code sizes.
 const PRESETS = {
   small:  { widthPt: 144, heightPt: 72,  qrPt: 60,  banner: 0,  bannerFont: 0,  title: 11, code: 8 },
-  medium: { widthPt: 216, heightPt: 216, qrPt: 118, banner: 26, bannerFont: 12, title: 15, code: 10 },
-  large:  { widthPt: 288, heightPt: 432, qrPt: 54,  banner: 22, bannerFont: 13, title: 13, code: 8, row: 11, rowGap: 3 },
+  medium: { widthPt: 216, heightPt: 216, qrPt: 118, banner: 38, bannerFont: 20, bannerTrack: 6, title: 15, code: 10 },
+  // qrPt MUST stay below _manifestLayout's headerH (72): the QR is drawn from
+  // the top pad downward, so anything taller punches through the header rule
+  // and collides with the CONTENTS row — it did, at 72pt. 60 leaves 12pt of
+  // clearance while still printing larger than the original 54pt.
+  large:  { widthPt: 288, heightPt: 432, qrPt: 60,  banner: 36, bannerFont: 21, bannerTrack: 7, title: 13, code: 8, row: 11, rowGap: 3 },
 };
 
 let _db = null;
@@ -27,6 +32,11 @@ const LabelsService = {
 
   // ── QR Code Generation ──────────────────────────────────────────────────────
 
+  // 203 dpi is the ITPP941 head. Sizing a QR to an exact whole number of
+  // printer dots means one image pixel maps to one dot, so module edges land
+  // on dot boundaries instead of being resampled into greys that dither.
+  _qrDots(pt) { return Math.round((pt / 72) * 203); },
+
   async generateQrBuffer(code, size = 200) {
     const url = `${_baseUrl}/s/${code}`;
     return QRCode.toBuffer(url, { width: size, margin: 1 });
@@ -35,24 +45,42 @@ const LabelsService = {
   // ── Thermal single-label rendering ───────────────────────────────────────
 
   _invertedTitle(doc, text, x, y, w, fontSize, align = 'left') {
-    const padX = 5, padY = 3, lineH = fontSize * 1.15, boxH = lineH + padY * 2;
+    const padX = 5, padY = 4;
+    doc.fontSize(fontSize).font('Helvetica-Bold');
+    // Measure rather than assume: currentLineHeight() reflects the actual font
+    // metrics, so the bar hugs the type at any size.
+    const lineH = doc.currentLineHeight();
+    const boxH = lineH + padY * 2;
     doc.save().roundedRect(x, y, w, boxH, 2).fill('#000000').restore();
-    doc.fontSize(fontSize).font('Helvetica-Bold').fillColor('#ffffff')
-      .text(String(text).toUpperCase(), x + padX, y + padY,
+    // The line box reserves descender room these all-caps strings never use, so
+    // centring the box alone leaves the caps riding high. Nudge down by a
+    // fraction of the size to centre what the eye actually sees.
+    const capNudge = fontSize * 0.08;
+    doc.fillColor('#ffffff')
+      .text(String(text).toUpperCase(), x + padX, y + (boxH - lineH) / 2 + capNudge,
         { width: w - padX * 2, height: lineH, align, lineBreak: false, ellipsis: true });
     doc.fillColor('#000000');
     return boxH;
   },
 
-  _verticalBanner(doc, text, H, bannerW, fontSize) {
+  // White-on-black knockout text loses weight to thermal bleed: the head burns
+  // marginally wider than the nominal dot, so black creeps into the letterforms
+  // and thin strokes close up. Banner type is therefore set larger and more
+  // widely tracked than would look right on screen — it prints back to normal.
+  _verticalBanner(doc, text, H, bannerW, fontSize, track = 1) {
     doc.save().rect(0, 0, bannerW, H).fill('#000000').restore();
     doc.save();
     doc.rotate(-90, { origin: [bannerW / 2, H / 2] });
     // After rotating -90° about the banner centre, a normal horizontal text box
     // of width H (the label height) reads bottom-to-top down the strip.
-    doc.fontSize(fontSize).font('Helvetica-Bold').fillColor('#ffffff')
-      .text(String(text).toUpperCase(), bannerW / 2 - H / 2, H / 2 - fontSize / 2 - 1,
-        { width: H, align: 'center', lineBreak: false, ellipsis: true, characterSpacing: 1 });
+    doc.fontSize(fontSize).font('Helvetica-Bold');
+    // In the rotated frame this y controls position ACROSS the strip's width,
+    // so centring the measured line box centres the type in the black bar.
+    const lineH = doc.currentLineHeight();
+    doc.fillColor('#ffffff')
+      .text(String(text).toUpperCase(), bannerW / 2 - H / 2,
+        H / 2 - lineH / 2 + fontSize * 0.08,
+        { width: H, align: 'center', lineBreak: false, ellipsis: true, characterSpacing: track });
     doc.restore();
     doc.fillColor('#000000');
   },
@@ -60,7 +88,7 @@ const LabelsService = {
   _drawTag(doc, e, qrBuf, P, presetKey) {
     const W = P.widthPt, H = P.heightPt, pad = 6;
     const bannerW = (P.banner && e.parentZone) ? P.banner : 0;
-    if (bannerW) LabelsService._verticalBanner(doc, e.parentZone, H, bannerW, P.bannerFont);
+    if (bannerW) LabelsService._verticalBanner(doc, e.parentZone, H, bannerW, P.bannerFont, P.bannerTrack);
     const cx = bannerW, cw = W - bannerW;
 
     if (presetKey === 'small') {
@@ -81,7 +109,7 @@ const LabelsService = {
       doc.fontSize(P.code).font('Courier').fillColor('#000000')
         .text(String(e.qrCode).toUpperCase(), cx + pad, fy, { width: cw - pad * 2 - typeW, lineBreak: false, ellipsis: true });
       if (e.type) {
-        doc.fontSize(P.code - 1).font('Courier').fillColor('#555555')
+        doc.fontSize(P.code - 1).font('Courier-Bold').fillColor('#000000')
           .text(String(e.type).toUpperCase(), W - pad - typeW, fy, { width: typeW, align: 'right', lineBreak: false, ellipsis: true });
       }
     }
@@ -89,7 +117,7 @@ const LabelsService = {
 
   async renderLabelPdf(entities, presetKey) {
     const P = PRESETS[presetKey];
-    const qrBuffers = await Promise.all(entities.map(e => LabelsService.generateQrBuffer(e.qrCode, P.qrPt * 3)));
+    const qrBuffers = await Promise.all(entities.map(e => LabelsService.generateQrBuffer(e.qrCode, LabelsService._qrDots(P.qrPt))));
     return new Promise((resolve, reject) => {
       const doc = new PDFDocument({ size: [P.widthPt, P.heightPt], margin: 0 });
       const bufs = [];
@@ -106,14 +134,36 @@ const LabelsService = {
 
   // ── Contents manifest (large) ─────────────────────────────────────────────
 
+  // Draw a Code 128 barcode, snapping every module to a whole printer dot.
+  // At 203 dpi a bar edge that lands mid-dot gets resampled into a ragged
+  // width and the symbol stops scanning — the same failure that killed the QR.
+  // Returns the drawn width in points.
+  _barcodeWidthPt(text, dotsPerModule = 3) {
+    const { modules } = code128.encode(text);
+    return modules.reduce((a, b) => a + b, 0) * (dotsPerModule / 203) * 72;
+  },
+
+  _drawBarcode(doc, text, x, y, heightPt, dotsPerModule = 3) {
+    const { modules } = code128.encode(text);
+    const modulePt = (dotsPerModule / 203) * 72;   // exact whole dots
+    let cx = x;
+    modules.forEach((w, i) => {
+      const wPt = w * modulePt;
+      if (i % 2 === 0) doc.save().rect(cx, y, wPt, heightPt).fill('#000000').restore();  // even = bar
+      cx += wPt;
+    });
+    return cx - x;
+  },
+
   // Layout constants shared by the pagination math and the renderer.
   _manifestLayout(P) {
-    const pad = 10, headerH = 66, colHdrH = 14, footerH = 18;
+    // barcodeH covers the Code 128 strip above the footer rule.
+    const pad = 10, headerH = 72, colHdrH = 14, footerH = 18, barcodeH = 34;
     const rowH = P.row + P.rowGap;
     const listTop = pad + headerH + colHdrH;
-    const listBottom = P.heightPt - pad - footerH;
+    const listBottom = P.heightPt - pad - footerH - barcodeH;
     const rowsPerPage = Math.max(1, Math.floor((listBottom - listTop) / rowH));
-    return { pad, headerH, colHdrH, footerH, rowH, listTop, rowsPerPage };
+    return { pad, headerH, colHdrH, footerH, barcodeH, rowH, listTop, rowsPerPage };
   },
 
   manifestPageCount(rowCount, presetKey) {
@@ -161,27 +211,31 @@ const LabelsService = {
     const { header, rows } = manifest;
     const L = LabelsService._manifestLayout(P);
     const pageCount = LabelsService.manifestPageCount(rows.length, presetKey);
-    const qrBuf = await LabelsService.generateQrBuffer(header.qrCode, P.qrPt * 3);
+    const qrBuf = await LabelsService.generateQrBuffer(header.qrCode, LabelsService._qrDots(P.qrPt));
     const bannerW = header.parentZone ? P.banner : 0;
 
     for (let pg = 0; pg < pageCount; pg++) {
       startNewPage();
-      if (bannerW) LabelsService._verticalBanner(doc, header.parentZone, H, bannerW, P.bannerFont);
+      if (bannerW) LabelsService._verticalBanner(doc, header.parentZone, H, bannerW, P.bannerFont, P.bannerTrack);
       const cx = bannerW;
 
       // Header: QR + inverted title + breadcrumb + code, bottom-bordered.
       doc.image(qrBuf, cx + L.pad, L.pad, { width: P.qrPt });
       const hx = cx + L.pad + P.qrPt + 8, hw = W - hx - L.pad;
-      LabelsService._invertedTitle(doc, header.name, hx, L.pad, hw, P.title);
-      doc.fontSize(8).font('Helvetica').fillColor('#333333')
+      // Centered, matching the medium tag's title treatment.
+      LabelsService._invertedTitle(doc, header.name, hx, L.pad, hw, P.title, 'center');
+      // Pure black, never grey: the head is 1-bit, so a grey fill is dithered
+      // into stipple that reads as washed-out at these sizes. Bold + a size up
+      // also survives thermal bleed better than a hairline face.
+      doc.fontSize(9).font('Helvetica-Bold').fillColor('#000000')
         .text(header.breadcrumb || '', hx, L.pad + 24, { width: hw, lineBreak: false, ellipsis: true });
-      doc.fontSize(7).font('Courier').fillColor('#666666')
-        .text(String(header.qrCode).toUpperCase(), hx, L.pad + 36, { width: hw, lineBreak: false });
+      doc.fontSize(8).font('Courier-Bold').fillColor('#000000')
+        .text(String(header.qrCode).toUpperCase(), hx, L.pad + 37, { width: hw, lineBreak: false });
       doc.save().moveTo(cx + L.pad, L.pad + L.headerH).lineTo(W - L.pad, L.pad + L.headerH)
         .lineWidth(1.5).strokeColor('#000000').stroke().restore();
 
       // Column header.
-      doc.fontSize(7).font('Courier').fillColor('#666666')
+      doc.fontSize(8).font('Courier-Bold').fillColor('#000000')
         .text('CONTENTS', cx + L.pad, L.pad + L.headerH + 3, { width: 120, lineBreak: false });
       doc.text('QTY', W - L.pad - 34, L.pad + L.headerH + 3, { width: 34, align: 'right' });
 
@@ -189,8 +243,9 @@ const LabelsService = {
       const start = pg * L.rowsPerPage, end = Math.min(start + L.rowsPerPage, rows.length);
       let ry = L.listTop;
       for (let r = start; r < end; r++) {
-        if ((r - start) % 2 === 1)
-          doc.save().rect(cx + L.pad, ry - 1, W - cx - L.pad * 2, L.rowH).fill('#f0f0f0').restore();
+        // No zebra shading: a light grey cannot exist on a 1-bit head — it
+        // dithers into stipple that stripes the list and fights the text.
+        // Row rhythm comes from leading alone.
         // `height` is what actually clamps these to one line: pdfkit only wraps
         // when a `width` is given, and it only honours `ellipsis` once a
         // `height` bounds the box — `lineBreak: false` alone does not stop a
@@ -203,10 +258,20 @@ const LabelsService = {
         ry += L.rowH;
       }
 
+      // Code 128 of the TLY code, for laser scanners and faster in-app scanning
+      // than framing a QR. Centred above the footer with its quiet zones intact.
+      const bcY = H - L.pad - L.footerH - L.barcodeH + 4;
+      const bcW = LabelsService._barcodeWidthPt(header.qrCode);
+      const bcX = cx + (W - cx - bcW) / 2;
+      LabelsService._drawBarcode(doc, header.qrCode, bcX, bcY, L.barcodeH - 12);
+      doc.fontSize(7).font('Courier-Bold').fillColor('#000000')
+        .text(String(header.qrCode).toUpperCase(), cx, bcY + L.barcodeH - 11,
+          { width: W - cx, align: 'center', lineBreak: false });
+
       // Footer: total count + page x of n.
       const fy = H - L.pad - L.footerH + 5;
       doc.save().moveTo(cx + L.pad, fy - 5).lineTo(W - L.pad, fy - 5).lineWidth(1).strokeColor('#000000').stroke().restore();
-      doc.fontSize(8).font('Courier').fillColor('#333333')
+      doc.fontSize(8).font('Courier-Bold').fillColor('#000000')
         .text(`${rows.length} item${rows.length === 1 ? '' : 's'}`, cx + L.pad, fy, { width: 120, lineBreak: false });
       doc.text(`Page ${pg + 1} of ${pageCount}`, W - L.pad - 100, fy, { width: 100, align: 'right' });
     }

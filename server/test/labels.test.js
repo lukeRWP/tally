@@ -226,11 +226,11 @@ test('manifestPageCount paginates by the large preset row capacity', () => {
 
 // Hard-coded so a geometry change that silently alters capacity fails here
 // rather than being rubber-stamped by a test that derives its own expectation.
-test('manifestPageCount pins the documented large-preset capacity of 22 rows/page', () => {
-  assert.equal(Labels.manifestPageCount(22, 'large'), 1, '22 rows is exactly one full page');
-  assert.equal(Labels.manifestPageCount(23, 'large'), 2, 'the 23rd row starts a second page');
-  assert.equal(Labels.manifestPageCount(44, 'large'), 2);
-  assert.equal(Labels.manifestPageCount(45, 'large'), 3);
+test('manifestPageCount pins the documented large-preset capacity of 19 rows/page', () => {
+  assert.equal(Labels.manifestPageCount(19, 'large'), 1, '19 rows is exactly one full page');
+  assert.equal(Labels.manifestPageCount(20, 'large'), 2, 'the 20th row starts a second page');
+  assert.equal(Labels.manifestPageCount(38, 'large'), 2);
+  assert.equal(Labels.manifestPageCount(39, 'large'), 3);
 });
 
 test('getManifest is membership-scoped and returns name+qty rows for a container', async () => {
@@ -289,7 +289,7 @@ test('renderManifestPdf produces a PDF (paginated by row count)', async () => {
     { header: { name: 'Camping Gear', qrCode: 'TLY-C-1', parentZone: 'Garage', breadcrumb: 'Home' }, rows }, 'large');
   assert.ok(buf.slice(0, 4).toString() === '%PDF');
   assert.equal(pdfPageCount(buf), Labels.manifestPageCount(60, 'large'));
-  assert.equal(pdfPageCount(buf), 3, '60 rows at 22/page is 3 pages');
+  assert.equal(pdfPageCount(buf), 4, '60 rows at 19/page is 4 pages');
 });
 
 test('a multi-page manifest repeats the header and column header on every page', async () => {
@@ -298,10 +298,13 @@ test('a multi-page manifest repeats the header and column header on every page',
   const buf = await Labels.renderManifestPdf(
     { header: { name: 'Camping Gear', qrCode: 'TLY-C-1', parentZone: 'Garage', breadcrumb: 'Home' }, rows }, 'large');
   const pages = pdfPageCount(buf);
-  assert.equal(pages, 3, '50 rows at 22/page is 3 pages');
+  assert.equal(pages, 3, '50 rows at 19/page is 3 pages');
   // Spec §3: every page is self-contained — header block + column header.
   assert.equal(pdfTextCount(buf, 'CAMPING GEAR'), pages, 'the inverted title repeats per page');
-  assert.equal(pdfTextCount(buf, 'TLY-C-1'), pages, 'the TLY code repeats per page');
+  // Twice per page by design: once in the header beside the QR, once as the
+  // barcode's human-readable caption (standard for a Code 128 symbol).
+  assert.equal(pdfTextCount(buf, 'TLY-C-1'), pages * 2,
+    'the TLY code appears in the header AND under the barcode, on every page');
   assert.equal(pdfTextCount(buf, 'Home'), pages, 'the breadcrumb repeats per page');
   assert.equal(pdfTextCount(buf, 'CONTENTS'), pages, 'the CONTENTS column header repeats per page');
   assert.equal(pdfTextCount(buf, 'QTY'), pages, 'the QTY column header repeats per page');
