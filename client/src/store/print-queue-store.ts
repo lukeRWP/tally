@@ -63,6 +63,7 @@ interface PrintQueueState {
   staged: StagedLabel[];
   add: (input: StageInput) => void;
   remove: (key: string) => void;
+  removeMany: (keys: string[]) => void;
   clear: () => void;
   setPreset: (key: string, preset: PrintablePreset) => void;
   setAllPresets: (preset: PrintablePreset) => void;
@@ -82,6 +83,13 @@ export const usePrintQueueStore = create<PrintQueueState>((set, get) => ({
       ...staged,
       { ...input, key, preset: input.preset ?? defaultPresetFor(input.entityType) },
     ];
+    save(next);
+    set({ staged: next });
+  },
+
+  removeMany: (keys) => {
+    const drop = new Set(keys);
+    const next = get().staged.filter((l) => !drop.has(l.key));
     save(next);
     set({ staged: next });
   },
@@ -119,27 +127,60 @@ export const usePrintQueueStore = create<PrintQueueState>((set, get) => ({
 /**
  * Group a staged batch into the jobs tally will accept.
  *
- * `POST /api/print/_y_/jobs` takes ONE entityType, ONE preset and a list of ids
- * that must all belong to the same property — so a mixed batch becomes several
- * jobs. Exported for its own test: the grouping is the part most likely to
- * silently drop labels.
+ * `POST /api/print/_y_/jobs` takes ONE entityType, ONE preset, ids from ONE
+ * property, and at most MAX_IDS_PER_JOB of them — so a mixed batch becomes
+ * several jobs. All four constraints are encoded here rather than at the call
+ * site, because a group that violates any of them fails as an opaque
+ * "Validation failed" with no clue which label caused it.
+ *
+ * Each group carries the `keys` of the labels that produced it, so a caller
+ * that succeeds on some groups and fails on others can un-stage exactly what
+ * was sent. Without that the obvious retry reprints everything that already
+ * worked — real wasted labels, not a cosmetic bug.
  */
-export function groupIntoJobs(staged: StagedLabel[]) {
-  const groups = new Map<
-    string,
-    { entityType: StagedLabel['entityType']; preset: PrintablePreset; propertyId?: number; entityIds: number[] }
-  >();
+export const MAX_IDS_PER_JOB = 100;   // mirrors entityIds .max(100) in print.schema.js
+
+export interface JobGroup {
+  entityType: StagedLabel['entityType'];
+  preset: PrintablePreset;
+  propertyId?: number;
+  entityIds: number[];
+  keys: string[];
+}
+
+export function groupIntoJobs(staged: StagedLabel[]): JobGroup[] {
+  const buckets = new Map<string, { entityType: StagedLabel['entityType']; preset: PrintablePreset; propertyId?: number; entityIds: number[]; keys: string[] }>();
   for (const label of staged) {
-    const groupKey = `${label.propertyId ?? 'none'}|${label.entityType}|${label.preset}`;
-    const existing = groups.get(groupKey);
-    if (existing) existing.entityIds.push(label.id);
-    else
-      groups.set(groupKey, {
+    const bucketKey = `${label.propertyId ?? 'none'}|${label.entityType}|${label.preset}`;
+    const existing = buckets.get(bucketKey);
+    if (existing) {
+      existing.entityIds.push(label.id);
+      existing.keys.push(label.key);
+    } else {
+      buckets.set(bucketKey, {
         entityType: label.entityType,
         preset: label.preset,
         propertyId: label.propertyId,
         entityIds: [label.id],
+        keys: [label.key],
       });
+    }
   }
-  return [...groups.values()];
+
+  // Split anything over the server's cap. Labelling a whole room is exactly
+  // what this page is for, so 100+ of one type is an ordinary batch, not an
+  // edge case.
+  const groups: JobGroup[] = [];
+  for (const b of buckets.values()) {
+    for (let i = 0; i < b.entityIds.length; i += MAX_IDS_PER_JOB) {
+      groups.push({
+        entityType: b.entityType,
+        preset: b.preset,
+        propertyId: b.propertyId,
+        entityIds: b.entityIds.slice(i, i + MAX_IDS_PER_JOB),
+        keys: b.keys.slice(i, i + MAX_IDS_PER_JOB),
+      });
+    }
+  }
+  return groups;
 }

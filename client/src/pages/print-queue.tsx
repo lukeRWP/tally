@@ -37,7 +37,7 @@ export function PrintQueuePage() {
   const { data: properties } = useProperties();
   const propertyId = properties?.[0]?.id;
 
-  const { data: printers } = usePrinters(propertyId);
+  const { data: printers, isLoading: printersLoading, isError: printersError } = usePrinters(propertyId);
   const { data: jobs } = usePrintJobs(propertyId);
   const createJob = useCreatePrintJob();
   const cancelJob = useCancelPrintJob(propertyId);
@@ -47,15 +47,23 @@ export function PrintQueuePage() {
   const staged = usePrintQueueStore((s) => s.staged);
   const removeStaged = usePrintQueueStore((s) => s.remove);
   const clearStaged = usePrintQueueStore((s) => s.clear);
+  const removeStagedMany = usePrintQueueStore((s) => s.removeMany);
   const setPreset = usePrintQueueStore((s) => s.setPreset);
 
   const [sending, setSending] = React.useState(false);
+  const [failedKeys, setFailedKeys] = React.useState<string[]>([]);
   const printer = printers?.[0];
 
   const online = !!printer?.lastSeenAt && Date.now() - new Date(printer.lastSeenAt).getTime() < 60_000;
   const problem = printer?.printerState === 'stopped'
     ? PROBLEM_TEXT[printer.printerStateReasons[0]] ?? 'Stopped'
     : null;
+
+  // A job queues fine whether or not the Pi is awake — the agent picks it up on
+  // its next poll. So offline never blocks sending; it only changes the wording.
+  // Blocking here would defeat the whole point of staging a batch while walking
+  // around, and a homelab printer being off overnight is the normal case.
+  const printerReady = !!printer && online && !problem;
 
   const live = (jobs ?? []).filter((j) => LIVE.includes(j.status));
   const recent = (jobs ?? []).filter((j) => !LIVE.includes(j.status)).slice(0, 10);
@@ -64,12 +72,15 @@ export function PrintQueuePage() {
     const groups = groupIntoJobs(staged);
     if (!groups.length) return;
     setSending(true);
+
     let queued = 0;
     let held = 0;
-    const failures: string[] = [];
+    const sentKeys: string[] = [];
+    const failedKeys: string[] = [];
+    let firstError = '';
 
-    // One request per group — the API takes a single entityType + preset each.
-    // Sequential rather than parallel so a partial failure is comprehensible.
+    // One request per group — the API takes a single entityType + preset + property
+    // and caps ids per job. Sequential so a partial failure stays comprehensible.
     for (const g of groups) {
       try {
         const res = await createJob.mutateAsync({
@@ -78,24 +89,34 @@ export function PrintQueuePage() {
           preset: g.preset,
           propertyId: g.propertyId ?? propertyId,
         });
+        // Track exactly which labels landed. The server inserts unconditionally,
+        // so re-sending a group that already succeeded prints it a second time —
+        // real wasted labels. Only these keys get un-staged.
+        sentKeys.push(...g.keys);
         if (res?.status === 'held') held += g.entityIds.length;
         else queued += g.entityIds.length;
       } catch (err) {
-        failures.push(err instanceof Error ? err.message : `${g.entityType} × ${g.entityIds.length}`);
+        failedKeys.push(...g.keys);
+        if (!firstError) firstError = err instanceof Error ? err.message : 'Send failed';
       }
     }
+
+    if (sentKeys.length) removeStagedMany(sentKeys);
+    setFailedKeys(failedKeys);
     setSending(false);
 
-    if (failures.length) {
-      // Keep the batch staged on failure — silently clearing would lose work.
-      toast(`Sent ${queued + held}, but ${failures.length} group failed: ${failures[0]}`);
+    if (failedKeys.length) {
+      toast(
+        sentKeys.length
+          ? `Sent ${queued + held}; ${failedKeys.length} still staged — ${firstError}`
+          : `Nothing sent — ${firstError}`,
+      );
       return;
     }
-    clearStaged();
     toast(
       held > 0
         ? `Sent ${queued + held} — ${held} waiting for a different roll`
-        : `Printing ${queued} label${queued === 1 ? '' : 's'}`,
+        : `${printerReady ? 'Printing' : 'Queued'} ${queued} label${queued === 1 ? '' : 's'}`,
     );
   }
 
@@ -105,7 +126,20 @@ export function PrintQueuePage() {
 
       {/* ── Printer ─────────────────────────────────────────────────── */}
       <Card className="p-3">
-        {!printer ? (
+        {printersLoading || !propertyId ? (
+          <div className="flex items-center gap-2 text-sm text-[var(--color-text-muted)]">
+            <PrinterIcon className="w-4 h-4 animate-pulse" />
+            <span>Checking for a printer…</span>
+          </div>
+        ) : printersError ? (
+          <div className="flex items-center gap-2 text-sm text-[var(--color-red)]">
+            <PrinterIcon className="w-4 h-4" />
+            <span>Could not load the printer.</span>
+          </div>
+        ) : !printer ? (
+          // Only claim there is no printer once we have actually been told so —
+          // otherwise the Settings CTA invites registering a second, invisible
+          // agent that would never be picked (the server takes ORDER BY ID LIMIT 1).
           <div className="flex items-center gap-2 text-sm text-[var(--color-text-secondary)]">
             <PrinterIcon className="w-4 h-4" />
             <span>No printer set up.</span>
@@ -167,7 +201,8 @@ export function PrintQueuePage() {
         ) : (
           <div className="flex flex-col gap-1.5">
             {staged.map((l) => (
-              <Card key={l.key} className="p-2.5 flex items-center gap-2">
+              <Card key={l.key} className={`p-2.5 flex items-center gap-2 ${
+                failedKeys.includes(l.key) ? 'border-[var(--color-red)]' : ''}`}>
                 <div className="min-w-0 flex-1">
                   <p className="text-sm font-medium truncate">{l.name}</p>
                   <p className="text-[10px] font-mono text-[var(--color-text-muted)]">{l.qrCode}</p>
@@ -191,15 +226,17 @@ export function PrintQueuePage() {
               </Card>
             ))}
 
-            <Button className="mt-1" onClick={handlePrintAll}
-              disabled={sending || !printer || !online || !!problem}>
+            <Button className="mt-1" onClick={handlePrintAll} disabled={sending || !printer}>
               <Send className="w-4 h-4" />
-              {problem ? `Printer: ${problem}`
-                : !printer ? 'No printer'
-                : !online ? 'Printer offline'
-                : sending ? 'Sending…'
-                : `Print ${staged.length} label${staged.length === 1 ? '' : 's'}`}
+              {sending ? 'Sending…'
+                : !printer ? 'No printer set up'
+                : `${printerReady ? 'Print' : 'Queue'} ${staged.length} label${staged.length === 1 ? '' : 's'}`}
             </Button>
+            {printer && !printerReady && (
+              <p className="text-[10px] text-[var(--color-text-muted)] text-center">
+                {problem ? `Printer: ${problem}.` : 'Printer is offline.'} Jobs will print when it is back.
+              </p>
+            )}
           </div>
         )}
       </div>

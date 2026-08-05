@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { Outlet, Navigate, useLocation, useNavigate } from 'react-router-dom';
-import { Home, Layers, ScanLine, BarChart2, Bell, Settings } from 'lucide-react';
+import { Home, Layers, ScanLine, BarChart2, Bell, Settings, Printer } from 'lucide-react';
 import { useAuth } from '@/hooks/use-auth';
 import { useAuthStore } from '@/store/auth-store';
 import { useUnreadCount } from '@/hooks/use-notifications';
@@ -12,6 +12,7 @@ const navItems = [
   { path: '/', icon: Home, label: 'Home' },
   { path: '/inventory', icon: Layers, label: 'Inventory' },
   { path: '/scan', icon: ScanLine, label: 'Scan' },
+  { path: '/print', icon: Printer, label: 'Print' },
   { path: '/reports', icon: BarChart2, label: 'Reports' },
   { path: '/notifications', icon: Bell, label: 'Notifications' },
   { path: '/settings', icon: Settings, label: 'Settings' },
