@@ -42,6 +42,13 @@ export function usePrinters(propertyId?: number) {
     // passing `propertyId` unconditionally polls for as long as the
     // component stays mounted, dialog closed or not.
     refetchInterval: 15000,
+    // Notify on every settled fetch, not only when the data changes shape.
+    // Online-ness is derived from `Date.now() - lastSeenAt`, so it goes stale
+    // with the clock, not with the payload. The moment a printer dies is
+    // exactly the moment its row stops changing — structural sharing would
+    // hand back an identical reference, no re-render would happen, and the
+    // badge would stay on "Online" precisely when it needs to say "Offline".
+    notifyOnChangeProps: 'all',
   });
 }
 
