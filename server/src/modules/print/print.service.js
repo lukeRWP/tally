@@ -148,13 +148,21 @@ const PrintService = {
   async sweepStaleClaims(propertyId) {
     // An agent that dies mid-job would otherwise strand its row in `claimed`
     // forever. Lazy sweep on each claim — no cron, no scheduler.
+    // The attempt cap applies here too. Without it a job that is claimed and
+    // abandoned over and over is requeued forever — reprinting each time and
+    // never reaching 'failed' — so one poison job could wedge the queue
+    // indefinitely. Mirrors the cap ackJob applies on an explicit failure.
     const result = await _db.query(
       `UPDATE TALLY.print_jobs
-          SET STATUS = 'queued', ATTEMPTS = ATTEMPTS + 1,
+          SET STATUS = CASE WHEN ATTEMPTS + 1 >= ? THEN 'failed' ELSE 'queued' END,
+              LAST_ERROR = CASE WHEN ATTEMPTS + 1 >= ?
+                                THEN 'Printer stopped responding mid-job'
+                                ELSE LAST_ERROR END,
+              ATTEMPTS = ATTEMPTS + 1,
               CLAIM_ID = NULL, CLAIMED_BY = NULL, CLAIMED_AT = NULL
         WHERE PROPERTY_ID = ? AND STATUS = 'claimed'
           AND CLAIMED_AT < DATE_SUB(NOW(), INTERVAL ? MINUTE)`,
-      [propertyId, STALE_CLAIM_MINUTES]
+      [MAX_ATTEMPTS, MAX_ATTEMPTS, propertyId, STALE_CLAIM_MINUTES]
     );
     return result.affectedRows;
   },
@@ -315,6 +323,19 @@ const PrintService = {
     );
     if (updated.affectedRows === 0) return null;
 
+    // Swapping the roll cuts both ways. Anything queued for the OLD roll is now
+    // unprintable — the claim filters on PRESET = LOADED_MEDIA, so those rows
+    // would sit in 'queued' forever, displayed as ready but never claimable.
+    // Park them back in 'held' so they show honestly and are released when
+    // their roll is loaded again.
+    const heldBack = await _db.query(
+      `UPDATE TALLY.print_jobs j
+         JOIN TALLY.printer_agents a ON a.PROPERTY_ID = j.PROPERTY_ID
+          SET j.STATUS = 'held'
+        WHERE a.ID = ? AND j.STATUS = 'queued' AND j.PRESET <> ?`,
+      [agentId, loadedMedia]
+    );
+
     // Loading a roll releases everything that was waiting on exactly that roll.
     const released = await _db.query(
       `UPDATE TALLY.print_jobs j
@@ -323,7 +344,7 @@ const PrintService = {
         WHERE a.ID = ? AND j.STATUS = 'held' AND j.PRESET = ?`,
       [agentId, loadedMedia]
     );
-    return { released: released.affectedRows };
+    return { released: released.affectedRows, held: heldBack.affectedRows };
   },
 };
 

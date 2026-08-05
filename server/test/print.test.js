@@ -36,8 +36,18 @@ test('agentClaim tolerates a missing telemetry body and defaults to unknown', ()
   assert.deepEqual(r.value.printerStateReasons, []);
 });
 
-test('agentClaim rejects an unknown printer state', () => {
-  assert.ok(schema.agentClaim.validate({ printerState: 'on fire' }).error);
+test('agentClaim coerces junk telemetry instead of failing the claim', () => {
+  // Spec §5a: telemetry must never be able to break a claim. A 400 here would
+  // wedge the printer's whole queue over a cosmetic field.
+  const r = schema.agentClaim.validate({ printerState: 'on fire', printerStateReasons: 'nonsense' });
+  assert.equal(r.error, undefined, 'malformed telemetry must not reject the claim');
+  assert.equal(r.value.printerState, 'unknown');
+  assert.deepEqual(r.value.printerStateReasons, []);
+
+  const mixed = schema.agentClaim.validate({ printerState: 'stopped', printerStateReasons: ['media-empty', 42] });
+  assert.equal(mixed.error, undefined);
+  assert.equal(mixed.value.printerState, 'stopped', 'a valid state is preserved');
+  assert.deepEqual(mixed.value.printerStateReasons, ['media-empty'], 'non-string reasons are dropped');
 });
 
 test('agentAck requires ok and carries an optional error string', () => {
@@ -418,7 +428,8 @@ test('setLoadedMedia releases exactly the held jobs matching the new roll', asyn
   }), logger, config });
 
   const out = await PrintService.setLoadedMedia(7, 'medium', 42);
-  assert.deepEqual(out, { released: 4 });
+  assert.equal(out.released, 4, 'held jobs matching the new roll are released');
+  assert.equal(typeof out.held, 'number', 'the re-held count is reported too');
 
   const release = seen.find(s => /STATUS\s*=\s*'queued'/i.test(s.sql));
   assert.match(release.sql, /STATUS\s*=\s*'held'/i, 'only held jobs are released');
@@ -475,4 +486,31 @@ test('the print module registers without throwing and wires both auth styles', (
   ]) {
     assert.ok(paths.includes(expected), `missing route: ${expected}`);
   }
+});
+
+test('createJob rejects the large preset for an item (Phase 1 parity)', () => {
+  assert.ok(schema.createJob.validate({ entityType: 'item', entityIds: [1], preset: 'large' }).error,
+    'large is a contents manifest — meaningless for an item');
+  assert.equal(schema.createJob.validate({ entityType: 'container', entityIds: [1], preset: 'large' }).error, undefined);
+  assert.equal(schema.createJob.validate({ entityType: 'area', entityIds: [1], preset: 'large' }).error, undefined);
+});
+
+test('sweepStaleClaims applies the attempt cap so a poison job cannot loop forever', async () => {
+  let sql = '', params = null;
+  PrintService.init({ db: fakeDb((s2, p2) => { sql = s2; params = p2; return { affectedRows: 1 }; }), logger, config });
+  await PrintService.sweepStaleClaims(3);
+  assert.match(sql, /STATUS\s*=\s*CASE/i, 'the sweep must decide queued-vs-failed, not blindly requeue');
+  assert.match(sql, /'failed'/i, 'a repeatedly-abandoned job must eventually fail');
+  assert.equal(params[0], 3, 'the attempt cap is bound');
+});
+
+test('setLoadedMedia parks now-unprintable queued jobs back into held', async () => {
+  const seen = [];
+  PrintService.init({ db: fakeDb((s2, p2) => { seen.push({ sql: s2, params: p2 }); return { affectedRows: 2 }; }), logger, config });
+  const out = await PrintService.setLoadedMedia(7, 'medium', 42);
+  assert.equal(out.held, 2, 'jobs queued for the old roll are re-held');
+  const hold = seen.find(x => /SET j\.STATUS = 'held'/i.test(x.sql));
+  assert.ok(hold, 'a re-hold statement must run on a roll change');
+  assert.match(hold.sql, /STATUS\s*=\s*'queued'\s+AND\s+j\.PRESET\s*<>/i,
+    'only queued jobs whose preset no longer matches are parked');
 });

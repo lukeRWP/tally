@@ -41,8 +41,13 @@ app.use(require('./src/middleware/csrf')());
 // global limiter must SKIP them: middleware runs in registration order, so a
 // more permissive limiter mounted later never raises this one's ceiling — the
 // first limiter to match still 429s. Exempting here is what actually works.
+// Match on segment boundaries, NOT a raw prefix: a bare startsWith would also
+// match the user-facing '/api/print/_y_/agents' (printer registration, which
+// issues a token) and '/api/print/_x_/agents'. Express's app.use() below is
+// segment-aware, so those routes would be skipped here yet never covered by
+// agentLimiter — leaving token issuance with no rate limit at all.
 const AGENT_PATHS = ['/api/print/_y_/agent', '/api/print/_x_/agent'];
-const isAgentPath = (req) => AGENT_PATHS.some(p => req.path.startsWith(p));
+const isAgentPath = (req) => AGENT_PATHS.some(p => req.path === p || req.path.startsWith(`${p}/`));
 
 app.use(
   rateLimit({
