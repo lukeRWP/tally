@@ -514,3 +514,56 @@ test('setLoadedMedia parks now-unprintable queued jobs back into held', async ()
   assert.match(hold.sql, /STATUS\s*=\s*'queued'\s+AND\s+j\.PRESET\s*<>/i,
     'only queued jobs whose preset no longer matches are parked');
 });
+
+test('claimNext reads the job back by CLAIM_ID and claims in FIFO order', async () => {
+  // Selecting by CLAIMED_BY instead of CLAIM_ID would hand back the wrong row
+  // under concurrency; losing ORDER BY would print labels out of order.
+  const seen = [];
+  PrintService.init({ db: fakeDb((sql, params) => {
+    seen.push({ sql, params });
+    if (/UPDATE TALLY\.printer_agents/i.test(sql)) return { affectedRows: 1 };
+    if (/SET STATUS = CASE/i.test(sql)) return { affectedRows: 0 };
+    if (/SET STATUS = 'claimed'/i.test(sql)) return { affectedRows: 1 };
+    return [{ ID: 11, PROPERTY_ID: 3, CREATED_BY: 42, ENTITY_TYPE: 'container',
+              ENTITY_IDS: '[5]', PRESET: 'large', STATUS: 'claimed', ATTEMPTS: 0 }];
+  }), logger, config });
+
+  await PrintService.claimNext({ id: 7, propertyId: 3, loadedMedia: 'large' }, {});
+
+  const claim = seen.find(s => /SET STATUS = 'claimed'/i.test(s.sql));
+  assert.match(claim.sql, /ORDER BY CREATED_AT/i, 'the oldest queued job must be claimed first');
+  const readback = seen.find(s => /SELECT \* FROM TALLY\.print_jobs/i.test(s.sql));
+  assert.match(readback.sql, /WHERE CLAIM_ID = \?/i, 'the read-back must key on the generated CLAIM_ID');
+  assert.equal(readback.params[0], claim.params[0], 'read-back uses the same claim id that was written');
+});
+
+test('sweepStaleClaims binds the property and the staleness window', async () => {
+  let params = null;
+  PrintService.init({ db: fakeDb((s, p) => { params = p; return { affectedRows: 0 }; }), logger, config });
+  await PrintService.sweepStaleClaims(3);
+  assert.ok(params.includes(3), 'the sweep is scoped to one property, not global');
+  assert.ok(params.includes(5), 'the 5-minute staleness window is bound, not hard-coded elsewhere');
+});
+
+test('renderJobPdf large branch builds a manifest bundle as the queuing user', async () => {
+  const Labels = require('../src/modules/labels/labels.service');
+  const origManifest = Labels.getManifest;
+  const origBundle = Labels.renderManifestBundle;
+  const calls = [];
+  Labels.getManifest = async (type, id, userId) => { calls.push({ type, id, userId }); return { header: {}, rows: [] }; };
+  Labels.renderManifestBundle = async (manifests, preset) => { calls.push({ manifests: manifests.length, preset }); return Buffer.from('%PDF-x'); };
+  try {
+    PrintService.init({ db: fakeDb(() => []), logger, config });
+    const buf = await PrintService.renderJobPdf({
+      id: 11, createdBy: 42, entityType: 'container', entityIds: [5, 6], preset: 'large',
+    });
+    assert.ok(Buffer.isBuffer(buf));
+    assert.deepEqual(calls[0], { type: 'container', id: 5, userId: 42 },
+      'each manifest is fetched as the queuing user, never unscoped');
+    assert.deepEqual(calls.at(-1), { manifests: 2, preset: 'large' },
+      'all resolved manifests are bundled into one PDF');
+  } finally {
+    Labels.getManifest = origManifest;
+    Labels.renderManifestBundle = origBundle;
+  }
+});
