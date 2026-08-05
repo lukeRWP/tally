@@ -478,6 +478,22 @@ These rules exist because every one of them was learned from a production failur
 
 10. **The deploy step's curl timeout (16 min) is shorter than the orchestrator's deploy timeout (20 min)** — a slow deploy can succeed on the orchestrator but report failure in GH Actions. This is a known gap. The orchestrator operation status is the source of truth, not the GH Actions status.
 
+#### Database Migrations — NOT part of deploy
+
+15. **`Build & Deploy` never runs migrations.** The orchestrator's deploy op updates containers only; applying schema is a *separate* op (`executor.js` says so explicitly). A PR that adds a migration will deploy green and then 500 on every endpoint touching the new tables. After merging any migration, run:
+
+    ```bash
+    curl -X POST http://10.0.5.42:8500/api/_y_/apps/tally/envs/prod/db/migrate-all \
+      -H "Authorization: Bearer $ORCHESTRATOR_API_KEY" \
+      -H 'Content-Type: application/json' -d '{"ref":"master"}'
+    ```
+
+    `migrate-all` auto-applies: it diffs `SQL/migrations/` against `schema_migrations` on the target and applies what's pending, in order. It takes a pre-migration `mysqldump` first. **The orchestrator is only reachable from the management VLAN (10.0.5.0/24)** — not from a normal client machine.
+
+16. **Migrations MUST be idempotent.** The playbook stops at the first error, so one failing migration blocks every later one behind it. This is not hypothetical: 002 added indexes that were later folded into `SQL/init/001_TALLY_Init.sql`, so it died with `ERROR 1061 Duplicate key name` on any database built from the current base schema — and blocked 003, leaving the print tables absent while the deploy reported success. MySQL 8 has no `ADD KEY ... IF NOT EXISTS`; guard with an `information_schema` check plus a prepared statement (see 002 for the pattern). Prefer `CREATE TABLE IF NOT EXISTS` for new tables.
+
+17. **Local dev applies migrations via `SQL/init/002_apply_migrations.sh`.** `docker-compose` mounts `SQL/migrations/` at `/docker-entrypoint-migrations/` and that script applies them after the base schema — MySQL's entrypoint ignores subdirectories, so they cannot simply be mounted alongside `init/`. Without this, `task db:reset` produces a database with *no* migrations applied.
+
 #### Adding New Server Files
 
 11. **If you add a new top-level file the server needs at runtime** (e.g., a config file, seed script), you must update THREE places: (a) `app.yml` `build.components.server.tarball.includes`, (b) `build.yml` tar command, (c) `.dockerignore` if applicable.
