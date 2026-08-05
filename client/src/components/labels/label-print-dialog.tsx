@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Printer } from 'lucide-react';
+import { Printer, ListPlus } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -12,6 +12,7 @@ import { LabelPreview } from './label-preview';
 import { useGenerateLabels, useQrImageUrl, type LabelPreset } from '@/hooks/use-labels';
 import { usePrinters, useCreatePrintJob, type PrintablePreset } from '@/hooks/use-print';
 import { toast } from '@/components/ui/toast';
+import { usePrintQueueStore } from '@/store/print-queue-store';
 
 interface LabelEntity {
   id: number;
@@ -56,6 +57,27 @@ export function LabelPrintDialog({ entities, entityType, isOpen, onOpenChange, p
     ? (printer.printerStateReasons[0] ?? 'stopped')
     : null;
   const rollMatches = printer?.loadedMedia === preset;
+
+  const stageLabels = usePrintQueueStore((st) => st.add);
+
+  function handleAddToQueue() {
+    // Staged locally — nothing reaches tally until you print the batch from
+    // the Print page, so this works fine mid-walk with patchy wifi.
+    for (const e of entities) {
+      stageLabels({
+        id: e.id,
+        entityType: entityType,
+        name: e.name,
+        qrCode: e.qrCode,
+        propertyId,
+        preset: preset as PrintablePreset,
+      });
+    }
+    toast(entities.length === 1
+      ? `Added to the print queue`
+      : `Added ${entities.length} labels to the print queue`);
+    onOpenChange(false);
+  }
 
   function handlePrint() {
     createPrintJob.mutate(
@@ -135,6 +157,12 @@ export function LabelPrintDialog({ entities, entityType, isOpen, onOpenChange, p
           <Button variant="outline" size="sm" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
+          {isPrintable && (
+            <Button variant="outline" size="sm" onClick={handleAddToQueue}>
+              <ListPlus className="w-3.5 h-3.5" />
+              Add to queue
+            </Button>
+          )}
           <Button
             size="sm"
             onClick={handleGenerate}
