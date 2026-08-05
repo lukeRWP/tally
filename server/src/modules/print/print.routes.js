@@ -81,7 +81,7 @@ module.exports = function printRoutes({ app, db, logger, config }) {
   // ── GET /api/print/_x_/agent/jobs/:id/pdf ─────────────────────────────────
   app.get('/api/print/_x_/agent/jobs/:id/pdf', agentAuth, async (req, res) => {
     // Only a job this agent currently holds — never an arbitrary id.
-    const job = await PrintService.getClaimedJob(Number(req.params.id), req.agent.id);
+    const job = await PrintService.getClaimedJob(Number(req.params.id), req.agent.id, req.agent.propertyId);
     if (!job) return error(res, 'Job not found or not claimed by this agent', 404);
 
     const pdf = await PrintService.renderJobPdf(job);
@@ -95,7 +95,7 @@ module.exports = function printRoutes({ app, db, logger, config }) {
   // ── POST /api/print/_y_/agent/jobs/:id/ack ────────────────────────────────
   app.post('/api/print/_y_/agent/jobs/:id/ack', agentAuth, validate(agentAck, 'body'), async (req, res) => {
     const status = await PrintService.ackJob(
-      Number(req.params.id), req.agent.id, req.body.ok, req.body.error
+      Number(req.params.id), req.agent.id, req.body.ok, req.body.error, req.body.claimId
     );
     return status ? success(res, { status }) : error(res, 'Job not found or not claimed by this agent', 404);
   });

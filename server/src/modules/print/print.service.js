@@ -50,6 +50,9 @@ const PrintService = {
       lastError: row.LAST_ERROR,
       printedAt: row.PRINTED_AT,
       createdAt: row.CREATED_AT,
+      // Handed to the agent so it can fence its ack to THIS claim. Without it a
+      // delayed/retried ack could land on a later claim of the same job.
+      claimId: row.CLAIM_ID ?? null,
     };
   },
 
@@ -124,7 +127,8 @@ const PrintService = {
     const result = await _db.query(
       `UPDATE TALLY.print_jobs j
          JOIN TALLY.property_members pm ON pm.PROPERTY_ID = j.PROPERTY_ID AND pm.USER_ID = ?
-          SET j.STATUS = 'canceled'
+          SET j.STATUS = 'canceled',
+              j.CLAIM_ID = NULL, j.CLAIMED_BY = NULL, j.CLAIMED_AT = NULL
         WHERE j.ID = ? AND j.STATUS IN ('queued', 'held', 'claimed')`,
       [userId, id]
     );
@@ -199,11 +203,14 @@ const PrintService = {
     return rows.length > 0 ? PrintService._mapJob(rows[0]) : null;
   },
 
-  async getClaimedJob(jobId, agentId) {
+  // Property is checked as well as the claim: spec §6 states a two-part
+  // guard, and relying on CLAIMED_BY alone means one deleted-and-reused
+  // agent id would be the only thing between a job and the wrong printer.
+  async getClaimedJob(jobId, agentId, propertyId) {
     const rows = await _db.query(
       `SELECT * FROM TALLY.print_jobs
-        WHERE ID = ? AND CLAIMED_BY = ? AND STATUS = 'claimed'`,
-      [jobId, agentId]
+        WHERE ID = ? AND CLAIMED_BY = ? AND PROPERTY_ID = ? AND STATUS = 'claimed'`,
+      [jobId, agentId, propertyId]
     );
     return rows.length > 0 ? PrintService._mapJob(rows[0]) : null;
   },
@@ -227,21 +234,26 @@ const PrintService = {
     return LabelsService.renderLabelPdf(entities, job.preset);
   },
 
-  async ackJob(jobId, agentId, ok, errorText) {
+  // claimId fences the ack to the specific claim it belongs to. A retried or
+  // delayed ack could otherwise land on a LATER claim of the same job (same
+  // agent, also 'claimed') and wrongly mark an in-flight print done.
+  async ackJob(jobId, agentId, ok, errorText, claimId) {
+    const fence = claimId ? ' AND CLAIM_ID = ?' : '';
+    const fenceParam = claimId ? [claimId] : [];
     if (ok) {
       const result = await _db.query(
         `UPDATE TALLY.print_jobs
             SET STATUS = 'done', PRINTED_AT = NOW(), LAST_ERROR = NULL
-          WHERE ID = ? AND CLAIMED_BY = ? AND STATUS = 'claimed'`,
-        [jobId, agentId]
+          WHERE ID = ? AND CLAIMED_BY = ? AND STATUS = 'claimed'${fence}`,
+        [jobId, agentId, ...fenceParam]
       );
       return result.affectedRows > 0 ? 'done' : null;
     }
 
     const rows = await _db.query(
       `SELECT ATTEMPTS FROM TALLY.print_jobs
-        WHERE ID = ? AND CLAIMED_BY = ? AND STATUS = 'claimed'`,
-      [jobId, agentId]
+        WHERE ID = ? AND CLAIMED_BY = ? AND STATUS = 'claimed'${fence}`,
+      [jobId, agentId, ...fenceParam]
     );
     if (rows.length === 0) return null;
 
@@ -256,8 +268,8 @@ const PrintService = {
       `UPDATE TALLY.print_jobs
           SET STATUS = ?, ATTEMPTS = ?, LAST_ERROR = ?,
               CLAIM_ID = NULL, CLAIMED_BY = NULL, CLAIMED_AT = NULL
-        WHERE ID = ? AND CLAIMED_BY = ? AND STATUS = 'claimed'`,
-      [nextStatus, nextAttempts, errorText || null, jobId, agentId]
+        WHERE ID = ? AND CLAIMED_BY = ? AND STATUS = 'claimed'${fence}`,
+      [nextStatus, nextAttempts, errorText || null, jobId, agentId, ...fenceParam]
     );
     return written.affectedRows > 0 ? nextStatus : null;
   },

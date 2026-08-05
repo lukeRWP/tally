@@ -315,11 +315,33 @@ test('sweepStaleClaims requeues abandoned claims and increments attempts', async
   assert.match(sql, /CLAIMED_AT\s*<\s*DATE_SUB/i, 'swept by claim age');
 });
 
-test('getClaimedJob refuses a job this agent does not currently hold', async () => {
-  let params = null;
-  PrintService.init({ db: fakeDb((sql, p) => { params = p; return []; }), logger, config });
-  assert.equal(await PrintService.getClaimedJob(11, 7), null);
-  assert.deepEqual(params, [11, 7], 'both the job id AND the agent id are bound');
+test('getClaimedJob returns a job only for the agent AND property that hold it', async () => {
+  // A stub that returns [] for everything makes this unfalsifiable — it would
+  // pass with the STATUS guard deleted or AND swapped for OR. Discriminate on
+  // the exact bound params instead.
+  let sql = '';
+  const db = fakeDb((s2, p2) => {
+    sql = s2;
+    const [jobId, agentId, propertyId] = p2;
+    return (jobId === 11 && agentId === 7 && propertyId === 3)
+      ? [{ ID: 11, PROPERTY_ID: 3, CREATED_BY: 42, ENTITY_TYPE: 'container',
+           ENTITY_IDS: '[5]', PRESET: 'large', STATUS: 'claimed', ATTEMPTS: 0, CLAIM_ID: 'c1' }]
+      : [];
+  });
+  PrintService.init({ db, logger, config });
+
+  const mine = await PrintService.getClaimedJob(11, 7, 3);
+  assert.equal(mine.id, 11, 'the holding agent gets its job');
+  assert.equal(mine.claimId, 'c1', 'the claim id is handed to the agent for ack fencing');
+
+  assert.equal(await PrintService.getClaimedJob(11, 8, 3), null, 'another agent gets nothing');
+  assert.equal(await PrintService.getClaimedJob(11, 7, 9), null, 'another property gets nothing');
+  assert.match(sql, /STATUS = 'claimed'/i, 'only a currently-claimed job may be fetched');
+  // Pin the conjunction explicitly: a fakeDb keys on bound params, so it cannot
+  // simulate SQL OR semantics — swapping AND for OR would otherwise let any
+  // agent fetch any job's PDF by id and still pass.
+  assert.match(sql, /ID = \?\s+AND\s+CLAIMED_BY = \?\s+AND\s+PROPERTY_ID = \?/i,
+    'the three guards must be ANDed, never ORed');
 });
 
 test('ackJob(ok) marks done; ack(fail) requeues until the attempt cap then fails', async () => {
@@ -458,35 +480,53 @@ test('revokeAgent returns false for an agent the caller cannot reach', async () 
 
 // ── routes ────────────────────────────────────────────────────────────────────
 
-test('the print module registers without throwing and wires both auth styles', () => {
+test('every route is mounted with the correct auth middleware', () => {
+  // Capturing only the path would verify nothing about authorization: an agent
+  // route mounted with requireAuth (Pi 401s forever), or a user route mounted
+  // with none (unauthenticated job queueing), would both still register 11
+  // strings and pass. Capture the handler chain and assert on it.
   const routes = [];
+  const requireAuth = (req, res, next) => next();
+  const record = (m) => (p, ...handlers) => routes.push({ method: m, path: p, handlers });
   const app = {
-    locals: { requireAuth: (req, res, next) => next() },
-    get: (p) => routes.push(['GET', p]),
-    post: (p) => routes.push(['POST', p]),
-    put: (p) => routes.push(['PUT', p]),
-    patch: (p) => routes.push(['PATCH', p]),
-    delete: (p) => routes.push(['DELETE', p]),
+    locals: { requireAuth },
+    get: record('GET'), post: record('POST'), put: record('PUT'),
+    patch: record('PATCH'), delete: record('DELETE'),
   };
   require('../src/modules/print/print.routes')({ app, db: fakeDb(() => []), logger, config });
 
-  const paths = routes.map(([m, p]) => `${m} ${p}`);
-  for (const expected of [
-    'POST /api/print/_y_/jobs',
-    'GET /api/print/_x_/jobs',
-    'PATCH /api/print/_p_/jobs/:id/cancel',
-    'POST /api/print/_y_/jobs/:id/retry',
-    'POST /api/print/_y_/agents',
-    'GET /api/print/_x_/agents',
-    'DELETE /api/print/_d_/agents/:id',
-    'PUT /api/print/_u_/agents/:id/loaded-media',
-    'POST /api/print/_y_/agent/claim',
-    'GET /api/print/_x_/agent/jobs/:id/pdf',
-    'POST /api/print/_y_/agent/jobs/:id/ack',
-  ]) {
-    assert.ok(paths.includes(expected), `missing route: ${expected}`);
+  const EXPECTED = [
+    ['POST', '/api/print/_y_/jobs', 'user'],
+    ['GET', '/api/print/_x_/jobs', 'user'],
+    ['PATCH', '/api/print/_p_/jobs/:id/cancel', 'user'],
+    ['POST', '/api/print/_y_/jobs/:id/retry', 'user'],
+    ['POST', '/api/print/_y_/agents', 'user'],
+    ['GET', '/api/print/_x_/agents', 'user'],
+    ['DELETE', '/api/print/_d_/agents/:id', 'user'],
+    ['PUT', '/api/print/_u_/agents/:id/loaded-media', 'user'],
+    ['POST', '/api/print/_y_/agent/claim', 'agent'],
+    ['GET', '/api/print/_x_/agent/jobs/:id/pdf', 'agent'],
+    ['POST', '/api/print/_y_/agent/jobs/:id/ack', 'agent'],
+  ];
+
+  for (const [method, path, kind] of EXPECTED) {
+    const r = routes.find(x => x.method === method && x.path === path);
+    assert.ok(r, `missing route: ${method} ${path}`);
+    assert.ok(r.handlers.length > 0, `${path} has no middleware at all`);
+    const usesRequireAuth = r.handlers.includes(requireAuth);
+    if (kind === 'user') {
+      assert.ok(usesRequireAuth, `${path} must be session-authenticated`);
+    } else {
+      assert.ok(!usesRequireAuth, `${path} must NOT use session auth — it is agent/bearer`);
+      // The agent middleware is constructed inside the module, so identity
+      // comparison isn't possible; assert a non-handler middleware precedes
+      // the final handler instead.
+      assert.ok(r.handlers.length >= 2, `${path} must have an auth middleware before its handler`);
+    }
   }
+  assert.equal(routes.length, EXPECTED.length, 'no unexpected extra routes registered');
 });
+
 
 test('createJob rejects the large preset for an item (Phase 1 parity)', () => {
   assert.ok(schema.createJob.validate({ entityType: 'item', entityIds: [1], preset: 'large' }).error,
@@ -538,11 +578,15 @@ test('claimNext reads the job back by CLAIM_ID and claims in FIFO order', async 
 });
 
 test('sweepStaleClaims binds the property and the staleness window', async () => {
-  let params = null;
-  PrintService.init({ db: fakeDb((s, p) => { params = p; return { affectedRows: 0 }; }), logger, config });
-  await PrintService.sweepStaleClaims(3);
-  assert.ok(params.includes(3), 'the sweep is scoped to one property, not global');
-  assert.ok(params.includes(5), 'the 5-minute staleness window is bound, not hard-coded elsewhere');
+  // Use a propertyId that cannot collide with MAX_ATTEMPTS(3) or the 5-minute
+  // window — an includes() check against 3 was satisfied by MAX_ATTEMPTS alone,
+  // so it passed even with PROPERTY_ID scoping deleted entirely.
+  let params = null, sql = '';
+  PrintService.init({ db: fakeDb((s2, p) => { sql = s2; params = p; return { affectedRows: 0 }; }), logger, config });
+  await PrintService.sweepStaleClaims(42);
+  assert.deepEqual(params, [3, 3, 42, 5],
+    'binds [cap, cap, propertyId, staleMinutes] in exactly that order');
+  assert.match(sql, /PROPERTY_ID = \?/i, 'the sweep is scoped to one property, never global');
 });
 
 test('renderJobPdf large branch builds a manifest bundle as the queuing user', async () => {

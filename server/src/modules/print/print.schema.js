@@ -50,6 +50,8 @@ const agentClaim = Joi.object({
 
 const agentAck = Joi.object({
   ok: Joi.boolean().required(),
+  // Optional: fences the ack to the claim it belongs to (see PrintService.ackJob).
+  claimId: Joi.string().max(36).optional(),
   error: Joi.string().max(500).allow('').optional(),
 });
 
