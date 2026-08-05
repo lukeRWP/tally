@@ -35,6 +35,11 @@ export function PrinterSettings({ propertyId }: { propertyId?: number }) {
   const [issuedToken, setIssuedToken] = React.useState<string | null>(null);
   const printer = printers?.[0];
 
+  // Drop the one-time token panel when the selected property changes — it
+  // belongs to the property it was issued for, and showing it under another
+  // one would hand the operator a config snippet for the wrong printer.
+  React.useEffect(() => { setIssuedToken(null); }, [propertyId]);
+
   const online = !!printer?.lastSeenAt && Date.now() - new Date(printer.lastSeenAt).getTime() < 60_000;
   const problem = printer?.printerState === 'stopped'
     ? PROBLEM_TEXT[printer.printerStateReasons[0]] ?? 'Stopped' : null;
@@ -121,7 +126,8 @@ agent_token = ${issuedToken}`}
           <p className="text-xs text-[var(--color-text-muted)] mb-1.5">Recent jobs</p>
           <div className="flex flex-col gap-1">
             {jobs.map((j) => (
-              <div key={j.id} className="flex items-center gap-2 text-xs border border-[var(--color-border)] rounded-[var(--radius-md)] px-2 py-1.5">
+              <div key={j.id} className="flex flex-col gap-1 text-xs border border-[var(--color-border)] rounded-[var(--radius-md)] px-2 py-1.5">
+                <div className="flex items-center gap-2">
                 <span className="font-mono">{j.preset}</span>
                 <span className="text-[var(--color-text-muted)]">
                   {j.entityIds.length} label{j.entityIds.length === 1 ? '' : 's'}
@@ -130,7 +136,7 @@ agent_token = ${issuedToken}`}
                   {j.status === 'held' ? `waiting for ${j.preset} roll` : j.status}
                 </span>
                 {j.status === 'failed' && (
-                  <Button variant="outline" size="sm" title={j.lastError ?? undefined}
+                  <Button variant="outline" size="sm"
                           disabled={retryJob.isPending}
                           onClick={() => retryJob.mutate(j.id, {
                             onError: (e) => toast(e instanceof Error ? e.message : 'Could not retry that job'),
@@ -138,7 +144,11 @@ agent_token = ${issuedToken}`}
                     <RotateCw className="w-3 h-3" />
                   </Button>
                 )}
-                {['queued', 'held'].includes(j.status) && (
+                {/* 'claimed' is cancellable server-side too. Without it, a job
+                    claimed by a Pi that then went away has no escape in the UI:
+                    the stale sweep only runs inside a claim, so if the agent
+                    never polls again nothing ever releases it. */}
+                {['queued', 'held', 'claimed'].includes(j.status) && (
                   <Button variant="outline" size="sm"
                           disabled={cancelJob.isPending}
                           onClick={() => cancelJob.mutate(j.id, {
@@ -146,6 +156,12 @@ agent_token = ${issuedToken}`}
                           })}>
                     <Trash2 className="w-3 h-3" />
                   </Button>
+                )}
+                </div>
+                {/* Visible, not a title tooltip — tooltips never appear on touch,
+                    so on a phone the reason a job failed was unreachable. */}
+                {j.status === 'failed' && j.lastError && (
+                  <span className="text-[10px] text-[var(--color-red)] break-words">{j.lastError}</span>
                 )}
               </div>
             ))}
