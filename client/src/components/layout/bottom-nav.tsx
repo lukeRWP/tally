@@ -1,11 +1,12 @@
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
-import { Home, Layers, ScanLine, BarChart2, Settings } from 'lucide-react';
+import { Home, Layers, ScanLine, BarChart2, Settings, Printer } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 const tabs = [
   { path: '/', icon: Home, label: 'Home' },
   { path: '/inventory', icon: Layers, label: 'Inventory' },
   { path: '/scan', icon: ScanLine, label: 'Scan', center: true },
+  { path: '/print', icon: Printer, label: 'Print' },
   { path: '/reports', icon: BarChart2, label: 'Reports' },
   { path: '/settings', icon: Settings, label: 'Settings' },
 ];

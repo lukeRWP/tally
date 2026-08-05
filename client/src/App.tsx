@@ -14,6 +14,7 @@ import { ContainerDetail } from '@/pages/container-detail';
 import { ItemDetail } from '@/pages/item-detail';
 import { Scan } from '@/pages/scan';
 import { Reports } from '@/pages/reports';
+import { PrintQueuePage } from '@/pages/print-queue';
 import { SettingsPage } from '@/pages/settings';
 import { NotificationListPage } from '@/pages/notifications';
 import { RecycleBin } from '@/pages/recycle-bin';
@@ -34,6 +35,7 @@ export function App() {
         <Route path="/item/:itemId" element={<ItemDetail />} />
         <Route path="/scan" element={<Scan />} />
         <Route path="/reports" element={<Reports />} />
+        <Route path="/print" element={<PrintQueuePage />} />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="/notifications" element={<NotificationListPage />} />
         <Route path="/recycle-bin" element={<RecycleBin />} />
