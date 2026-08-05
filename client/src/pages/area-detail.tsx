@@ -157,6 +157,7 @@ export function AreaDetail() {
         entityType="area"
         isOpen={printOpen}
         onOpenChange={setPrintOpen}
+        propertyId={area.propertyId}
       />
 
       <ConfirmDialog

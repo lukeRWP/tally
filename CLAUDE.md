@@ -137,6 +137,7 @@ Each feature lives in `server/src/modules/{feature}/` with three files:
 | notifications | `/api/notifications` | List, mark read, preferences, date-based checks            |
 | reports | `/api/reports` | Generate PDF/CSV reports (insurance, value, location, lending, activity, tags) |
 | sharing | `/api/sharing` | Time-limited share links, public read-only views |
+| print         | `/api/print`         | Print-job queue + Raspberry Pi agent API (auto-print)      |
 
 All modules are registered in `server/index.js` via:
 
@@ -342,6 +343,20 @@ This allows rapid relocation of many items without navigating away from the scan
 - The thermal presets (`small`/`medium`/`large`) share a common look: an inverted (white-on-black) title bar plus a rotated parent-zone location banner down the left edge — the Area for a container, the Property for an area. `sheet` is unchanged legacy geometry and prints the full location path as one line instead.
 - All geometry lives in the `PRESETS` table at the top of `labels.service.js` — it is the single source of truth; renderers must not hard-code sizes.
 - There is **no `/labels` page**. Printing is launched from a label dialog on the item, container, and area detail pages (`client/src/components/labels/label-print-dialog.tsx`), which shows a to-scale preview and downloads the PDF.
+
+### Auto-Print (print-job queue + Raspberry Pi agent)
+
+Labels can be queued for automatic printing on a USB thermal printer (Munbyn ITPP941) driven by a Raspberry Pi. The Pi **pulls** — it polls tally outbound, so there are no inbound firewall rules.
+
+- **Two tables** (`SQL/migrations/003_print_jobs.sql`): `printer_agents` (one row per Pi) and `print_jobs`.
+- **Jobs store parameters, not bytes.** A job records `{entityType, entityIds, preset}`; the PDF is rendered on demand when the agent fetches it, reusing the Phase 1 label renderers. Rendering happens **as the job's `CREATED_BY` user**, so the membership scoping of those renderers still applies.
+- **Agent auth is a bearer token**, separate from session auth: `crypto.randomBytes(32)` with a `tp_` prefix, shown **once** at registration and stored only as a SHA-256 hash. An agent can do exactly three things — claim a job in its own property, fetch that job's PDF, ack it. It has no entity-reading surface.
+- **The claim is atomic** (a generated `CLAIM_ID` is written then read back) and **self-healing** (claims older than 5 minutes are swept back to `queued` on the next claim, with the 3-attempt cap applied so a poison job cannot loop forever).
+- **Roll state lives in tally, not on the Pi.** `printer_agents.LOADED_MEDIA` is the roll physically loaded; jobs whose preset doesn't match are `held` and released when that roll is loaded. Changing the roll also re-holds jobs queued for the old one.
+- **`sheet` is never printable** — an Avery 5160 30-up Letter page is laser output, so it is rejected at queue time and stays download-only. `large` requires a container or area (it is a contents manifest).
+- **Telemetry rides the claim request** (`printerState`, `printerStateReasons`), so "out of labels" surfaces in the UI instead of jobs failing mysteriously. Malformed telemetry is coerced to `unknown` — it can never fail a claim.
+- **Rate limiting:** the agent paths are exempted from the global 200/min limiter (via a segment-aware `skip`) and given their own 600/min budget, because draining a label batch fires claim+pdf+ack per label. The exemption must match on segment boundaries so the user-facing `/agents` routes stay limited.
+- UI lives in **Settings → Printing** (register, loaded roll, job queue) plus a **Send to printer** action in the label dialog. There is still no `/labels` page.
 
 ### Tags System (property-scoped, polymorphic)
 

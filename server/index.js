@@ -37,12 +37,25 @@ app.use(express.urlencoded({ extended: true, limit: '2mb' }));
 app.use(cookieParser(config.auth.cookieSecret));
 app.use(require('./src/middleware/csrf')());
 
+// Paths the Pi print agent polls. Kept next to the limiters below because the
+// global limiter must SKIP them: middleware runs in registration order, so a
+// more permissive limiter mounted later never raises this one's ceiling — the
+// first limiter to match still 429s. Exempting here is what actually works.
+// Match on segment boundaries, NOT a raw prefix: a bare startsWith would also
+// match the user-facing '/api/print/_y_/agents' (printer registration, which
+// issues a token) and '/api/print/_x_/agents'. Express's app.use() below is
+// segment-aware, so those routes would be skipped here yet never covered by
+// agentLimiter — leaving token issuance with no rate limit at all.
+const AGENT_PATHS = ['/api/print/_y_/agent', '/api/print/_x_/agent'];
+const isAgentPath = (req) => AGENT_PATHS.some(p => req.path === p || req.path.startsWith(`${p}/`));
+
 app.use(
   rateLimit({
     windowMs: 60 * 1000, // 1 minute
     max: 200,
     standardHeaders: true,
     legacyHeaders: false,
+    skip: isAgentPath,
   })
 );
 
@@ -51,6 +64,13 @@ const authLimiter = rateLimit({ windowMs: 60 * 1000, max: 10, standardHeaders: t
 const shareLimiter = rateLimit({ windowMs: 60 * 1000, max: 30, standardHeaders: true, legacyHeaders: false });
 app.use('/api/auth', authLimiter);
 app.use('/api/sharing/_x_/view', shareLimiter);
+
+// The Pi agent polls every 2s and, while draining a batch, fires claim+pdf+ack
+// per label — a 50-label burst is ~150 requests, which the global 200/min
+// limiter would throttle. It skips these paths (see above) so this higher
+// budget is the one that actually binds.
+const agentLimiter = rateLimit({ windowMs: 60 * 1000, max: 600, standardHeaders: true, legacyHeaders: false });
+AGENT_PATHS.forEach(p => app.use(p, agentLimiter));
 
 storage.init();
 storage.ensureBucket().catch(err => logger.warn('MinIO bucket check failed', { error: err.message }));
@@ -116,6 +136,7 @@ require('./src/modules/audit/audit.routes')({ app, db, logger, config });
 require('./src/modules/notifications/notifications.routes')({ app, db, logger, config });
 require('./src/modules/reports/reports.routes')({ app, db, logger, config });
 require('./src/modules/sharing/sharing.routes')({ app, db, logger, config });
+require('./src/modules/print/print.routes')({ app, db, logger, config });
 
 // ── Error Handler (must be last) ────────────────────────────────────────────
 

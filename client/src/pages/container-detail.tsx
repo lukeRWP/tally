@@ -291,6 +291,7 @@ export function ContainerDetail() {
         entityType="container"
         isOpen={printOpen}
         onOpenChange={setPrintOpen}
+        propertyId={propertyId > 0 ? propertyId : undefined}
       />
       <ShareDialog
         entityType="container"

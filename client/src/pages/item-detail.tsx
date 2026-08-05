@@ -555,6 +555,7 @@ export function ItemDetail() {
         entityType="item"
         isOpen={printOpen}
         onOpenChange={setPrintOpen}
+        propertyId={propertyId > 0 ? propertyId : undefined}
       />
       <ShareDialog
         entityType="item"

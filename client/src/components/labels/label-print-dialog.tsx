@@ -10,6 +10,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { LabelPreview } from './label-preview';
 import { useGenerateLabels, useQrImageUrl, type LabelPreset } from '@/hooks/use-labels';
+import { usePrinters, useCreatePrintJob, type PrintablePreset } from '@/hooks/use-print';
 import { toast } from '@/components/ui/toast';
 
 interface LabelEntity {
@@ -24,17 +25,49 @@ interface LabelEntity {
   parentZone?: string | null;
 }
 
+const PROBLEM_TEXT: Record<string, string> = {
+  'media-empty': 'out of labels',
+  'cover-open': 'cover open',
+  'media-jam': 'jammed',
+  offline: 'offline',
+};
+
 interface LabelPrintDialogProps {
   entities: LabelEntity[];
   entityType: 'item' | 'container' | 'area';
   isOpen: boolean;
   onOpenChange: (open: boolean) => void;
+  propertyId?: number;
 }
 
-export function LabelPrintDialog({ entities, entityType, isOpen, onOpenChange }: LabelPrintDialogProps) {
+export function LabelPrintDialog({ entities, entityType, isOpen, onOpenChange, propertyId }: LabelPrintDialogProps) {
   const [preset, setPreset] = React.useState<LabelPreset>(entityType === 'item' ? 'small' : 'medium');
   const generateLabels = useGenerateLabels();
   React.useEffect(() => { if (!isOpen) generateLabels.reset(); }, [isOpen]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const { data: printers } = usePrinters(isOpen ? propertyId : undefined);
+  const printer = printers?.[0];
+  const createPrintJob = useCreatePrintJob();
+
+  const isPrintable = preset !== 'sheet';
+  const online = !!printer?.lastSeenAt &&
+    Date.now() - new Date(printer.lastSeenAt).getTime() < 60_000;
+  const problem = printer && printer.printerState === 'stopped'
+    ? (printer.printerStateReasons[0] ?? 'stopped')
+    : null;
+  const rollMatches = printer?.loadedMedia === preset;
+
+  function handlePrint() {
+    createPrintJob.mutate(
+      { entityType, entityIds: entities.map((e) => e.id), preset: preset as PrintablePreset, propertyId },
+      {
+        onSuccess: (res) => toast(res.status === 'held'
+          ? `Queued — will print when you load the ${preset} roll`
+          : `Printing ${entities.length} label${entities.length === 1 ? '' : 's'}`),
+        onError: (err) => toast(err instanceof Error ? err.message : 'Failed to queue the print job'),
+      },
+    );
+  }
 
   // `large` is only offered when a single non-item entity is selected (a manifest
   // is per-container/area). If the selection changes underneath a `large` choice,
@@ -109,6 +142,24 @@ export function LabelPrintDialog({ entities, entityType, isOpen, onOpenChange }:
           >
             {generateLabels.isPending ? 'Generating…' : 'Generate'}
           </Button>
+          {printer && isPrintable && (
+            <Button
+              size="sm"
+              onClick={handlePrint}
+              disabled={createPrintJob.isPending || !online || !!problem}
+              title={
+                problem ? `Printer: ${PROBLEM_TEXT[problem] ?? problem}`
+                : !online ? 'Printer offline'
+                : undefined
+              }
+            >
+              <Printer className="w-3.5 h-3.5" />
+              {problem ? `Printer: ${PROBLEM_TEXT[problem] ?? problem}`
+                : !online ? 'Printer offline'
+                : rollMatches ? 'Send to printer'
+                : `Queue for ${preset} roll`}
+            </Button>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>

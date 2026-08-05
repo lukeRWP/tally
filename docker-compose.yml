@@ -8,6 +8,9 @@ services:
       MYSQL_DATABASE: TALLY
     volumes:
       - ./SQL/init/:/docker-entrypoint-initdb.d/
+      # Applied by SQL/init/002_apply_migrations.sh after the base schema.
+      # Mounted outside initdb.d because MySQL's entrypoint ignores subdirectories.
+      - ./SQL/migrations/:/docker-entrypoint-migrations/
       - tally-db-data:/var/lib/mysql
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p$$MYSQL_ROOT_PASSWORD"]

@@ -7,6 +7,7 @@ import { useAuthStore } from '@/store/auth-store';
 import { useProperties } from '@/hooks/use-inventory';
 import { TagManager } from '@/components/tags/tag-manager';
 import { NotificationPrefsRedesigned } from '@/components/notifications/notification-prefs-redesigned';
+import { PrinterSettings } from '@/components/print/printer-settings';
 import { useMyShareLinks, useRevokeShareLink } from '@/hooks/use-sharing';
 import { toast } from '@/components/ui/toast';
 import { cn } from '@/lib/utils';
@@ -270,6 +271,14 @@ export function SettingsPage() {
             <h2 className="text-sm font-semibold text-[var(--color-text)] mb-3">Notifications</h2>
             <NotificationPrefsRedesigned />
           </Card>
+
+          {/* Printing -- printer registration, loaded roll, job queue */}
+          {selectedTagPropertyId > 0 && (
+            <Card animationDelay="250ms">
+              <h2 className="text-sm font-semibold text-[var(--color-text)] mb-3">Printing</h2>
+              <PrinterSettings propertyId={selectedTagPropertyId} />
+            </Card>
+          )}
 
           {/* Share Links */}
           <ShareLinksSection />
