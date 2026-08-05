@@ -34,10 +34,11 @@ if [ ${#files[@]} -eq 0 ]; then
   exit 0
 fi
 
-# Some migrations are already satisfied by the base schema — 002 adds an index
-# that 001_TALLY_Init.sql now also creates, so on a FRESH database it fails with
-# "Duplicate key name". There is no schema-version table to consult, so the only
-# way to tell "already applied" from "broken" is the error code:
+# Migrations are expected to be idempotent (002 guards its indexes via
+# information_schema; 003 uses CREATE TABLE IF NOT EXISTS). This tolerance is
+# belt-and-braces for anything that slips through, since there is no
+# schema-version table here to consult — the only way to tell "already applied"
+# from "broken" is the error code:
 #   1050 table exists · 1060 duplicate column · 1061 duplicate key
 #   1091 can't DROP (doesn't exist) · 1826/1022 duplicate foreign key
 # Those are skipped; anything else is a genuine error and aborts, so a typo in a
