@@ -20,6 +20,8 @@
   --color-text-muted: oklch(0.5 0.003 90);
   --color-primary: oklch(0.62 0.19 40);
   --color-primary-bg: oklch(0.62 0.19 40 / 0.08);
+  /* Crisp ink hairline for ruled lists + column heads — the receipt rule. */
+  --color-rule: oklch(0.175 0 0 / 0.68);
   --color-green: oklch(0.6 0.19 155);
   --color-green-bg: oklch(0.6 0.19 155 / 0.08);
   --color-amber: oklch(0.7 0.17 75);
@@ -41,6 +43,7 @@
   --color-text-muted: oklch(0.6 0.003 90);
   --color-primary: oklch(0.68 0.17 42);
   --color-primary-bg: oklch(0.68 0.17 42 / 0.14);
+  --color-rule: oklch(0.955 0.004 90 / 0.5);
   --color-green: oklch(0.72 0.17 155);
   --color-green-bg: oklch(0.72 0.17 155 / 0.12);
   --color-amber: oklch(0.78 0.15 75);
@@ -62,6 +65,7 @@
     --color-text-muted: oklch(0.6 0.003 90);
     --color-primary: oklch(0.68 0.17 42);
     --color-primary-bg: oklch(0.68 0.17 42 / 0.14);
+    --color-rule: oklch(0.955 0.004 90 / 0.5);
     --color-green: oklch(0.72 0.17 155);
     --color-green-bg: oklch(0.72 0.17 155 / 0.12);
     --color-amber: oklch(0.78 0.15 75);

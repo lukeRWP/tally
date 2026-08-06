@@ -453,10 +453,10 @@ export function Home() {
       {/* Search Results */}
       {searchQuery.length >= 1 && searchResults && searchResults.length > 0 && (
         <section className="animate-fade-up">
-          <h2 className="text-sm font-semibold text-[var(--color-text)] mb-2">
+          <h2 className="font-mono text-[11px] uppercase tracking-[0.1em] font-semibold text-[var(--color-text)] mb-2">
             Items ({searchResults.length})
           </h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div className="flex flex-col">
             {searchResults.map((item) => (
               <ItemCard key={item.id} item={item} />
             ))}
@@ -478,7 +478,7 @@ export function Home() {
       {activeLoans && activeLoans.length > 0 && (
         <section className="animate-fade-up" style={{ animationDelay: '50ms' }}>
           <div className="flex items-center justify-between mb-2">
-            <h2 className="text-sm font-semibold text-[var(--color-text)]">
+            <h2 className="font-mono text-[11px] uppercase tracking-[0.1em] font-semibold text-[var(--color-text)]">
               On loan ({activeLoans.length})
             </h2>
             <button
@@ -527,7 +527,7 @@ export function Home() {
             onClick={() => setActivityExpanded(!activityExpanded)}
             className="flex items-center gap-2"
           >
-            <h2 className="text-sm font-semibold text-[var(--color-text)]">Recent Activity</h2>
+            <h2 className="font-mono text-[11px] uppercase tracking-[0.1em] font-semibold text-[var(--color-text)]">Recent Activity</h2>
             <ChevronDown className={cn(
               "w-4 h-4 text-[var(--color-text-muted)] transition-transform duration-200",
               activityExpanded && "rotate-180"
@@ -658,7 +658,7 @@ export function Home() {
       {/* Properties */}
       <section className="animate-fade-up" style={{ animationDelay: '150ms' }}>
         <div className="flex items-center justify-between mb-2">
-          <h2 className="text-sm font-semibold text-[var(--color-text)]">
+          <h2 className="font-mono text-[11px] uppercase tracking-[0.1em] font-semibold text-[var(--color-text)]">
             {singleProperty ? singleProperty.name : 'Your Properties'}
           </h2>
           <div className="flex items-center gap-3">
@@ -703,7 +703,7 @@ export function Home() {
               <HomeIcon className="w-7 h-7 text-[var(--color-primary)]" />
             </div>
             <div className="text-center">
-              <p className="text-sm font-semibold text-[var(--color-text)]">No properties yet</p>
+              <p className="font-mono text-[11px] uppercase tracking-[0.1em] font-semibold text-[var(--color-text)]">No properties yet</p>
               <p className="text-xs text-[var(--color-text-muted)] mt-0.5">Create a property to start organizing your inventory</p>
             </div>
             <Button size="sm" onClick={() => setCreateOpen(true)}>
@@ -718,7 +718,7 @@ export function Home() {
           // single card that must be tapped through conveys nothing. Land on
           // the areas directly.
           singlePropertyAreas && singlePropertyAreas.length > 0 ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div className="flex flex-col">
               {singlePropertyAreas.map((area) => (
                 <AreaCard key={area.id} area={area} />
               ))}
@@ -729,7 +729,7 @@ export function Home() {
             </p>
           )
         ) : properties && properties.length > 0 ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div className="flex flex-col">
             {properties.map((property, idx) => (
               <div
                 key={property.id}

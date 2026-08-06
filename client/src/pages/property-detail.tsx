@@ -1,7 +1,9 @@
 import { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { MapPin, Plus, LayoutGrid, Package, Box, Trash2 } from 'lucide-react';
+import { MapPin, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { TitleBar } from '@/components/ui/title-bar';
+import { ColHead } from '@/components/ui/col-head';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Breadcrumbs } from '@/components/layout/breadcrumbs';
 import { AreaCard } from '@/components/inventory/area-card';
@@ -10,7 +12,6 @@ import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { ErrorState } from '@/components/ui/error-state';
 import { useProperty, useAreas, useCreateArea, useDeleteProperty } from '@/hooks/use-inventory';
 import { toast } from '@/components/ui/toast';
-import { cn } from '@/lib/utils';
 
 export function PropertyDetail() {
   const { propertyId } = useParams<{ propertyId: string }>();
@@ -65,89 +66,58 @@ export function PropertyDetail() {
       {/* Breadcrumbs */}
       <Breadcrumbs items={[]} />
 
-      {/* Hero Header Band */}
-      <div className="bg-[var(--color-primary-bg)] px-4 pt-4 pb-4 rounded-[var(--radius-lg)] animate-fade-up">
-        <div className="flex items-center justify-between gap-2">
-          <h1 className="text-2xl font-extrabold text-[var(--color-text)] tracking-tight">{property.name}</h1>
+      {/* Header — inverted title bar */}
+      <div className="flex flex-col gap-2 animate-fade-up">
+        <div className="flex items-start justify-between gap-2">
+          <TitleBar className="min-w-0">{property.name}</TitleBar>
           <Button
             variant="outline"
             size="sm"
             onClick={() => setDeleteOpen(true)}
             disabled={deleteProperty.isPending}
-            className="text-[var(--color-red)] border-[var(--color-red)] hover:bg-[var(--color-red-bg)] shrink-0"
+            className="text-[var(--color-red)] border-[var(--color-red)] hover:bg-[var(--color-red)] hover:text-white shrink-0"
           >
             <Trash2 className="w-4 h-4" />
             Delete
           </Button>
         </div>
-        <p className="text-[11px] font-mono text-[var(--color-text-muted)] mt-0.5">{property.qrCode}</p>
+        <p className="text-[11px] font-mono text-[var(--color-text-muted)]">{property.qrCode}</p>
         {property.address && (
-          <div className="flex items-center gap-1 mt-1.5">
+          <div className="flex items-center gap-1">
             <MapPin className="w-3.5 h-3.5 text-[var(--color-primary)]" />
             <span className="text-xs text-[var(--color-text-secondary)]">{property.address}</span>
           </div>
         )}
         {property.description && (
-          <p className="text-sm text-[var(--color-text-secondary)] mt-2">{property.description}</p>
+          <p className="text-sm text-[var(--color-text-secondary)]">{property.description}</p>
         )}
 
-        {/* Stats row */}
-        <div className="flex flex-wrap gap-2 mt-3">
-          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-[var(--color-card)] text-xs font-semibold text-[var(--color-text-secondary)]">
-            <LayoutGrid className="w-3 h-3 text-[var(--color-primary)]" />
-            {property.areaCount} {property.areaCount === 1 ? 'area' : 'areas'}
-          </div>
-          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-[var(--color-card)] text-xs font-semibold text-[var(--color-text-secondary)]">
-            <Package className="w-3 h-3 text-[var(--color-amber)]" />
-            {property.containerCount} containers
-          </div>
-          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-[var(--color-card)] text-xs font-semibold text-[var(--color-text-secondary)]">
-            <Box className="w-3 h-3 text-[var(--color-purple)]" />
-            {property.itemCount} items
-          </div>
+        {/* Stats row — mono ledger figures */}
+        <div className="flex flex-wrap gap-x-4 gap-y-1 font-mono text-[11px] uppercase tracking-[0.06em] text-[var(--color-text-muted)]">
+          <span><b className="text-[var(--color-text)] font-semibold tabular-nums">{property.areaCount}</b> {property.areaCount === 1 ? 'area' : 'areas'}</span>
+          <span><b className="text-[var(--color-text)] font-semibold tabular-nums">{property.containerCount}</b> containers</span>
+          <span><b className="text-[var(--color-text)] font-semibold tabular-nums">{property.itemCount}</b> items</span>
         </div>
       </div>
 
       {/* Areas */}
-      <div className="flex items-center justify-between">
-        <h2 className="text-sm font-semibold text-[var(--color-text)]">Areas</h2>
-        <Button size="sm" onClick={() => setCreateOpen(true)}>
-          <Plus className="w-4 h-4" />
-          Add Area
-        </Button>
+      <div className="flex flex-col">
+        <ColHead action="+ Add" onAction={() => setCreateOpen(true)}>
+          Areas · {areas?.length ?? 0}
+        </ColHead>
+
+        {areasLoading && <Skeleton className="h-14 w-full mt-2" />}
+
+        {areas && areas.length === 0 && (
+          <p className="font-mono text-[11px] uppercase tracking-[0.06em] text-[var(--color-text-muted)] py-6 text-center">
+            No areas yet — add one to organize this property
+          </p>
+        )}
+
+        {areas?.map((area) => (
+          <AreaCard key={area.id} area={area} />
+        ))}
       </div>
-
-      {areasLoading && (
-        <div className="flex flex-col gap-2">
-          {[1, 2].map((i) => (
-            <Skeleton key={i} className="h-20 w-full" />
-          ))}
-        </div>
-      )}
-
-      {areas && areas.length === 0 && (
-        <p className="text-sm text-[var(--color-text-muted)] text-center py-8">
-          No areas yet. Add one to organize this property.
-        </p>
-      )}
-
-      {areas && areas.length > 0 && (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          {areas.map((area, idx) => (
-            <div
-              key={area.id}
-              className={cn(
-                'border-l-[3px] rounded-l-sm',
-                idx % 2 === 0
-                  ? 'border-l-[var(--color-primary)]'
-                  : 'border-l-[var(--color-amber)]',
-              )}
-            >
-              <AreaCard area={area} />
-            </div>
-          ))}
-        </div>
-      )}
 
       <EntityForm
         open={createOpen}

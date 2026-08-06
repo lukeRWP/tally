@@ -1,10 +1,10 @@
-import type React from 'react';
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ScanLine, Printer, Share2, Plus, Package, Box, Check, CheckSquare } from 'lucide-react';
+import { ScanLine, Printer, Share2, Plus, Package, Box, CheckSquare } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Card } from '@/components/ui/card';
+import { TitleBar } from '@/components/ui/title-bar';
+import { ColHead } from '@/components/ui/col-head';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Breadcrumbs } from '@/components/layout/breadcrumbs';
 import { ContainerCard } from '@/components/inventory/container-card';
@@ -23,60 +23,6 @@ import { TagPicker } from '@/components/tags/tag-picker';
 import { LabelPrintDialog } from '@/components/labels/label-print-dialog';
 import { ShareDialog } from '@/components/sharing/share-dialog';
 import { usePrintQueueStore } from '@/store/print-queue-store';
-import { cn } from '@/lib/utils';
-
-/**
- * Overlay that turns any card into a checkbox while select mode is on.
- * Sits on top of the card and swallows the click, so the card's own
- * navigate-on-click never fires while selecting.
- */
-function SelectableCard({
-  name,
-  isSelected,
-  onToggle,
-  children,
-}: {
-  name: string;
-  isSelected: boolean;
-  onToggle: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="relative">
-      {/* inert takes the covered card out of the tab order AND the
-          accessibility tree — without it, Tab+Enter (or a screen-reader
-          double-tap) still fires the card's own navigate and nukes the
-          selection. React 18's types don't know the attribute yet. */}
-      <div {...({ inert: '' } as unknown as React.HTMLAttributes<HTMLDivElement>)}>
-        {children}
-      </div>
-      <button
-        type="button"
-        role="checkbox"
-        aria-checked={isSelected}
-        aria-label={`Select ${name}`}
-        onClick={onToggle}
-        className={cn(
-          'absolute inset-0 rounded-[var(--radius-lg)] border-2 transition-colors',
-          isSelected
-            ? 'border-[var(--color-primary)] bg-[var(--color-primary-bg)]/60'
-            : 'border-transparent hover:border-[var(--color-border)]',
-        )}
-      >
-        <span
-          className={cn(
-            'absolute top-2 right-2 w-5 h-5 rounded-full border flex items-center justify-center',
-            isSelected
-              ? 'bg-[var(--color-primary)] border-[var(--color-primary)] text-white'
-              : 'bg-[var(--color-card)] border-[var(--color-border)]',
-          )}
-        >
-          {isSelected && <Check className="w-3.5 h-3.5" />}
-        </span>
-      </button>
-    </div>
-  );
-}
 
 export function ContainerDetail() {
   const { containerId } = useParams<{ containerId: string }>();
@@ -258,51 +204,44 @@ export function ContainerDetail() {
       {/* Breadcrumbs */}
       <Breadcrumbs items={breadcrumbItems} />
 
-      {/* Header */}
-      <div className="animate-fade-up">
+      {/* Header — inverted title bar, mono code + type badge */}
+      <div className="animate-fade-up flex flex-col gap-1.5">
         <div className="flex items-center gap-2">
-          <h1 className="text-lg font-bold text-[var(--color-text)]">{container.name}</h1>
+          <TitleBar>{container.name}</TitleBar>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="font-mono text-[11px] text-[var(--color-text-muted)]">{container.qrCode}</span>
           <Badge variant="warning">{container.type}</Badge>
         </div>
-        <p className="text-[11px] font-mono text-[var(--color-text-muted)]">{container.qrCode}</p>
         {container.description && (
           <p className="text-sm text-[var(--color-text-secondary)] mt-1">{container.description}</p>
         )}
       </div>
 
-      {/* Action Bar -- compact circular icon buttons */}
-      <div className="flex gap-2 animate-fade-up" style={{ animationDelay: '50ms' }}>
-        <button
-          type="button"
-          onClick={() => {
-            if (container) {
-              navigate(`/scan?containerId=${id}&areaId=${container.areaId}&propertyId=${container.breadcrumb?.[0]?.id || ''}`);
-            }
-          }}
-          className="w-11 h-11 rounded-full border border-[var(--color-border)] bg-[var(--color-card)] flex items-center justify-center text-[var(--color-text-secondary)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)] transition-all duration-200"
-          title="Scan Into"
+      {/* Action Bar — thermal outline buttons */}
+      <div className="flex flex-wrap gap-2 animate-fade-up" style={{ animationDelay: '50ms' }}>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() =>
+            navigate(`/scan?containerId=${id}&areaId=${container.areaId}&propertyId=${container.breadcrumb?.[0]?.id || ''}`)
+          }
         >
           <ScanLine className="w-4 h-4" />
-        </button>
-        <button
-          type="button"
-          onClick={() => setPrintOpen(true)}
-          className="w-11 h-11 rounded-full border border-[var(--color-border)] bg-[var(--color-card)] flex items-center justify-center text-[var(--color-text-secondary)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)] transition-all duration-200"
-          title="Print Label"
-        >
+          Scan in
+        </Button>
+        <Button variant="outline" size="sm" onClick={() => setPrintOpen(true)}>
           <Printer className="w-4 h-4" />
-        </button>
-        <button
-          type="button"
-          onClick={() => setShareOpen(true)}
-          className="w-11 h-11 rounded-full border border-[var(--color-border)] bg-[var(--color-card)] flex items-center justify-center text-[var(--color-text-secondary)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)] transition-all duration-200"
-          title="Share"
-        >
+          Label
+        </Button>
+        <Button variant="outline" size="sm" onClick={() => setShareOpen(true)}>
           <Share2 className="w-4 h-4" />
-        </button>
+          Share
+        </Button>
         {selectable && (
-          <button
-            type="button"
+          <Button
+            variant={selecting ? 'default' : 'outline'}
+            size="sm"
             onClick={() => {
               // The FAB is hidden while selecting but its open-menu state is
               // not — without this it reappears pre-expanded after Cancel.
@@ -310,16 +249,10 @@ export function ContainerDetail() {
               if (selecting) exitSelectMode();
               else setSelecting(true);
             }}
-            className={cn(
-              'w-11 h-11 rounded-full border flex items-center justify-center transition-all duration-200',
-              selecting
-                ? 'border-[var(--color-primary)] bg-[var(--color-primary-bg)] text-[var(--color-primary)]'
-                : 'border-[var(--color-border)] bg-[var(--color-card)] text-[var(--color-text-secondary)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)]',
-            )}
-            title="Select labels"
           >
             <CheckSquare className="w-4 h-4" />
-          </button>
+            Select
+          </Button>
         )}
       </div>
 
@@ -331,99 +264,55 @@ export function ContainerDetail() {
       )}
 
       {/* Nested Containers */}
-      <section className="animate-fade-up" style={{ animationDelay: '150ms' }}>
-        <div className="flex items-center gap-2 mb-2">
-          <h2 className="text-sm font-semibold text-[var(--color-text)]">Nested Containers</h2>
-          {children && children.length > 0 && (
-            <span className="bg-[var(--color-primary-bg)] text-[var(--color-primary)] w-6 h-6 rounded-full inline-flex items-center justify-center text-xs font-bold">
-              {children.length}
-            </span>
-          )}
-        </div>
+      <section className="animate-fade-up flex flex-col" style={{ animationDelay: '150ms' }}>
+        <ColHead>Nested · {children?.length ?? 0}</ColHead>
 
-        {childrenLoading && (
-          <div className="flex flex-col gap-2">
-            <Skeleton className="h-20 w-full" />
-          </div>
-        )}
+        {childrenLoading && <Skeleton className="h-14 w-full mt-2" />}
 
         {children && children.length === 0 && (
-          <p className="text-xs text-[var(--color-text-muted)]">No nested containers.</p>
+          <p className="font-mono text-[11px] uppercase tracking-[0.06em] text-[var(--color-text-muted)] py-3">
+            No nested containers
+          </p>
         )}
 
-        {children && children.length > 0 && (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            {children.map((child) => {
-              const card = (
-                <div className="border-l-[3px] border-l-[var(--color-amber)] rounded-l-sm">
-                  <ContainerCard container={child} />
-                </div>
-              );
-              return selecting ? (
-                <SelectableCard
-                  key={child.id}
-                  name={child.name}
-                  isSelected={selected.has(`container:${child.id}`)}
-                  onToggle={() => toggleSelected(`container:${child.id}`)}
-                >
-                  {card}
-                </SelectableCard>
-              ) : (
-                <div key={child.id}>{card}</div>
-              );
-            })}
-          </div>
-        )}
+        {children?.map((child) => (
+          <ContainerCard
+            key={child.id}
+            container={child}
+            selectable={selecting}
+            selected={selected.has(`container:${child.id}`)}
+            onToggle={() => toggleSelected(`container:${child.id}`)}
+          />
+        ))}
       </section>
 
-      {/* Divider */}
-      <div className="border-t border-[var(--color-border)]/50" />
-
       {/* Items */}
-      <section className="animate-fade-up" style={{ animationDelay: '200ms' }}>
-        <div className="flex items-center gap-2 mb-2">
-          <h2 className="text-sm font-semibold text-[var(--color-text)]">Items</h2>
-          {items && items.length > 0 && (
-            <span className="bg-[var(--color-primary-bg)] text-[var(--color-primary)] w-6 h-6 rounded-full inline-flex items-center justify-center text-xs font-bold">
-              {items.length}
-            </span>
-          )}
-        </div>
+      <section className="animate-fade-up flex flex-col" style={{ animationDelay: '200ms' }}>
+        <ColHead>Items · {items?.length ?? 0}</ColHead>
 
-        {itemsLoading && (
-          <div className="flex flex-col gap-2">
-            <Skeleton className="h-20 w-full" />
-          </div>
-        )}
+        {itemsLoading && <Skeleton className="h-14 w-full mt-2" />}
 
         {items && items.length === 0 && (
-          <p className="text-xs text-[var(--color-text-muted)]">No items in this container.</p>
+          <p className="font-mono text-[11px] uppercase tracking-[0.06em] text-[var(--color-text-muted)] py-3">
+            No items in this container
+          </p>
         )}
 
-        {items && items.length > 0 && (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            {items.map((item) =>
-              selecting ? (
-                <SelectableCard
-                  key={item.id}
-                  name={item.name}
-                  isSelected={selected.has(`item:${item.id}`)}
-                  onToggle={() => toggleSelected(`item:${item.id}`)}
-                >
-                  <ItemCard item={item} />
-                </SelectableCard>
-              ) : (
-                <ItemCard key={item.id} item={item} />
-              ),
-            )}
-          </div>
-        )}
+        {items?.map((item) => (
+          <ItemCard
+            key={item.id}
+            item={item}
+            selectable={selecting}
+            selected={selected.has(`item:${item.id}`)}
+            onToggle={() => toggleSelected(`item:${item.id}`)}
+          />
+        ))}
       </section>
 
       {/* Select-mode action bar — replaces the FAB so the two never overlap */}
       {selecting && (
-        <div className="fixed bottom-[calc(5.5rem+env(safe-area-inset-bottom))] lg:bottom-8 left-4 right-4 lg:left-auto lg:right-8 lg:w-[26rem] z-30 bg-[var(--color-card)] border border-[var(--color-border)] rounded-[var(--radius-lg)] shadow-lg px-3 py-2.5 flex items-center gap-2">
-          <p className="text-sm text-[var(--color-text)] flex-1 min-w-0 truncate">
+        <div className="fixed bottom-[calc(5.5rem+env(safe-area-inset-bottom))] lg:bottom-8 left-4 right-4 lg:left-auto lg:right-8 lg:w-[26rem] z-30 bg-[var(--color-card)] border-2 border-[var(--color-text)] rounded-[var(--radius-md)] shadow-lg px-3 py-2.5 flex items-center gap-2">
+          <p className="font-mono text-xs uppercase tracking-[0.06em] text-[var(--color-text)] flex-1 min-w-0 truncate tabular-nums">
             {selected.size} selected
           </p>
           <Button variant="ghost" size="sm" onClick={handleSelectAll}>
@@ -464,12 +353,9 @@ export function ContainerDetail() {
             </Button>
           </>
         )}
-        <Button
-          size="icon"
-          onClick={() => setFabOpen(!fabOpen)}
-          className="w-12 h-12 rounded-full shadow-lg"
-        >
-          <Plus className={`w-5 h-5 transition-transform duration-200 ${fabOpen ? 'rotate-45' : ''}`} />
+        <Button onClick={() => setFabOpen(!fabOpen)} className="shadow-lg">
+          <Plus className={`w-4 h-4 transition-transform duration-200 ${fabOpen ? 'rotate-45' : ''}`} />
+          Add
         </Button>
       </div>
       )}

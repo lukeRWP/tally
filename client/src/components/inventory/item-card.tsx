@@ -1,12 +1,15 @@
 import { useNavigate } from 'react-router-dom';
-import { ChevronRight } from 'lucide-react';
-import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { RuledRow } from '@/components/ui/ruled-row';
 import { getItemIcon } from '@/lib/item-icons';
 import type { Item } from '@/types/inventory';
 
 interface ItemCardProps {
   item: Item;
+  /** When set, the row becomes a selection toggle instead of a link. */
+  selectable?: boolean;
+  selected?: boolean;
+  onToggle?: () => void;
 }
 
 const conditionVariant = {
@@ -22,56 +25,57 @@ const statusVariant = {
   lent: 'info',
 } as const;
 
-export function ItemCard({ item }: ItemCardProps) {
+export function ItemCard({ item, selectable, selected, onToggle }: ItemCardProps) {
   const navigate = useNavigate();
   const FallbackIcon = getItemIcon(item.name);
 
-  return (
-    <Card
-      className="flex items-center gap-3 cursor-pointer active:opacity-80 transition-opacity"
-      onClick={() => navigate(`/item/${item.id}`)}
-    >
-      <div className="flex items-center justify-center w-10 h-10 rounded-[var(--radius-md)] shrink-0 bg-[var(--color-elevated)] text-[var(--color-text-muted)]">
-        {item.productImageUrl ? (
-          <img
-            src={item.productImageUrl}
-            alt={item.name}
-            className="w-10 h-10 rounded-[var(--radius-md)] object-cover"
-            loading="lazy"
-          />
-        ) : (
-          <FallbackIcon className="w-5 h-5" />
-        )}
-      </div>
+  // A small square thumbnail is kept where a product image exists — real
+  // inventory is easier to scan with it — but the row itself is a ruled
+  // receipt line, not a card.
+  const leading = (
+    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[var(--radius-sm)] border border-[var(--color-rule)] bg-[var(--color-elevated)] text-[var(--color-text-muted)] overflow-hidden">
+      {item.productImageUrl ? (
+        <img
+          src={item.productImageUrl}
+          alt=""
+          className="h-8 w-8 object-cover"
+          loading="lazy"
+        />
+      ) : (
+        <FallbackIcon className="h-4 w-4" />
+      )}
+    </span>
+  );
 
-      <div className="flex-1 min-w-0">
-        <span className="text-sm font-semibold text-[var(--color-text)] truncate block">
-          {item.name}
-        </span>
-        <div className="flex items-center gap-2 mt-0.5">
-          {/* On search results the question is WHERE it is, so the location
-              path earns this line; elsewhere (inside a container) the path is
-              redundant and the code stays the more useful fact. */}
-          {item.location ? (
-            <span className="text-[10px] text-[var(--color-text-muted)] truncate">
-              {[item.location.area, item.location.container].filter(Boolean).join(' › ')}
-            </span>
-          ) : (
-            <span className="text-[10px] font-mono text-[var(--color-text-muted)]">
-              {item.qrCode}
-            </span>
-          )}
+  return (
+    <RuledRow
+      onNavigate={() => navigate(`/item/${item.id}`)}
+      selectable={selectable}
+      selected={selected}
+      onToggle={onToggle}
+      selectLabel={`Select ${item.name}`}
+      leading={leading}
+      title={item.name}
+      titleTrailing={
+        <>
           <Badge variant={conditionVariant[item.condition]}>{item.condition}</Badge>
           <Badge variant={statusVariant[item.status]}>{item.status}</Badge>
-        </div>
-        {item.purchasePrice != null && (
-          <p className="text-xs text-[var(--color-text-muted)] mt-0.5">
+        </>
+      }
+      // On search results the question is WHERE it is, so the location path
+      // earns the meta line; elsewhere the code is the more useful fact.
+      meta={
+        item.location
+          ? [item.location.area, item.location.container].filter(Boolean).join(' › ')
+          : item.qrCode
+      }
+      trailing={
+        item.purchasePrice != null ? (
+          <span className="shrink-0 font-mono text-[11px] tabular-nums text-[var(--color-text-muted)]">
             ${item.purchasePrice.toFixed(2)}
-          </p>
-        )}
-      </div>
-
-      <ChevronRight className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
-    </Card>
+          </span>
+        ) : undefined
+      }
+    />
   );
 }
