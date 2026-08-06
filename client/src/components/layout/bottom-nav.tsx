@@ -49,7 +49,7 @@ export function BottomNav() {
   const unread = typeof unreadCount === 'number' ? unreadCount : 0;
 
   return (
-    <nav className="fixed bottom-0 left-0 right-0 backdrop-blur-xl bg-[var(--color-card)]/90 border-t border-[var(--color-border)]/50 z-50 pb-[env(safe-area-inset-bottom)]">
+    <nav className="fixed bottom-0 left-0 right-0 bg-[var(--color-bg)] border-t-2 border-[var(--color-text)] z-50 pb-[env(safe-area-inset-bottom)]">
       <div className="flex items-center justify-around py-1 md:py-2 max-w-lg mx-auto">
         {tabs.map((tab) => {
           const isActive = location.pathname === tab.path ||
@@ -67,7 +67,7 @@ export function BottomNav() {
                 <div className="w-13 h-13 rounded-full bg-[var(--color-primary)] flex items-center justify-center shadow-lg">
                   <Icon className="w-6 h-6 text-white" />
                 </div>
-                <span className="text-[11px] mt-1 font-medium text-[var(--color-text-muted)]">{tab.label}</span>
+                <span className="text-[9px] mt-1 font-mono font-bold uppercase tracking-[0.06em] text-[var(--color-text-muted)]">{tab.label}</span>
               </button>
             );
           }
@@ -90,8 +90,8 @@ export function BottomNav() {
                 )}
               </span>
               <span className={cn(
-                'text-[11px] transition-colors duration-200',
-                isActive ? 'text-[var(--color-primary)] font-semibold' : 'text-[var(--color-text-muted)]',
+                'text-[9px] font-mono uppercase tracking-[0.06em] font-bold transition-colors duration-200',
+                isActive ? 'text-[var(--color-primary)]' : 'text-[var(--color-text-muted)]',
               )}>{tab.label}</span>
             </button>
           );
