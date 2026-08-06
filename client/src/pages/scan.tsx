@@ -119,10 +119,17 @@ export function Scan() {
     try {
       const raw = localStorage.getItem('tally-last-container');
       const p = raw ? JSON.parse(raw) : null;
-      return p && typeof p.id === 'number' && typeof p.areaId === 'number' &&
-        typeof p.propertyId === 'number' && typeof p.name === 'string' ? p : null;
+      return p && typeof p.id === 'number' && p.id > 0 &&
+        typeof p.areaId === 'number' && p.areaId > 0 &&
+        typeof p.propertyId === 'number' && p.propertyId > 0 &&
+        typeof p.name === 'string' && p.name.length > 0 ? p : null;
     } catch { return null; }
   });
+
+  // True once the user has manually driven the P→A→C cascade this session —
+  // suppresses the chip, whose one mid-session appearance (Property change
+  // zeroes containerId) would offer to revert the choice they just made.
+  const [cascadeTouched, setCascadeTouched] = useState(false);
 
   // The item just created — fuels the "Print label / Queue" success row so a
   // fresh label goes on the thing while it is still in your hand.
@@ -143,7 +150,7 @@ export function Scan() {
   const createItem = useCreateItem();
   const stageLabel = usePrintQueueStore((st) => st.add);
   const createPrintJob = useCreatePrintJob();
-  const { data: scanPrinters } = usePrinters(propertyId || undefined);
+  const { data: scanPrinters } = usePrinters(lastAdded ? lastAdded.propertyId || undefined : undefined);
   const hasPrinter = !!scanPrinters?.length;
 
   // -- Context-aware pre-fill from URL params
@@ -200,6 +207,9 @@ export function Scan() {
   }, []);
 
   const handleBarcodeScanned = useCallback(async (code: string) => {
+    // A new add cycle starts — the previous item's success row has done its
+    // job; letting it stack above the form pushes Add Item below the fold.
+    setLastAdded(null);
     // A tally QR is not a product barcode. Scanning the label on one of our
     // own bins used to fall through to the product lookup and dead-end at
     // "No product found" — the only working path was leaving the app for the
@@ -256,6 +266,7 @@ export function Scan() {
   }, []);
 
   const handleCreateManually = useCallback(() => {
+    setLastAdded(null);
     setSelectedProduct(null);
     setItemName('');
     setState('adding');
@@ -276,23 +287,44 @@ export function Scan() {
         ...(selectedProduct?.id ? { productId: selectedProduct.id as number } : {}),
       } as Parameters<typeof createItem.mutateAsync>[0]);
 
-      // Remember where this landed for the next add's one-tap chip.
-      const destName = containers?.find((c) => c.id === containerId)?.name ?? `#${containerId}`;
-      const dest = { id: containerId, name: destName, areaId, propertyId };
-      setLastContainer(dest);
-      try { localStorage.setItem('tally-last-container', JSON.stringify(dest)); } catch { /* private mode */ }
-
+      // Remember where this landed for the next add's one-tap chip — from the
+      // create response's breadcrumb (authoritative ids AND names), not form
+      // state: on the chip's own fast path `containers` hasn't loaded yet, and
+      // the URL-context path can have areaId/propertyId still 0.
       const created = res?.item;
+      const crumbs = created?.breadcrumb ?? [];
+      const propCrumb = crumbs.find((b) => b.type === 'property');
+      const areaCrumb = crumbs.find((b) => b.type === 'area');
+      const contCrumb = crumbs.find((b) => b.type === 'container');
+      if (propCrumb?.id && areaCrumb?.id && contCrumb?.id && contCrumb.name) {
+        const dest = {
+          id: contCrumb.id, name: contCrumb.name,
+          areaId: areaCrumb.id, propertyId: propCrumb.id,
+        };
+        setLastContainer(dest);
+        try { localStorage.setItem('tally-last-container', JSON.stringify(dest)); } catch { /* private mode */ }
+      }
+
       if (created) {
-        setLastAdded({ id: created.id, name: created.name, qrCode: created.qrCode, propertyId });
+        setLastAdded({
+          id: created.id, name: created.name, qrCode: created.qrCode,
+          propertyId: propCrumb?.id ?? propertyId,
+        });
       }
 
       toast.success('Item added!');
       resetFlow();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to add item');
+      const msg = err instanceof Error ? err.message : 'Failed to add item';
+      // The remembered bin is dead (deleted since it was saved) — stop
+      // offering it.
+      if (lastContainer && containerId === lastContainer.id && /not.?found/i.test(msg)) {
+        setLastContainer(null);
+        try { localStorage.removeItem('tally-last-container'); } catch { /* ignore */ }
+      }
+      toast.error(msg);
     }
-  }, [containerId, areaId, propertyId, containers, itemName, quantity, condition, selectedProduct, createItem, resetFlow]);
+  }, [containerId, areaId, propertyId, lastContainer, itemName, quantity, condition, selectedProduct, createItem, resetFlow]);
 
   const handleGoToExisting = useCallback(
     (itemId: number) => {
@@ -511,7 +543,7 @@ export function Scan() {
                 type="button"
                 aria-label="Dismiss"
                 onClick={() => setLastAdded(null)}
-                className="p-1 text-[var(--color-text-muted)] hover:text-[var(--color-text)] shrink-0"
+                className="min-w-[44px] min-h-[44px] -my-2 -mr-2 flex items-center justify-center text-[var(--color-text-muted)] hover:text-[var(--color-text)] shrink-0"
               >
                 <X className="w-3.5 h-3.5" />
               </button>
@@ -633,7 +665,7 @@ export function Scan() {
               {/* Fields scroll; the submit bar below never leaves the screen.
                   With the whole card scrolling, Add Item lived below the fold
                   on phones — the form's own button was invisible. */}
-              <div className="flex flex-col gap-3 max-h-[55vh] overflow-y-auto -mx-1 px-1">
+              <div className="flex flex-col gap-3 max-h-[45dvh] overflow-y-auto -mx-1 px-1 py-1">
 
               {/* URL paste for product extraction */}
               {!selectedProduct && (
@@ -679,7 +711,7 @@ export function Scan() {
               </div>
 
               {/* One-tap destination: the bin the previous item landed in */}
-              {lastContainer && containerId === 0 && (
+              {lastContainer && containerId === 0 && !cascadeTouched && (
                 <button
                   type="button"
                   onClick={() => {
@@ -703,6 +735,7 @@ export function Scan() {
                   <select
                     value={propertyId}
                     onChange={(e) => {
+                      setCascadeTouched(true);
                       setPropertyId(Number(e.target.value));
                       setAreaId(0);
                       setContainerId(0);
@@ -729,6 +762,7 @@ export function Scan() {
                   <select
                     value={areaId}
                     onChange={(e) => {
+                      setCascadeTouched(true);
                       setAreaId(Number(e.target.value));
                       setContainerId(0);
                     }}
@@ -754,7 +788,7 @@ export function Scan() {
                 <div className="relative">
                   <select
                     value={containerId}
-                    onChange={(e) => setContainerId(Number(e.target.value))}
+                    onChange={(e) => { setCascadeTouched(true); setContainerId(Number(e.target.value)); }}
                     disabled={!areaId}
                     className="w-full appearance-none bg-[var(--color-card)] border border-[var(--color-border)] rounded-[var(--radius-md)] px-3 py-2 text-sm text-[var(--color-text)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] focus:ring-offset-1 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer transition-shadow duration-200"
                   >
