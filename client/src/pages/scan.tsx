@@ -1,7 +1,6 @@
 import { useState, useCallback, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
-  ScanLine,
   Loader2,
   ChevronDown,
   Search,
@@ -12,7 +11,6 @@ import {
   CheckCircle2,
   MoveRight,
   X,
-  Link,
 } from 'lucide-react';
 import { CameraScanner } from '@/components/scanner/camera-scanner';
 import { UrlExtractor } from '@/components/scanner/url-extractor';

@@ -182,7 +182,10 @@ export function ItemDetail() {
   // Derive property/container from breadcrumb returned by the item detail API
   const breadcrumb = (item as unknown as { breadcrumb?: { id: number; type: string }[] })?.breadcrumb;
   const propertyId = breadcrumb?.find((b) => b.type === 'property')?.id ?? 0;
-  const containerId = breadcrumb?.find((b) => b.type === 'container')?.id;
+  // Last container crumb, not the first: breadcrumbs run root→leaf, so for an
+  // item inside a nested container .find() would return the OUTERMOST box —
+  // wrong for both "move (current)" marking and delete-navigation.
+  const containerId = breadcrumb?.filter((b) => b.type === 'container').at(-1)?.id;
 
   function confirmDeleteItem() {
     deleteItem.mutate(id, {
@@ -577,7 +580,15 @@ export function ItemDetail() {
           isPending={updateItem.isPending}
           onSubmit={async (data) => {
             try {
-              await updateItem.mutateAsync({ id, ...data });
+              // EntityForm strips empty values (it was built for create, where
+              // absent means "don't set"). In EDIT, absent means the user
+              // CLEARED the field — without this, clearing the price toasts
+              // "Item updated" while the old price silently survives. The
+              // update schema allows null for exactly these fields.
+              const cleared: Record<string, unknown> = {};
+              if (!('description' in data)) cleared.description = null;
+              if (!('purchasePrice' in data)) cleared.purchasePrice = null;
+              await updateItem.mutateAsync({ id, ...cleared, ...data });
               toast('Item updated');
             } catch (err) {
               toast(err instanceof Error ? err.message : 'Could not update the item');

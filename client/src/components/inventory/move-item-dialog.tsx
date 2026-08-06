@@ -93,9 +93,14 @@ export function MoveItemDialog({
         <div className="flex flex-col gap-3">
           <div className="flex flex-col gap-1.5">
             <label className="text-xs font-medium text-[var(--color-text-secondary)]">Property</label>
+            {/* The server rejects cross-property moves outright ("Destination
+                container must be in the same property"), so offering other
+                properties is offering guaranteed failures. Locked when we know
+                the item's property; free only if the caller could not tell us. */}
             <select
               className={selectClass}
               value={propertyId}
+              disabled={!!defaultPropertyId}
               onChange={(e) => {
                 setPropertyId(Number(e.target.value));
                 setAreaId(0);
