@@ -62,6 +62,8 @@ function save(staged: StagedLabel[]) {
 interface PrintQueueState {
   staged: StagedLabel[];
   add: (input: StageInput) => void;
+  /** Stage a batch in one write; returns how many were newly staged. */
+  addMany: (inputs: StageInput[]) => number;
   remove: (key: string) => void;
   removeMany: (keys: string[]) => void;
   clear: () => void;
@@ -92,6 +94,26 @@ export const usePrintQueueStore = create<PrintQueueState>((set, get) => ({
     const next = get().staged.filter((l) => !drop.has(l.key));
     save(next);
     set({ staged: next });
+  },
+
+  addMany: (inputs) => {
+    // One state write for a whole batch — "Label all bins" stages dozens at
+    // once, and per-label add() would persist + re-render per row. Same dedupe
+    // rule as add(): re-staging something already staged is a no-op.
+    const { staged } = get();
+    const have = new Set(staged.map((l) => l.key));
+    const fresh = inputs
+      .filter((i) => !have.has(`${i.entityType}:${i.id}`))
+      .map((i) => ({
+        ...i,
+        key: `${i.entityType}:${i.id}`,
+        preset: i.preset ?? defaultPresetFor(i.entityType),
+      }));
+    if (fresh.length === 0) return 0;
+    const next = [...staged, ...fresh];
+    save(next);
+    set({ staged: next });
+    return fresh.length;
   },
 
   remove: (key) => {

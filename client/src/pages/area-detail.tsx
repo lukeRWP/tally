@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Plus, Printer, Trash2 } from 'lucide-react';
+import { Plus, Printer, Tags, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -13,6 +13,7 @@ import { useArea, useContainers, useCreateContainer, useDeleteArea } from '@/hoo
 import { toast } from '@/components/ui/toast';
 import { TagPicker } from '@/components/tags/tag-picker';
 import { LabelPrintDialog } from '@/components/labels/label-print-dialog';
+import { usePrintQueueStore } from '@/store/print-queue-store';
 
 export function AreaDetail() {
   const { areaId } = useParams<{ areaId: string }>();
@@ -26,6 +27,28 @@ export function AreaDetail() {
   const { data: containers, isLoading: containersLoading } = useContainers(id);
   const createContainer = useCreateContainer();
   const deleteArea = useDeleteArea();
+  const stageMany = usePrintQueueStore((s) => s.addMany);
+
+  // The 50-bin garage case: one tap stages a 3x3 label for every container in
+  // the room, instead of opening fifty dialogs. Dedupe lives in the store, so
+  // tapping it twice only tells you everything is already queued.
+  function handleLabelAllBins() {
+    if (!containers || containers.length === 0 || !area) return;
+    const added = stageMany(
+      containers.map((c) => ({
+        id: c.id,
+        entityType: 'container' as const,
+        name: c.name,
+        qrCode: c.qrCode,
+        propertyId: area.propertyId,
+      })),
+    );
+    toast(
+      added > 0
+        ? `${added} label${added === 1 ? '' : 's'} added to the print queue`
+        : 'All of these are already in the print queue',
+    );
+  }
 
   function confirmDeleteArea() {
     deleteArea.mutate(id, {
@@ -111,10 +134,18 @@ export function AreaDetail() {
       {/* Containers */}
       <div className="flex items-center justify-between">
         <h2 className="text-sm font-semibold text-[var(--color-text)]">Containers</h2>
-        <Button size="sm" onClick={() => setCreateOpen(true)}>
-          <Plus className="w-4 h-4" />
-          Add Container
-        </Button>
+        <div className="flex items-center gap-1.5">
+          {containers && containers.length > 0 && (
+            <Button variant="outline" size="sm" onClick={handleLabelAllBins}>
+              <Tags className="w-4 h-4" />
+              <span className="hidden sm:inline">Label all bins</span>
+            </Button>
+          )}
+          <Button size="sm" onClick={() => setCreateOpen(true)}>
+            <Plus className="w-4 h-4" />
+            Add Container
+          </Button>
+        </div>
       </div>
 
       {containersLoading && (

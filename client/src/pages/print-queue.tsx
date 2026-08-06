@@ -49,6 +49,7 @@ export function PrintQueuePage() {
   const clearStaged = usePrintQueueStore((s) => s.clear);
   const removeStagedMany = usePrintQueueStore((s) => s.removeMany);
   const setPreset = usePrintQueueStore((s) => s.setPreset);
+  const setAllPresets = usePrintQueueStore((s) => s.setAllPresets);
 
   const [sending, setSending] = React.useState(false);
   const [failedKeys, setFailedKeys] = React.useState<string[]>([]);
@@ -200,6 +201,18 @@ export function PrintQueuePage() {
           </Card>
         ) : (
           <div className="flex flex-col gap-1.5">
+            {/* Bulk roll change — a batch staged from "Label all bins" lands on
+                one preset; switching fifty rows one-by-one defeats the point. */}
+            {staged.length > 1 && (
+              <div className="flex items-center gap-1.5 pb-1">
+                <p className="text-xs text-[var(--color-text-muted)]">Set all to</p>
+                {ROLLS.map((r) => (
+                  <Button key={r.value} size="sm" variant="outline" onClick={() => setAllPresets(r.value)}>
+                    {r.label}
+                  </Button>
+                ))}
+              </div>
+            )}
             {staged.map((l) => (
               <Card key={l.key} className={`p-2.5 flex items-center gap-2 ${
                 failedKeys.includes(l.key) ? 'border-[var(--color-red)]' : ''}`}>

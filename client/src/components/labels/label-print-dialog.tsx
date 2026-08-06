@@ -59,6 +59,11 @@ export function LabelPrintDialog({ entities, entityType, isOpen, onOpenChange, p
   const rollMatches = printer?.loadedMedia === preset;
 
   const stageLabels = usePrintQueueStore((st) => st.add);
+  // Reactive: subscribes to the staged list, so reopening the dialog after
+  // queueing shows "In queue" instead of silently re-offering the add.
+  const alreadyStaged = usePrintQueueStore(
+    (st) => entities.length === 1 && st.has(entityType, entities[0].id),
+  );
 
   function handleAddToQueue() {
     // Staged locally — nothing reaches tally until you print the batch from
@@ -158,9 +163,9 @@ export function LabelPrintDialog({ entities, entityType, isOpen, onOpenChange, p
             Cancel
           </Button>
           {isPrintable && (
-            <Button variant="outline" size="sm" onClick={handleAddToQueue}>
+            <Button variant="outline" size="sm" onClick={handleAddToQueue} disabled={alreadyStaged}>
               <ListPlus className="w-3.5 h-3.5" />
-              Add to queue
+              {alreadyStaged ? 'In queue' : 'Add to queue'}
             </Button>
           )}
           <Button
