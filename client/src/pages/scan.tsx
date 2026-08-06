@@ -10,6 +10,8 @@ import {
   ArrowRight,
   CheckCircle2,
   MoveRight,
+  MapPin,
+  Printer,
   X,
 } from 'lucide-react';
 import { CameraScanner } from '@/components/scanner/camera-scanner';
@@ -29,6 +31,8 @@ import {
   useCreateItem,
 } from '@/hooks/use-inventory';
 import { cn } from '@/lib/utils';
+import { usePrintQueueStore } from '@/store/print-queue-store';
+import { useCreatePrintJob, usePrinters } from '@/hooks/use-print';
 
 // -- Tab mode ----------------------------------------------------------------
 
@@ -105,6 +109,27 @@ export function Scan() {
   const [quantity, setQuantity] = useState(1);
   const [condition, setCondition] = useState<'new' | 'good' | 'fair' | 'poor'>('good');
 
+  // The container the LAST item landed in — the put-away flow adds ten
+  // things to the same bin in a row, and re-picking property→area→container
+  // for each one was the slowest part of the loop. Persisted so it survives
+  // leaving the page between sessions at the shelf.
+  const [lastContainer, setLastContainer] = useState<
+    { id: number; name: string; areaId: number; propertyId: number } | null
+  >(() => {
+    try {
+      const raw = localStorage.getItem('tally-last-container');
+      const p = raw ? JSON.parse(raw) : null;
+      return p && typeof p.id === 'number' && typeof p.areaId === 'number' &&
+        typeof p.propertyId === 'number' && typeof p.name === 'string' ? p : null;
+    } catch { return null; }
+  });
+
+  // The item just created — fuels the "Print label / Queue" success row so a
+  // fresh label goes on the thing while it is still in your hand.
+  const [lastAdded, setLastAdded] = useState<
+    { id: number; name: string; qrCode: string; propertyId: number } | null
+  >(null);
+
   // -- Move mode state ------------------------------------------------------
   const [moveState, setMoveState] = useState<MoveState>('move_idle');
   const [moveItem, setMoveItem] = useState<ResolvedEntity | null>(null);
@@ -116,6 +141,10 @@ export function Scan() {
   const { data: areas } = useAreas(propertyId);
   const { data: containers } = useContainers(areaId);
   const createItem = useCreateItem();
+  const stageLabel = usePrintQueueStore((st) => st.add);
+  const createPrintJob = useCreatePrintJob();
+  const { data: scanPrinters } = usePrinters(propertyId || undefined);
+  const hasPrinter = !!scanPrinters?.length;
 
   // -- Context-aware pre-fill from URL params
   // Resolves parent IDs: containerId → areaId + propertyId, areaId → propertyId
@@ -239,7 +268,7 @@ export function Scan() {
     }
 
     try {
-      await createItem.mutateAsync({
+      const res = await createItem.mutateAsync({
         name: itemName.trim(),
         containerId,
         quantity,
@@ -247,12 +276,23 @@ export function Scan() {
         ...(selectedProduct?.id ? { productId: selectedProduct.id as number } : {}),
       } as Parameters<typeof createItem.mutateAsync>[0]);
 
+      // Remember where this landed for the next add's one-tap chip.
+      const destName = containers?.find((c) => c.id === containerId)?.name ?? `#${containerId}`;
+      const dest = { id: containerId, name: destName, areaId, propertyId };
+      setLastContainer(dest);
+      try { localStorage.setItem('tally-last-container', JSON.stringify(dest)); } catch { /* private mode */ }
+
+      const created = res?.item;
+      if (created) {
+        setLastAdded({ id: created.id, name: created.name, qrCode: created.qrCode, propertyId });
+      }
+
       toast.success('Item added!');
       resetFlow();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to add item');
     }
-  }, [containerId, itemName, quantity, condition, selectedProduct, createItem, resetFlow]);
+  }, [containerId, areaId, propertyId, containers, itemName, quantity, condition, selectedProduct, createItem, resetFlow]);
 
   const handleGoToExisting = useCallback(
     (itemId: number) => {
@@ -421,6 +461,62 @@ export function Scan() {
       {/* -- ADD MODE -------------------------------------------------------- */}
       {tab === 'add' && (
         <>
+          {/* Just-added success row — label the thing while it's in your hand */}
+          {lastAdded && (
+            <Card className="flex items-center gap-2 p-3 border-[var(--color-green)] animate-fade-up">
+              <CheckCircle2 className="w-4 h-4 text-[var(--color-green)] shrink-0" />
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-medium text-[var(--color-text)] truncate">{lastAdded.name}</p>
+                <p className="text-[10px] font-mono text-[var(--color-text-muted)]">{lastAdded.qrCode}</p>
+              </div>
+              {hasPrinter && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={createPrintJob.isPending}
+                  onClick={() =>
+                    createPrintJob.mutate(
+                      { entityType: 'item', entityIds: [lastAdded.id], preset: 'small',
+                        propertyId: lastAdded.propertyId || undefined },
+                      {
+                        onSuccess: (res) => {
+                          toast.success(res.status === 'held'
+                            ? 'Queued — waiting for the 2×1 roll'
+                            : 'Printing label');
+                          setLastAdded(null);
+                        },
+                        onError: (e) =>
+                          toast.error(e instanceof Error ? e.message : 'Could not queue the print'),
+                      },
+                    )
+                  }
+                >
+                  <Printer className="w-3.5 h-3.5" />
+                  Print
+                </Button>
+              )}
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  stageLabel({ id: lastAdded.id, entityType: 'item', name: lastAdded.name,
+                    qrCode: lastAdded.qrCode, propertyId: lastAdded.propertyId || undefined });
+                  toast.success('Queued — print from the Print tab');
+                  setLastAdded(null);
+                }}
+              >
+                Queue
+              </Button>
+              <button
+                type="button"
+                aria-label="Dismiss"
+                onClick={() => setLastAdded(null)}
+                className="p-1 text-[var(--color-text-muted)] hover:text-[var(--color-text)] shrink-0"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </Card>
+          )}
           {/* Camera -- active when idle or looking_up */}
           {(state === 'idle' || state === 'looking_up') && (
             <div className="relative animate-fade-up" style={{ animationDelay: '50ms' }}>
@@ -526,13 +622,18 @@ export function Scan() {
 
           {/* Adding mode -- container picker + item form */}
           {state === 'adding' && (
-            <Card className="flex flex-col gap-3 max-h-[70vh] overflow-y-auto">
+            <Card className="flex flex-col gap-3">
               <div className="flex items-center gap-2">
                 <Package className="w-5 h-5 text-[var(--color-primary)]" />
                 <h2 className="text-base font-semibold text-[var(--color-text)]">
                   Add to Inventory
                 </h2>
               </div>
+
+              {/* Fields scroll; the submit bar below never leaves the screen.
+                  With the whole card scrolling, Add Item lived below the fold
+                  on phones — the form's own button was invisible. */}
+              <div className="flex flex-col gap-3 max-h-[55vh] overflow-y-auto -mx-1 px-1">
 
               {/* URL paste for product extraction */}
               {!selectedProduct && (
@@ -576,6 +677,22 @@ export function Scan() {
                   placeholder="Enter item name"
                 />
               </div>
+
+              {/* One-tap destination: the bin the previous item landed in */}
+              {lastContainer && containerId === 0 && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPropertyId(lastContainer.propertyId);
+                    setAreaId(lastContainer.areaId);
+                    setContainerId(lastContainer.id);
+                  }}
+                  className="self-start inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-[var(--color-primary)] text-[var(--color-primary)] text-xs font-medium hover:bg-[var(--color-primary-bg)] transition-colors"
+                >
+                  <MapPin className="w-3.5 h-3.5" />
+                  Add to {lastContainer.name}
+                </button>
+              )}
 
               {/* Property select */}
               <div className="flex flex-col gap-1.5">
@@ -685,8 +802,10 @@ export function Scan() {
                 </div>
               </div>
 
-              {/* Actions */}
-              <div className="flex gap-2 pt-2">
+              </div>
+
+              {/* Actions — outside the scroll area, always visible */}
+              <div className="flex gap-2 pt-2 border-t border-[var(--color-border)]">
                 <Button
                   className="flex-1"
                   disabled={!containerId || !itemName.trim() || createItem.isPending}
