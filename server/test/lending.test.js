@@ -81,15 +81,35 @@ test('return reactivates the item only when no other open lending remains', asyn
   assert.equal(activated, true);
 });
 
-test('getActive lists every unreturned loan, membership-scoped, soonest due first', async () => {
+test('listActive lists every unreturned loan, membership-scoped, soonest due first', async () => {
   const Lending = require('../src/modules/lending/lending.service');
   let sql = '', params = null;
   Lending.init({ db: { query: async (s, p) => { sql = s; params = p; return []; } },
                  logger: { warn() {}, info() {}, error() {} } });
-  await Lending.getActive(42);
+  await Lending.listActive(42);
   assert.match(sql, /RETURNED_AT IS NULL/, 'only loans still out');
   assert.ok(!/DUE_AT < NOW\(\)/.test(sql), 'not restricted to overdue');
   assert.match(sql, /pm\.USER_ID = \?/, 'membership-scoped');
   assert.match(sql, /ORDER BY il\.DUE_AT IS NULL, il\.DUE_AT/, 'soonest due first, undated last');
   assert.deepEqual(params, [42]);
+});
+
+// Regression: listActive was originally added as a SECOND `getActive` key in
+// the LendingService object literal, silently shadowing this per-item lookup
+// (later duplicate key wins, no error) — which broke the item-detail lending
+// panel while the suite stayed green. Pin the per-item shape so a future
+// duplicate cannot ship unnoticed again.
+test('getActive is the per-item lookup: single record by ITEM_ID, not a list', async () => {
+  const Lending = require('../src/modules/lending/lending.service');
+  let sql = '', params = null;
+  Lending.init({ db: { query: async (s, p) => { sql = s; params = p;
+    return [{ ID: 7, ITEM_ID: 5, LENT_TO: 'Sam', RETURNED_AT: null }]; } },
+                 logger: { warn() {}, info() {}, error() {} } });
+  const active = await Lending.getActive(5);
+  assert.match(sql, /WHERE ITEM_ID = \? AND RETURNED_AT IS NULL/, 'per-item, unreturned only');
+  assert.match(sql, /LIMIT 1/, 'single record');
+  assert.deepEqual(params, [5]);
+  assert.ok(active && !Array.isArray(active), 'returns one mapped record, not an array');
+  assert.equal(active.id, 7);
+  assert.equal(active.lentTo, 'Sam');
 });

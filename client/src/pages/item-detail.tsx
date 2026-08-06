@@ -191,7 +191,7 @@ export function ItemDetail() {
     deleteItem.mutate(id, {
       onSuccess: () => {
         toast('Item moved to recycle bin');
-        navigate(containerId ? `/container/${containerId}` : '/inventory');
+        navigate(containerId ? `/container/${containerId}` : '/');
       },
       onError: (err: Error) => toast(err.message),
     });

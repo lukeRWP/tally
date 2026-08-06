@@ -5,6 +5,7 @@ import { Card } from '@/components/ui/card';
 import { toast } from '@/components/ui/toast';
 import { NotificationList } from '@/components/notifications/notification-list';
 import { useActiveLoans, useReturnItem } from '@/hooks/use-lending';
+import { daysOverdue, formatDueDate } from '@/lib/dates';
 
 /**
  * The alerts hub. "On loan" leads: getting things back is the actionable job
@@ -18,8 +19,6 @@ function OnLoanSection() {
 
   if (!loans || loans.length === 0) return null;
 
-  const now = Date.now();
-
   return (
     <Card className="p-4 max-w-2xl mx-auto w-full">
       <h2 className="text-sm font-semibold text-[var(--color-text)] mb-3">
@@ -27,9 +26,7 @@ function OnLoanSection() {
       </h2>
       <div className="flex flex-col">
         {loans.map((loan) => {
-          const overdueDays = loan.dueAt
-            ? Math.floor((now - new Date(loan.dueAt).getTime()) / 86_400_000)
-            : null;
+          const overdueDays = loan.dueAt ? daysOverdue(loan.dueAt) : null;
           const isOverdue = overdueDays !== null && overdueDays > 0;
           return (
             <div
@@ -54,7 +51,7 @@ function OnLoanSection() {
                           {overdueDays} day{overdueDays === 1 ? '' : 's'} overdue
                         </span>
                       ) : (
-                        <>due {new Date(loan.dueAt).toLocaleDateString()}</>
+                        <>due {formatDueDate(loan.dueAt)}</>
                       )}
                     </>
                   )}

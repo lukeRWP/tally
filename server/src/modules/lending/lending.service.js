@@ -159,8 +159,10 @@ const LendingService = {
 
   // All loans currently out across the caller's properties — the "On loan"
   // hub needs the full list, not only the overdue tail. Same shape and the
-  // same membership scoping as getOverdue.
-  async getActive(userId) {
+  // same membership scoping as getOverdue. NOT getActive: that name is taken
+  // by the per-item lookup above, and a duplicate key in this object literal
+  // silently shadows it (the later definition wins, no error).
+  async listActive(userId) {
     const rows = await _db.query(
       `SELECT
          il.*,

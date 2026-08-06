@@ -1,6 +1,7 @@
 import * as React from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, Search as SearchIcon } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ItemCard } from '@/components/inventory/item-card';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -30,23 +31,36 @@ const STATUS_CHIPS: Array<{ label: string; value: string | undefined }> = [
 
 export function SearchPage() {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const inputRef = React.useRef<HTMLInputElement>(null);
-  const [query, setQuery] = React.useState('');
-  const [status, setStatus] = React.useState<string | undefined>(undefined);
+
+  // Seeded from the URL so tapping a result and pressing Back rehydrates the
+  // query (and its cached results) instead of dumping you on an empty page.
+  const initialQ = (searchParams.get('q') ?? '').trim();
+  const [query, setQuery] = React.useState(initialQ);
+  const [status, setStatus] = React.useState<string | undefined>(
+    searchParams.get('status') ?? undefined,
+  );
 
   // Debounced so we don't fire a request per keystroke (same 300ms the
   // accessory picker uses), and skip 1-char queries that match too broadly.
-  const [debounced, setDebounced] = React.useState('');
+  // Starts at the URL value, not '' — no placeholder flash on back-nav.
+  const [debounced, setDebounced] = React.useState(initialQ.length >= 2 ? initialQ : '');
   React.useEffect(() => {
     const t = setTimeout(() => setDebounced(query.trim().length >= 2 ? query.trim() : ''), 300);
     return () => clearTimeout(t);
   }, [query]);
 
+  // Mirror the settled query into the URL. `replace` keeps typing from
+  // flooding history — Back always leaves the page, never rewinds keystrokes.
   React.useEffect(() => {
-    inputRef.current?.focus();
-  }, []);
+    const params: Record<string, string> = {};
+    if (debounced) params.q = debounced;
+    if (status) params.status = status;
+    setSearchParams(params, { replace: true });
+  }, [debounced, status, setSearchParams]);
 
-  const { data: results, isLoading } = useSearchItems(debounced, { status });
+  const { data: results, isLoading, isError, refetch } = useSearchItems(debounced, { status });
 
   return (
     <div className="flex flex-col min-h-full">
@@ -55,7 +69,13 @@ export function SearchPage() {
         <button
           type="button"
           aria-label="Back"
-          onClick={() => navigate(-1)}
+          onClick={() => {
+            // Direct entry (deep link, fresh tab) has no prior in-app entry —
+            // popping would do nothing or leave the SPA. Fall back to Home.
+            const idx = (window.history.state as { idx?: number } | null)?.idx ?? 0;
+            if (idx > 0) navigate(-1);
+            else navigate('/');
+          }}
           className="p-2 -ml-1 rounded-[var(--radius-md)] text-[var(--color-text-secondary)] hover:bg-[var(--color-elevated)]"
         >
           <ArrowLeft className="w-4 h-4" />
@@ -103,6 +123,17 @@ export function SearchPage() {
             <Skeleton className="h-16" />
             <Skeleton className="h-16" />
           </>
+        ) : isError ? (
+          // A failed request must never masquerade as "you don't own that" —
+          // on the app's #1 surface that is a lie with consequences.
+          <div className="flex flex-col items-center gap-2 pt-10">
+            <p className="text-sm text-[var(--color-text-secondary)]">
+              Search didn't go through — check your connection.
+            </p>
+            <Button variant="outline" size="sm" onClick={() => refetch()}>
+              Try again
+            </Button>
+          </div>
         ) : results && results.length > 0 ? (
           <>
             <p className="text-xs text-[var(--color-text-muted)]">

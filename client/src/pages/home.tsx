@@ -16,6 +16,7 @@ import { useRecentActivity, type AuditEntry } from '@/hooks/use-notifications';
 import { useAuthStore } from '@/store/auth-store';
 import { toast } from '@/components/ui/toast';
 import { cn } from '@/lib/utils';
+import { daysOverdue } from '@/lib/dates';
 
 // -- AllPropertyTags: fetch tags across all user properties --------------------
 
@@ -491,7 +492,7 @@ export function Home() {
           <div className="flex flex-col gap-1.5">
             {activeLoans.slice(0, 3).map((loan) => {
               const overdueDays = loan.dueAt
-                ? Math.floor((Date.now() - new Date(loan.dueAt).getTime()) / 86_400_000)
+                ? daysOverdue(loan.dueAt)
                 : null;
               return (
                 <button
@@ -519,7 +520,7 @@ export function Home() {
       )}
 
       {/* Recent Activity */}
-      <section className="animate-fade-up" style={{ animationDelay: '150ms' }}>
+      <section className="animate-fade-up" style={{ animationDelay: '100ms' }}>
         <div className="flex items-center justify-between mb-2">
           <button
             type="button"
@@ -601,7 +602,11 @@ export function Home() {
                       }}
                       onKeyDown={(e) => {
                         const base = ACTIVITY_ROUTES[entry.entityType];
-                        if (base && (e.key === 'Enter' || e.key === ' ')) navigate(`${base}/${entry.entityId}`);
+                        if (base && (e.key === 'Enter' || e.key === ' ')) {
+                          // Space scrolls the page by default — a role=button must eat it.
+                          e.preventDefault();
+                          navigate(`${base}/${entry.entityId}`);
+                        }
                       }}
                       className={cn(
                         'flex items-start gap-3 text-xs py-1.5 animate-fade-up',
@@ -651,7 +656,7 @@ export function Home() {
       </section>
 
       {/* Properties */}
-      <section className="animate-fade-up" style={{ animationDelay: '100ms' }}>
+      <section className="animate-fade-up" style={{ animationDelay: '150ms' }}>
         <div className="flex items-center justify-between mb-2">
           <h2 className="text-sm font-semibold text-[var(--color-text)]">
             {singleProperty ? singleProperty.name : 'Your Properties'}

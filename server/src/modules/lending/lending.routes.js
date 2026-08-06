@@ -99,7 +99,7 @@ module.exports = function lendingRoutes({ app, db, logger }) {
     '/api/lending/_x_/active',
     app.locals.requireAuth,
     async (req, res) => {
-      const active = await LendingService.getActive(req.user.id);
+      const active = await LendingService.listActive(req.user.id);
       success(res, { active });
     }
   );
