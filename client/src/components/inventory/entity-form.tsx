@@ -111,9 +111,18 @@ export function EntityForm({
                 id={field.name}
                 type={field.type || 'text'}
                 step={field.type === 'number' ? 'any' : undefined}
+                // Names end up on printed labels (title bars and the rotated
+                // zone banner) — 40 chars is the practical ceiling before even
+                // the auto-fit renderer has to ellipsize.
+                maxLength={field.name === 'name' ? 40 : undefined}
                 aria-invalid={errors[field.name] ? true : undefined}
                 className={errors[field.name] ? 'border-[var(--color-red)]' : undefined}
-                {...register(field.name, { required: field.required && `${field.label} is required` })}
+                {...register(field.name, {
+                  required: field.required && `${field.label} is required`,
+                  ...(field.name === 'name'
+                    ? { maxLength: { value: 40, message: 'Keep names to 40 characters — they have to fit on a printed label' } }
+                    : {}),
+                })}
               />
               {errors[field.name] && (
                 <span className="text-xs text-[var(--color-red)]">
