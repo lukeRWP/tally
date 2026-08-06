@@ -7,7 +7,6 @@ import { ShareView } from '@/pages/share-view';
 
 // Lazy load pages to keep initial bundle small
 import { Home } from '@/pages/home';
-import { Inventory } from '@/pages/inventory';
 import { PropertyDetail } from '@/pages/property-detail';
 import { AreaDetail } from '@/pages/area-detail';
 import { ContainerDetail } from '@/pages/container-detail';
@@ -15,6 +14,7 @@ import { ItemDetail } from '@/pages/item-detail';
 import { Scan } from '@/pages/scan';
 import { Reports } from '@/pages/reports';
 import { PrintQueuePage } from '@/pages/print-queue';
+import { SearchPage } from '@/pages/search';
 import { SettingsPage } from '@/pages/settings';
 import { NotificationListPage } from '@/pages/notifications';
 import { RecycleBin } from '@/pages/recycle-bin';
@@ -28,7 +28,10 @@ export function App() {
       <Route path="/share/:token" element={<ShareView />} />
       <Route element={<RootLayout />}>
         <Route index element={<Home />} />
-        <Route path="/inventory" element={<Inventory />} />
+        {/* The Inventory tab was a strict subset of Home; the route survives
+            as a redirect so old links and muscle memory keep working. */}
+        <Route path="/inventory" element={<Navigate to="/" replace />} />
+        <Route path="/search" element={<SearchPage />} />
         <Route path="/property/:propertyId" element={<PropertyDetail />} />
         <Route path="/area/:areaId" element={<AreaDetail />} />
         <Route path="/container/:containerId" element={<ContainerDetail />} />

@@ -42,9 +42,12 @@ function load(): StagedLabel[] {
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
     // Defensive: a stale shape from an older build must not wedge the page.
+    const TYPES = ['item', 'container', 'area'];
+    const PRESET_VALUES = ['small', 'medium', 'large'];
     return parsed.filter(
       (l): l is StagedLabel =>
-        l && typeof l.id === 'number' && typeof l.key === 'string' && typeof l.preset === 'string',
+        l && typeof l.id === 'number' && typeof l.key === 'string' &&
+        TYPES.includes(l.entityType) && PRESET_VALUES.includes(l.preset),
     );
   } catch {
     return [];
@@ -62,6 +65,8 @@ function save(staged: StagedLabel[]) {
 interface PrintQueueState {
   staged: StagedLabel[];
   add: (input: StageInput) => void;
+  /** Stage a batch in one write; returns how many were newly staged. */
+  addMany: (inputs: StageInput[]) => number;
   remove: (key: string) => void;
   removeMany: (keys: string[]) => void;
   clear: () => void;
@@ -92,6 +97,28 @@ export const usePrintQueueStore = create<PrintQueueState>((set, get) => ({
     const next = get().staged.filter((l) => !drop.has(l.key));
     save(next);
     set({ staged: next });
+  },
+
+  addMany: (inputs) => {
+    // One state write for a whole batch — "Label all bins" stages dozens at
+    // once, and per-label add() would persist + re-render per row. Same dedupe
+    // rule as add(): re-staging something already staged is a no-op.
+    const { staged } = get();
+    const have = new Set(staged.map((l) => l.key));
+    const fresh: StagedLabel[] = [];
+    for (const i of inputs) {
+      const key = `${i.entityType}:${i.id}`;
+      // have grows as we accept — the same entity twice in ONE batch must
+      // stage once, or duplicate keys break React lists and remove/setPreset.
+      if (have.has(key)) continue;
+      have.add(key);
+      fresh.push({ ...i, key, preset: i.preset ?? defaultPresetFor(i.entityType) });
+    }
+    if (fresh.length === 0) return 0;
+    const next = [...staged, ...fresh];
+    save(next);
+    set({ staged: next });
+    return fresh.length;
   },
 
   remove: (key) => {

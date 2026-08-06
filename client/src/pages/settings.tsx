@@ -1,8 +1,9 @@
 import * as React from 'react';
-import { LogOut, Sun, Moon, Monitor, Trash2, Link2, Copy, Tags, ChevronRight, ChevronDown } from 'lucide-react';
+import { LogOut, Sun, Moon, Monitor, Trash2, Link2, Copy, Tags, ChevronRight, ChevronDown, BarChart2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
+import { TitleBar } from '@/components/ui/title-bar';
 import { useAuthStore } from '@/store/auth-store';
 import { useProperties } from '@/hooks/use-inventory';
 import { TagManager } from '@/components/tags/tag-manager';
@@ -163,7 +164,7 @@ export function SettingsPage() {
 
   return (
     <div className="flex flex-col gap-4">
-      <h1 className="text-2xl font-extrabold text-[var(--color-text)] tracking-tight animate-fade-up">Settings</h1>
+      <h1 className="animate-fade-up"><TitleBar>Settings</TitleBar></h1>
 
       {/* Desktop: 2-column layout / Mobile: single column */}
       <div className="lg:grid lg:grid-cols-2 lg:gap-6">
@@ -217,17 +218,31 @@ export function SettingsPage() {
             </div>
           </Card>
 
-          {/* Data -- collapsed by default */}
-          <CollapsibleSettingsSection title="Data" defaultOpen={false} animationDelay="350ms">
-            <button
-              type="button"
-              onClick={() => navigate('/recycle-bin')}
-              className="flex items-center gap-2 text-sm text-[var(--color-text)] hover:text-[var(--color-primary)] transition-all duration-200 py-1"
-            >
-              <Trash2 className="w-4 h-4" />
-              Recycle Bin
-            </button>
-          </CollapsibleSettingsSection>
+          {/* Data — always visible. The Recycle Bin was buried in a collapsed
+              accordion while every delete in the app funnels into it; and
+              Reports lives here now instead of holding a permanent nav slot
+              for a few-times-a-year export. */}
+          <Card animationDelay="350ms">
+            <h2 className="text-sm font-semibold text-[var(--color-text)] mb-3">Data</h2>
+            <div className="flex flex-col gap-1">
+              <button
+                type="button"
+                onClick={() => navigate('/recycle-bin')}
+                className="flex items-center gap-2 text-sm text-[var(--color-text)] hover:text-[var(--color-primary)] transition-all duration-200 py-1.5"
+              >
+                <Trash2 className="w-4 h-4" />
+                Recycle Bin
+              </button>
+              <button
+                type="button"
+                onClick={() => navigate('/reports')}
+                className="flex items-center gap-2 text-sm text-[var(--color-text)] hover:text-[var(--color-primary)] transition-all duration-200 py-1.5"
+              >
+                <BarChart2 className="w-4 h-4" />
+                Reports &amp; Exports
+              </button>
+            </div>
+          </Card>
         </div>
 
         {/* Right column */}

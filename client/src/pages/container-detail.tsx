@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import type React from 'react';
+import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ScanLine, Printer, Share2, Plus, Package, Box } from 'lucide-react';
+import { ScanLine, Printer, Share2, Plus, Package, Box, Check, CheckSquare } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card } from '@/components/ui/card';
@@ -21,7 +22,61 @@ import { toast } from '@/components/ui/toast';
 import { TagPicker } from '@/components/tags/tag-picker';
 import { LabelPrintDialog } from '@/components/labels/label-print-dialog';
 import { ShareDialog } from '@/components/sharing/share-dialog';
+import { usePrintQueueStore } from '@/store/print-queue-store';
 import { cn } from '@/lib/utils';
+
+/**
+ * Overlay that turns any card into a checkbox while select mode is on.
+ * Sits on top of the card and swallows the click, so the card's own
+ * navigate-on-click never fires while selecting.
+ */
+function SelectableCard({
+  name,
+  isSelected,
+  onToggle,
+  children,
+}: {
+  name: string;
+  isSelected: boolean;
+  onToggle: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="relative">
+      {/* inert takes the covered card out of the tab order AND the
+          accessibility tree — without it, Tab+Enter (or a screen-reader
+          double-tap) still fires the card's own navigate and nukes the
+          selection. React 18's types don't know the attribute yet. */}
+      <div {...({ inert: '' } as unknown as React.HTMLAttributes<HTMLDivElement>)}>
+        {children}
+      </div>
+      <button
+        type="button"
+        role="checkbox"
+        aria-checked={isSelected}
+        aria-label={`Select ${name}`}
+        onClick={onToggle}
+        className={cn(
+          'absolute inset-0 rounded-[var(--radius-lg)] border-2 transition-colors',
+          isSelected
+            ? 'border-[var(--color-primary)] bg-[var(--color-primary-bg)]/60'
+            : 'border-transparent hover:border-[var(--color-border)]',
+        )}
+      >
+        <span
+          className={cn(
+            'absolute top-2 right-2 w-5 h-5 rounded-full border flex items-center justify-center',
+            isSelected
+              ? 'bg-[var(--color-primary)] border-[var(--color-primary)] text-white'
+              : 'bg-[var(--color-card)] border-[var(--color-border)]',
+          )}
+        >
+          {isSelected && <Check className="w-3.5 h-3.5" />}
+        </span>
+      </button>
+    </div>
+  );
+}
 
 export function ContainerDetail() {
   const { containerId } = useParams<{ containerId: string }>();
@@ -32,12 +87,53 @@ export function ContainerDetail() {
   const [fabOpen, setFabOpen] = useState(false);
   const [printOpen, setPrintOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
+  // Select mode: checkboxes over the item/nested-container cards, feeding the
+  // print-queue staging area in one batch instead of a dialog per label.
+  const [selecting, setSelecting] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+
+  // Navigating bin→bin only changes :containerId — the component stays
+  // mounted, so without this a selection from the previous bin leaks in.
+  useEffect(() => {
+    setSelecting(false);
+    setSelected(new Set());
+  }, [id]);
 
   const { data: container, isLoading: containerLoading, isError: containerError, refetch: refetchContainer } = useContainer(id);
   const { data: children, isLoading: childrenLoading } = useContainerChildren(id);
   const { data: items, isLoading: itemsLoading } = useItems(id);
   const createContainer = useCreateContainer();
   const createItem = useCreateItem();
+  const stageMany = usePrintQueueStore((s) => s.addMany);
+
+  // A background refetch (30s staleTime + refetch-on-focus) can remove rows
+  // out from under an open selection — prune ghosts so the "N selected"
+  // count only ever counts rows that are still here.
+  useEffect(() => {
+    if (!selecting) return;
+    const valid = new Set([
+      ...(children ?? []).map((c) => `container:${c.id}`),
+      ...(items ?? []).map((i) => `item:${i.id}`),
+    ]);
+    setSelected((prev) => {
+      const next = new Set([...prev].filter((k) => valid.has(k)));
+      return next.size === prev.size ? prev : next;
+    });
+  }, [selecting, children, items]);
+
+  function toggleSelected(key: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+
+  function exitSelectMode() {
+    setSelecting(false);
+    setSelected(new Set());
+  }
 
   function handleCreateContainer(data: Record<string, unknown>) {
     if (!container) return;
@@ -110,6 +206,53 @@ export function ContainerDetail() {
     }
   }
 
+  function handleAddSelected() {
+    const inputs = [
+      ...(children ?? [])
+        .filter((c) => selected.has(`container:${c.id}`))
+        .map((c) => ({
+          id: c.id,
+          entityType: 'container' as const,
+          name: c.name,
+          qrCode: c.qrCode,
+          propertyId: propertyId > 0 ? propertyId : undefined,
+        })),
+      ...(items ?? [])
+        .filter((i) => selected.has(`item:${i.id}`))
+        .map((i) => ({
+          id: i.id,
+          entityType: 'item' as const,
+          name: i.name,
+          qrCode: i.qrCode,
+          propertyId: propertyId > 0 ? propertyId : undefined,
+        })),
+    ];
+    if (inputs.length === 0) {
+      // Selection outlived the rows (deleted/moved elsewhere mid-selection).
+      toast('Those rows are no longer in this bin');
+      exitSelectMode();
+      return;
+    }
+    const added = stageMany(inputs);
+    toast(
+      added > 0
+        ? `${added} label${added === 1 ? '' : 's'} added to the print queue`
+        : 'All of these are already in the print queue',
+    );
+    exitSelectMode();
+  }
+
+  function handleSelectAll() {
+    setSelected(
+      new Set([
+        ...(children ?? []).map((c) => `container:${c.id}`),
+        ...(items ?? []).map((i) => `item:${i.id}`),
+      ]),
+    );
+  }
+
+  const selectable = (children?.length ?? 0) + (items?.length ?? 0) > 0;
+
   return (
     <div className="flex flex-col gap-4 pb-16">
       {/* Breadcrumbs */}
@@ -157,6 +300,27 @@ export function ContainerDetail() {
         >
           <Share2 className="w-4 h-4" />
         </button>
+        {selectable && (
+          <button
+            type="button"
+            onClick={() => {
+              // The FAB is hidden while selecting but its open-menu state is
+              // not — without this it reappears pre-expanded after Cancel.
+              setFabOpen(false);
+              if (selecting) exitSelectMode();
+              else setSelecting(true);
+            }}
+            className={cn(
+              'w-11 h-11 rounded-full border flex items-center justify-center transition-all duration-200',
+              selecting
+                ? 'border-[var(--color-primary)] bg-[var(--color-primary-bg)] text-[var(--color-primary)]'
+                : 'border-[var(--color-border)] bg-[var(--color-card)] text-[var(--color-text-secondary)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)]',
+            )}
+            title="Select labels"
+          >
+            <CheckSquare className="w-4 h-4" />
+          </button>
+        )}
       </div>
 
       {/* Tags -- collapsed single line when empty */}
@@ -189,11 +353,25 @@ export function ContainerDetail() {
 
         {children && children.length > 0 && (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            {children.map((child) => (
-              <div key={child.id} className="border-l-[3px] border-l-[var(--color-amber)] rounded-l-sm">
-                <ContainerCard container={child} />
-              </div>
-            ))}
+            {children.map((child) => {
+              const card = (
+                <div className="border-l-[3px] border-l-[var(--color-amber)] rounded-l-sm">
+                  <ContainerCard container={child} />
+                </div>
+              );
+              return selecting ? (
+                <SelectableCard
+                  key={child.id}
+                  name={child.name}
+                  isSelected={selected.has(`container:${child.id}`)}
+                  onToggle={() => toggleSelected(`container:${child.id}`)}
+                >
+                  {card}
+                </SelectableCard>
+              ) : (
+                <div key={child.id}>{card}</div>
+              );
+            })}
           </div>
         )}
       </section>
@@ -224,14 +402,44 @@ export function ContainerDetail() {
 
         {items && items.length > 0 && (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            {items.map((item) => (
-              <ItemCard key={item.id} item={item} />
-            ))}
+            {items.map((item) =>
+              selecting ? (
+                <SelectableCard
+                  key={item.id}
+                  name={item.name}
+                  isSelected={selected.has(`item:${item.id}`)}
+                  onToggle={() => toggleSelected(`item:${item.id}`)}
+                >
+                  <ItemCard item={item} />
+                </SelectableCard>
+              ) : (
+                <ItemCard key={item.id} item={item} />
+              ),
+            )}
           </div>
         )}
       </section>
 
+      {/* Select-mode action bar — replaces the FAB so the two never overlap */}
+      {selecting && (
+        <div className="fixed bottom-[calc(5.5rem+env(safe-area-inset-bottom))] lg:bottom-8 left-4 right-4 lg:left-auto lg:right-8 lg:w-[26rem] z-30 bg-[var(--color-card)] border border-[var(--color-border)] rounded-[var(--radius-lg)] shadow-lg px-3 py-2.5 flex items-center gap-2">
+          <p className="text-sm text-[var(--color-text)] flex-1 min-w-0 truncate">
+            {selected.size} selected
+          </p>
+          <Button variant="ghost" size="sm" onClick={handleSelectAll}>
+            All
+          </Button>
+          <Button variant="outline" size="sm" onClick={exitSelectMode}>
+            Cancel
+          </Button>
+          <Button size="sm" disabled={selected.size === 0} onClick={handleAddSelected}>
+            Add to queue
+          </Button>
+        </div>
+      )}
+
       {/* FAB */}
+      {!selecting && (
       <div className="fixed bottom-[calc(6rem+env(safe-area-inset-bottom))] lg:bottom-8 right-4 lg:right-8 flex flex-col items-end gap-2 z-30">
         {fabOpen && (
           <>
@@ -264,6 +472,7 @@ export function ContainerDetail() {
           <Plus className={`w-5 h-5 transition-transform duration-200 ${fabOpen ? 'rotate-45' : ''}`} />
         </Button>
       </div>
+      )}
 
       {/* Create Dialogs */}
       <EntityForm

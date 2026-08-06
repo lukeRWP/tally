@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, ScanLine, Plus, ChevronDown, Filter, Pencil, ArrowRight, Trash2, RotateCcw, Home as HomeIcon, Package, CircleDot } from 'lucide-react';
+import { Search, Plus, ChevronDown, Filter, Pencil, ArrowRight, Trash2, RotateCcw, Home as HomeIcon, Package, CircleDot } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -8,12 +8,15 @@ import { PropertyCard } from '@/components/inventory/property-card';
 import { ItemCard } from '@/components/inventory/item-card';
 import { EntityForm } from '@/components/inventory/entity-form';
 import { TagBadge } from '@/components/tags/tag-badge';
-import { useProperties, useCreateProperty, useSearchItems, type SearchFilters } from '@/hooks/use-inventory';
+import { useProperties, useCreateProperty, useSearchItems, useAreas, type SearchFilters } from '@/hooks/use-inventory';
+import { useActiveLoans } from '@/hooks/use-lending';
+import { AreaCard } from '@/components/inventory/area-card';
 import { usePropertyTags, type Tag } from '@/hooks/use-tags';
 import { useRecentActivity, type AuditEntry } from '@/hooks/use-notifications';
 import { useAuthStore } from '@/store/auth-store';
 import { toast } from '@/components/ui/toast';
 import { cn } from '@/lib/utils';
+import { daysOverdue } from '@/lib/dates';
 
 // -- AllPropertyTags: fetch tags across all user properties --------------------
 
@@ -82,7 +85,19 @@ const CONDITIONS: Array<{ label: string; value: string | null }> = [
   { label: 'Poor', value: 'poor' },
 ];
 
+// Which activity entries can be tapped through to their entity.
+const ACTIVITY_ROUTES: Record<string, string> = {
+  item: '/item',
+  container: '/container',
+  area: '/area',
+  property: '/property',
+};
+
 const STATUSES: Array<{ label: string; value: string }> = [
+  // 'All' first and default: the thing you most need to FIND is often exactly
+  // the thing that is lent out — hiding those by default made search return
+  // zero results for the very item you were hunting.
+  { label: 'All', value: 'all' },
   { label: 'Active', value: 'active' },
   { label: 'Removed', value: 'removed' },
   { label: 'Lent', value: 'lent' },
@@ -175,7 +190,7 @@ export function Home() {
   // Filter state
   const [selectedTagIds, setSelectedTagIds] = React.useState<number[]>([]);
   const [selectedCondition, setSelectedCondition] = React.useState<string | null>(null);
-  const [selectedStatus, setSelectedStatus] = React.useState<string>('active');
+  const [selectedStatus, setSelectedStatus] = React.useState<string>('all');
 
   // Filter panel visibility (collapsible on mobile)
   const [filtersOpen, setFiltersOpen] = React.useState(false);
@@ -188,6 +203,13 @@ export function Home() {
   const tagDropdownRef = React.useRef<HTMLDivElement>(null);
 
   const { data: properties, isLoading: propertiesLoading } = useProperties();
+  const { data: activeLoans } = useActiveLoans();
+  // Single-property households skip the ceremony of a one-card property list:
+  // Home shows the areas themselves. The property page stays reachable via the
+  // header link for edits and members.
+  const singleProperty = properties && properties.length === 1 ? properties[0] : null;
+  const { data: singlePropertyAreas } = useAreas(singleProperty?.id ?? 0);
+
   const createProperty = useCreateProperty();
   const allTags = useAllPropertyTags(properties);
   const { data: recentActivity, isLoading: activityLoading } = useRecentActivity();
@@ -196,7 +218,7 @@ export function Home() {
   const filters: SearchFilters = {
     tagIds: selectedTagIds.length > 0 ? selectedTagIds : undefined,
     condition: selectedCondition ?? undefined,
-    status: selectedStatus,
+    status: selectedStatus === 'all' ? undefined : selectedStatus,
   };
 
   const { data: searchResults } = useSearchItems(searchQuery, filters);
@@ -237,7 +259,7 @@ export function Home() {
 
   const selectedTags = allTags.filter((t) => selectedTagIds.includes(t.id));
   const hasActiveFilters =
-    selectedTagIds.length > 0 || selectedCondition !== null || selectedStatus !== 'active';
+    selectedTagIds.length > 0 || selectedCondition !== null || selectedStatus !== 'all';
 
   // Compute stats from properties
   const totalItems = properties?.reduce((sum, p) => sum + p.itemCount, 0) ?? 0;
@@ -269,9 +291,6 @@ export function Home() {
         <h1 className="text-2xl font-extrabold text-[var(--color-text)] tracking-tight">
           {getGreeting()}, {user?.displayName?.split(' ')[0] ?? 'there'}
         </h1>
-        <p className="text-sm text-[var(--color-text-muted)] mt-0.5">
-          Here is your inventory at a glance.
-        </p>
 
         {/* Stat chips */}
         {properties && properties.length > 0 && (
@@ -317,7 +336,7 @@ export function Home() {
             <span className="text-[10px] font-semibold leading-none">
               {(selectedTagIds.length > 0 ? 1 : 0) +
                 (selectedCondition !== null ? 1 : 0) +
-                (selectedStatus !== 'active' ? 1 : 0)}
+                (selectedStatus !== 'all' ? 1 : 0)}
             </span>
           )}
         </button>
@@ -454,86 +473,54 @@ export function Home() {
         </div>
       )}
 
-      {/* Quick Actions */}
-      <div className="flex gap-3 animate-fade-up" style={{ animationDelay: '50ms' }}>
-        <Button
-          size="sm"
-          onClick={() => navigate('/scan')}
-          className="flex-1 gap-2 h-11 text-sm font-semibold"
-        >
-          <ScanLine className="w-4.5 h-4.5" />
-          <div className="text-left">
-            <span className="block text-sm font-semibold leading-tight">Scan</span>
-            <span className="block text-[10px] font-normal opacity-70 leading-tight">Scan barcode</span>
+      {/* On loan — the things currently out of the house. Only renders when
+          something actually is; Return lives on the Alerts page. */}
+      {activeLoans && activeLoans.length > 0 && (
+        <section className="animate-fade-up" style={{ animationDelay: '50ms' }}>
+          <div className="flex items-center justify-between mb-2">
+            <h2 className="text-sm font-semibold text-[var(--color-text)]">
+              On loan ({activeLoans.length})
+            </h2>
+            <button
+              type="button"
+              onClick={() => navigate('/notifications')}
+              className="text-xs text-[var(--color-primary)] hover:underline"
+            >
+              View all
+            </button>
           </div>
-        </Button>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => setCreateOpen(true)}
-          className="flex-1 gap-2 h-11 text-sm font-semibold"
-        >
-          <Plus className="w-4.5 h-4.5" />
-          <div className="text-left">
-            <span className="block text-sm font-semibold leading-tight">Add Property</span>
-            <span className="block text-[10px] font-normal text-[var(--color-text-muted)] leading-tight">New location</span>
+          <div className="flex flex-col gap-1.5">
+            {activeLoans.slice(0, 3).map((loan) => {
+              const overdueDays = loan.dueAt
+                ? daysOverdue(loan.dueAt)
+                : null;
+              return (
+                <button
+                  key={loan.id}
+                  type="button"
+                  onClick={() => navigate(`/item/${loan.itemId}`)}
+                  className="flex items-center gap-3 p-2.5 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-card)] text-left hover:bg-[var(--color-elevated)] transition-colors"
+                >
+                  <span className="flex-1 min-w-0">
+                    <span className="block text-sm font-medium text-[var(--color-text)] truncate">
+                      {loan.itemName ?? `Item #${loan.itemId}`}
+                    </span>
+                    <span className="block text-xs text-[var(--color-text-muted)]">
+                      {loan.lentTo}
+                      {overdueDays !== null && overdueDays > 0 && (
+                        <span className="text-[var(--color-red)] font-medium"> · {overdueDays}d overdue</span>
+                      )}
+                    </span>
+                  </span>
+                </button>
+              );
+            })}
           </div>
-        </Button>
-      </div>
-
-      {/* Properties */}
-      <section className="animate-fade-up" style={{ animationDelay: '100ms' }}>
-        <div className="flex items-center justify-between mb-2">
-          <h2 className="text-sm font-semibold text-[var(--color-text)]">Your Properties</h2>
-          {properties && properties.length > 0 && (
-            <span className="text-xs font-medium text-[var(--color-text-muted)] bg-[var(--color-elevated)] px-2 py-0.5 rounded-full">
-              {properties.length} {properties.length === 1 ? 'property' : 'properties'}
-            </span>
-          )}
-        </div>
-
-        {propertiesLoading && (
-          <div className="flex flex-col gap-2">
-            {[1, 2, 3].map((i) => (
-              <Skeleton key={i} className="h-20 w-full" />
-            ))}
-          </div>
-        )}
-
-        {properties && properties.length === 0 && (
-          <div className="flex flex-col items-center py-10 gap-3 animate-fade-up">
-            <div className="w-14 h-14 rounded-full bg-[var(--color-primary-bg)] flex items-center justify-center">
-              <HomeIcon className="w-7 h-7 text-[var(--color-primary)]" />
-            </div>
-            <div className="text-center">
-              <p className="text-sm font-semibold text-[var(--color-text)]">No properties yet</p>
-              <p className="text-xs text-[var(--color-text-muted)] mt-0.5">Create a property to start organizing your inventory</p>
-            </div>
-            <Button size="sm" onClick={() => setCreateOpen(true)}>
-              <Plus className="w-4 h-4" />
-              Create Property
-            </Button>
-          </div>
-        )}
-
-        {properties && properties.length > 0 && (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            {properties.map((property, idx) => (
-              <div
-                key={property.id}
-                className={cn(
-                  property.id === maxItemPropertyId && 'border-l-[3px] border-l-[var(--color-primary)] rounded-l-sm',
-                )}
-              >
-                <PropertyCard property={property} index={idx} />
-              </div>
-            ))}
-          </div>
-        )}
-      </section>
+        </section>
+      )}
 
       {/* Recent Activity */}
-      <section className="animate-fade-up" style={{ animationDelay: '150ms' }}>
+      <section className="animate-fade-up" style={{ animationDelay: '100ms' }}>
         <div className="flex items-center justify-between mb-2">
           <button
             type="button"
@@ -602,9 +589,30 @@ export function Home() {
                   </div>
 
                   {group.entries.map((entry, idx) => (
+                    // Rows navigate to their entity — they were inert spans,
+                    // which made the feed a dead end ("moved WHERE?" answered
+                    // only by hunting). Unknown entity types stay inert.
                     <div
                       key={entry.id}
-                      className="flex items-start gap-3 text-xs py-1.5 animate-fade-up"
+                      role={ACTIVITY_ROUTES[entry.entityType] ? 'button' : undefined}
+                      tabIndex={ACTIVITY_ROUTES[entry.entityType] ? 0 : undefined}
+                      onClick={() => {
+                        const base = ACTIVITY_ROUTES[entry.entityType];
+                        if (base) navigate(`${base}/${entry.entityId}`);
+                      }}
+                      onKeyDown={(e) => {
+                        const base = ACTIVITY_ROUTES[entry.entityType];
+                        if (base && (e.key === 'Enter' || e.key === ' ')) {
+                          // Space scrolls the page by default — a role=button must eat it.
+                          e.preventDefault();
+                          navigate(`${base}/${entry.entityId}`);
+                        }
+                      }}
+                      className={cn(
+                        'flex items-start gap-3 text-xs py-1.5 animate-fade-up',
+                        ACTIVITY_ROUTES[entry.entityType] &&
+                          'cursor-pointer rounded-[var(--radius-sm)] hover:bg-[var(--color-elevated)] -mx-1 px-1',
+                      )}
                       style={{ animationDelay: `${idx * 30}ms` }}
                     >
                       {/* Colored dot */}
@@ -645,6 +653,95 @@ export function Home() {
             </div>
           );
         })()}
+      </section>
+
+      {/* Properties */}
+      <section className="animate-fade-up" style={{ animationDelay: '150ms' }}>
+        <div className="flex items-center justify-between mb-2">
+          <h2 className="text-sm font-semibold text-[var(--color-text)]">
+            {singleProperty ? singleProperty.name : 'Your Properties'}
+          </h2>
+          <div className="flex items-center gap-3">
+            {singleProperty ? (
+              <button
+                type="button"
+                onClick={() => navigate(`/property/${singleProperty.id}`)}
+                className="text-xs text-[var(--color-primary)] hover:underline"
+              >
+                View property
+              </button>
+            ) : (
+              properties && properties.length > 0 && (
+                <span className="text-xs font-medium text-[var(--color-text-muted)] bg-[var(--color-elevated)] px-2 py-0.5 rounded-full">
+                  {properties.length} properties
+                </span>
+              )
+            )}
+            {/* Property creation demoted from a hero Quick Action to a quiet
+                link — it happens roughly once per house. */}
+            <button
+              type="button"
+              onClick={() => setCreateOpen(true)}
+              className="text-xs text-[var(--color-text-muted)] hover:text-[var(--color-primary)]"
+            >
+              + Add
+            </button>
+          </div>
+        </div>
+
+        {propertiesLoading && (
+          <div className="flex flex-col gap-2">
+            {[1, 2, 3].map((i) => (
+              <Skeleton key={i} className="h-20 w-full" />
+            ))}
+          </div>
+        )}
+
+        {properties && properties.length === 0 && (
+          <div className="flex flex-col items-center py-10 gap-3 animate-fade-up">
+            <div className="w-14 h-14 rounded-full bg-[var(--color-primary-bg)] flex items-center justify-center">
+              <HomeIcon className="w-7 h-7 text-[var(--color-primary)]" />
+            </div>
+            <div className="text-center">
+              <p className="text-sm font-semibold text-[var(--color-text)]">No properties yet</p>
+              <p className="text-xs text-[var(--color-text-muted)] mt-0.5">Create a property to start organizing your inventory</p>
+            </div>
+            <Button size="sm" onClick={() => setCreateOpen(true)}>
+              <Plus className="w-4 h-4" />
+              Create Property
+            </Button>
+          </div>
+        )}
+
+        {singleProperty ? (
+          // The one-property household is the actual household: a list with a
+          // single card that must be tapped through conveys nothing. Land on
+          // the areas directly.
+          singlePropertyAreas && singlePropertyAreas.length > 0 ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {singlePropertyAreas.map((area) => (
+                <AreaCard key={area.id} area={area} />
+              ))}
+            </div>
+          ) : (
+            <p className="text-xs text-[var(--color-text-muted)] py-4 text-center">
+              No areas yet — add one from the property page.
+            </p>
+          )
+        ) : properties && properties.length > 0 ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {properties.map((property, idx) => (
+              <div
+                key={property.id}
+                className={cn(
+                  property.id === maxItemPropertyId && 'border-l-[3px] border-l-[var(--color-primary)] rounded-l-sm',
+                )}
+              >
+                <PropertyCard property={property} index={idx} />
+              </div>
+            ))}
+          </div>
+        ) : null}
       </section>
 
       <EntityForm

@@ -94,6 +94,16 @@ module.exports = function lendingRoutes({ app, db, logger }) {
 
   // ── Get Overdue ───────────────────────────────────────────────────────────
 
+  // GET /api/lending/_x_/active — everything currently out, soonest due first
+  app.get(
+    '/api/lending/_x_/active',
+    app.locals.requireAuth,
+    async (req, res) => {
+      const active = await LendingService.listActive(req.user.id);
+      success(res, { active });
+    }
+  );
+
   // GET /api/lending/_x_/overdue
   app.get(
     '/api/lending/_x_/overdue',
