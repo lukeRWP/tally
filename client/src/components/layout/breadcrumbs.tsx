@@ -17,7 +17,7 @@ function getPath(item: BreadcrumbItem): string {
 
 export function Breadcrumbs({ items }: BreadcrumbsProps) {
   return (
-    <nav className="flex items-center gap-1 text-xs text-[var(--color-text-muted)] mb-3 overflow-x-auto min-h-[44px] -my-2 py-2">
+    <nav className="flex items-center gap-1 font-mono text-[10px] uppercase tracking-[0.04em] text-[var(--color-text-muted)] mb-3 overflow-x-auto min-h-[44px] -my-2 py-2">
       <Link to="/" className="hover:text-[var(--color-text-secondary)] transition-colors flex items-center gap-1 shrink-0 py-2">
         <Home className="w-3 h-3" />
         Home
