@@ -1,6 +1,9 @@
+import { Search } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { NotificationBell } from '@/components/notifications/notification-bell';
 
 export function Header() {
+  const navigate = useNavigate();
   return (
     <header className="flex items-center justify-between px-4 py-3 bg-[var(--color-card)] border-b border-[var(--color-border)]/50">
       <div className="flex items-center gap-2">
@@ -20,7 +23,19 @@ export function Header() {
         </svg>
         <h1 className="text-xl font-extrabold tracking-tighter text-[var(--color-text)]">Tally</h1>
       </div>
-      <NotificationBell />
+      <div className="flex items-center">
+        {/* Search reachable in one tap from EVERY screen — "Where is X?" is
+            the app's #1 job and used to require navigating to Home first. */}
+        <button
+          type="button"
+          aria-label="Search"
+          className="p-2"
+          onClick={() => navigate('/search')}
+        >
+          <Search className="w-5 h-5 text-[var(--color-text-secondary)]" />
+        </button>
+        <NotificationBell />
+      </div>
     </header>
   );
 }

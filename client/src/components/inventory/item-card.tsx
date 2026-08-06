@@ -49,9 +49,18 @@ export function ItemCard({ item }: ItemCardProps) {
           {item.name}
         </span>
         <div className="flex items-center gap-2 mt-0.5">
-          <span className="text-[10px] font-mono text-[var(--color-text-muted)]">
-            {item.qrCode}
-          </span>
+          {/* On search results the question is WHERE it is, so the location
+              path earns this line; elsewhere (inside a container) the path is
+              redundant and the code stays the more useful fact. */}
+          {item.location ? (
+            <span className="text-[10px] text-[var(--color-text-muted)] truncate">
+              {[item.location.area, item.location.container].filter(Boolean).join(' › ')}
+            </span>
+          ) : (
+            <span className="text-[10px] font-mono text-[var(--color-text-muted)]">
+              {item.qrCode}
+            </span>
+          )}
           <Badge variant={conditionVariant[item.condition]}>{item.condition}</Badge>
           <Badge variant={statusVariant[item.status]}>{item.status}</Badge>
         </div>

@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { Printer as PrinterIcon, Trash2, RotateCw, Send, X, Inbox } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
+import { TitleBar } from '@/components/ui/title-bar';
 import { toast } from '@/components/ui/toast';
 import { useProperties } from '@/hooks/use-inventory';
 import {
@@ -49,6 +50,7 @@ export function PrintQueuePage() {
   const clearStaged = usePrintQueueStore((s) => s.clear);
   const removeStagedMany = usePrintQueueStore((s) => s.removeMany);
   const setPreset = usePrintQueueStore((s) => s.setPreset);
+  const setAllPresets = usePrintQueueStore((s) => s.setAllPresets);
 
   const [sending, setSending] = React.useState(false);
   const [failedKeys, setFailedKeys] = React.useState<string[]>([]);
@@ -96,8 +98,39 @@ export function PrintQueuePage() {
         if (res?.status === 'held') held += g.entityIds.length;
         else queued += g.entityIds.length;
       } catch (err) {
-        failedKeys.push(...g.keys);
-        if (!firstError) firstError = err instanceof Error ? err.message : 'Send failed';
+        // The server refuses a batch if ANY id fails to resolve (deleted since
+        // staging), so one stale row 404s a whole 50-label group. Isolate by
+        // re-sending per entity: the healthy rest prints, only the stale rows
+        // stay red. Bail after 3 straight failures with no success — that's a
+        // systemic error (network, auth), not a stale row, and not worth
+        // hammering the API once per label.
+        if (g.entityIds.length > 1) {
+          let isolated = 0;
+          for (let i = 0; i < g.entityIds.length; i++) {
+            if (i >= 3 && isolated === 0) {
+              failedKeys.push(...g.keys.slice(i));
+              break;
+            }
+            try {
+              const res = await createJob.mutateAsync({
+                entityType: g.entityType,
+                entityIds: [g.entityIds[i]],
+                preset: g.preset,
+                propertyId: g.propertyId ?? propertyId,
+              });
+              sentKeys.push(g.keys[i]);
+              isolated += 1;
+              if (res?.status === 'held') held += 1;
+              else queued += 1;
+            } catch (err2) {
+              failedKeys.push(g.keys[i]);
+              if (!firstError) firstError = err2 instanceof Error ? err2.message : 'Send failed';
+            }
+          }
+        } else {
+          failedKeys.push(...g.keys);
+          if (!firstError) firstError = err instanceof Error ? err.message : 'Send failed';
+        }
       }
     }
 
@@ -122,7 +155,7 @@ export function PrintQueuePage() {
 
   return (
     <div className="flex flex-col gap-4 p-4 pb-24">
-      <h1 className="text-lg font-semibold text-[var(--color-text)]">Print</h1>
+      <h1><TitleBar>Print</TitleBar></h1>
 
       {/* ── Printer ─────────────────────────────────────────────────── */}
       <Card className="p-3">
@@ -185,7 +218,16 @@ export function PrintQueuePage() {
             Ready to print{staged.length > 0 && ` (${staged.length})`}
           </h2>
           {staged.length > 0 && (
-            <Button variant="outline" size="sm" className="ml-auto" onClick={clearStaged}>Clear</Button>
+            <div className="ml-auto flex items-center gap-1.5">
+              {failedKeys.length > 0 && (
+                <Button variant="outline" size="sm"
+                  className="text-[var(--color-red)] border-[var(--color-red)]"
+                  onClick={() => { removeStagedMany(failedKeys); setFailedKeys([]); }}>
+                  Remove failed ({failedKeys.length})
+                </Button>
+              )}
+              <Button variant="outline" size="sm" onClick={clearStaged}>Clear</Button>
+            </div>
           )}
         </div>
 
@@ -200,6 +242,31 @@ export function PrintQueuePage() {
           </Card>
         ) : (
           <div className="flex flex-col gap-1.5">
+            {/* Bulk roll change — a batch staged from "Label all bins" lands on
+                one preset; switching fifty rows one-by-one defeats the point. */}
+            {staged.length > 1 && (
+              <div className="flex items-center gap-1.5 pb-1">
+                <p className="text-xs text-[var(--color-text-muted)]">Set all to</p>
+                {ROLLS.map((r) => {
+                  // Mirror the per-row rule: a manifest is meaningless for an
+                  // item, so an all-item queue never offers 4×6 at all, and a
+                  // mixed queue says out loud that items were skipped.
+                  if (r.value === 'large' && staged.every((l) => l.entityType === 'item')) return null;
+                  return (
+                    <Button key={r.value} size="sm" variant="outline"
+                      onClick={() => {
+                        setAllPresets(r.value);
+                        if (r.value === 'large') {
+                          const skipped = staged.filter((l) => l.entityType === 'item').length;
+                          if (skipped > 0) toast(`Items keep their size — ${staged.length - skipped} set to 4×6`);
+                        }
+                      }}>
+                      {r.label}
+                    </Button>
+                  );
+                })}
+              </div>
+            )}
             {staged.map((l) => (
               <Card key={l.key} className={`p-2.5 flex items-center gap-2 ${
                 failedKeys.includes(l.key) ? 'border-[var(--color-red)]' : ''}`}>

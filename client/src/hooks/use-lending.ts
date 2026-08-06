@@ -47,6 +47,16 @@ export function useActiveLending(itemId: number) {
   });
 }
 
+export function useActiveLoans() {
+  return useQuery({
+    queryKey: queryKeys.lending.activeAll(),
+    queryFn: () =>
+      api
+        .get<{ active: LendingRecord[] }>('/api/lending/_x_/active')
+        .then((d) => d.active),
+  });
+}
+
 export function useOverdueItems() {
   return useQuery({
     queryKey: queryKeys.lending.overdue(),
@@ -85,6 +95,8 @@ export function useLendItem() {
       qc.invalidateQueries({ queryKey: queryKeys.lending.active(vars.itemId) });
       qc.invalidateQueries({ queryKey: queryKeys.items.detail(vars.itemId) });
       qc.invalidateQueries({ queryKey: queryKeys.items.all }); // STATUS changed → list/search/badges
+      qc.invalidateQueries({ queryKey: queryKeys.lending.activeAll() });
+      qc.invalidateQueries({ queryKey: queryKeys.lending.overdue() });
     },
   });
 }
@@ -99,6 +111,8 @@ export function useReturnItem() {
       qc.invalidateQueries({ queryKey: queryKeys.lending.active(vars.itemId) });
       qc.invalidateQueries({ queryKey: queryKeys.items.detail(vars.itemId) });
       qc.invalidateQueries({ queryKey: queryKeys.items.all }); // STATUS changed → list/search/badges
+      qc.invalidateQueries({ queryKey: queryKeys.lending.activeAll() });
+      qc.invalidateQueries({ queryKey: queryKeys.lending.overdue() });
     },
   });
 }

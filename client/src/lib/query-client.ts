@@ -83,6 +83,8 @@ export const queryKeys = {
     byItem: (itemId: number) => [...queryKeys.lending.all, 'byItem', itemId] as const,
     active: (itemId: number) => [...queryKeys.lending.all, 'active', itemId] as const,
     overdue: () => [...queryKeys.lending.all, 'overdue'] as const,
+    // House-wide active list (distinct from per-item `active(itemId)`).
+    activeAll: () => [...queryKeys.lending.all, 'activeAll'] as const,
   },
   dates: {
     all: ['dates'] as const,
