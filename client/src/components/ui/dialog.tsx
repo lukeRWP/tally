@@ -119,7 +119,10 @@ export function DialogHeader({ className, ...props }: React.HTMLAttributes<HTMLD
 export function DialogFooter({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
   return (
     <div
-      className={cn('flex justify-end gap-2 mt-6', className)}
+      // flex-wrap: four thermal (uppercase, wide) buttons overflowed the
+      // dialog on phones and clipped Cancel off-screen. Wrapping keeps every
+      // action reachable at any width.
+      className={cn('flex flex-wrap justify-end gap-2 mt-6', className)}
       {...props}
     />
   );

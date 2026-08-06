@@ -103,19 +103,24 @@ html {
 
 /* ── Entrance animations ──────────────────────────────────────────────── */
 
+/* Entrance animations end at `transform: none`, NOT translateY(0)/scale(1):
+   with fill-mode both, a zero transform still computes as a transform, which
+   makes every animated section a PERMANENT stacking context — so a z-50
+   dropdown inside one section painted UNDER the next section forever. `none`
+   releases the stacking context once the entrance finishes. */
 @keyframes fade-up {
   from { opacity: 0; transform: translateY(8px); }
-  to { opacity: 1; transform: translateY(0); }
+  to { opacity: 1; transform: none; }
 }
 
 @keyframes scale-in {
   from { opacity: 0; transform: scale(0.95); }
-  to { opacity: 1; transform: scale(1); }
+  to { opacity: 1; transform: none; }
 }
 
 @keyframes slide-up {
   from { transform: translateY(100%); }
-  to { transform: translateY(0); }
+  to { transform: none; }
 }
 
 @keyframes pulse-ring {
