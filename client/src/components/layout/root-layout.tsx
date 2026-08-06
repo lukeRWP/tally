@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { Outlet, Navigate, useLocation, useNavigate } from 'react-router-dom';
-import { Home, Layers, ScanLine, BarChart2, Bell, Settings, Printer } from 'lucide-react';
+import { Home, Search, ScanLine, Bell, Settings, Printer } from 'lucide-react';
 import { useAuth } from '@/hooks/use-auth';
 import { useAuthStore } from '@/store/auth-store';
 import { useUnreadCount } from '@/hooks/use-notifications';
@@ -8,12 +8,14 @@ import { Header } from './header';
 import { BottomNav } from './bottom-nav';
 import { cn } from '@/lib/utils';
 
+// Mirrors the bottom nav's five destinations in the same order, plus Search at
+// the top — the two surfaces expressed different IAs before (7 items here, 6
+// there, different sets), which meant desktop and mobile were different apps.
 const navItems = [
+  { path: '/search', icon: Search, label: 'Search' },
   { path: '/', icon: Home, label: 'Home' },
-  { path: '/inventory', icon: Layers, label: 'Inventory' },
-  { path: '/scan', icon: ScanLine, label: 'Scan' },
   { path: '/print', icon: Printer, label: 'Print' },
-  { path: '/reports', icon: BarChart2, label: 'Reports' },
+  { path: '/scan', icon: ScanLine, label: 'Scan' },
   { path: '/notifications', icon: Bell, label: 'Notifications' },
   { path: '/settings', icon: Settings, label: 'Settings' },
 ];
