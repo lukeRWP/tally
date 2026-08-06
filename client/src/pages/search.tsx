@@ -102,7 +102,9 @@ export function SearchPage() {
             type="button"
             onClick={() => setStatus(c.value)}
             className={cn(
-              'px-3 py-1 rounded-full font-mono text-[10px] uppercase tracking-[0.08em] border transition-colors',
+              // Filter chips stay pills (the mockup's .fchip is rounded) — only
+              // badges and buttons are squared in this language.
+              'px-3 py-1.5 rounded-full font-mono text-[10px] uppercase tracking-[0.08em] border transition-colors',
               status === c.value
                 ? 'bg-[var(--color-text)] text-[var(--color-bg)] border-[var(--color-text)]'
                 : 'border-[var(--color-text)] text-[var(--color-text-secondary)] hover:bg-[var(--color-elevated)]',

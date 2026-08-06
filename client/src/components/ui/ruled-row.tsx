@@ -55,8 +55,10 @@ export function RuledRow({
       aria-label={selectable ? selectLabel : undefined}
       aria-pressed={selectable ? selected : undefined}
       className={cn(
-        'group flex w-full items-center gap-3 border-b border-[var(--color-rule)] py-3 text-left',
-        'animate-fade-up transition-colors',
+        // last:border-b-0 keeps a list from ending on a dangling hairline that
+        // floats over the whitespace below or doubles against the next ColHead.
+        'group flex w-full items-center gap-3 border-b border-[var(--color-rule)] last:border-b-0 py-3 text-left',
+        'animate-fade-up transition-colors active:bg-[var(--color-elevated)]',
         'hover:bg-[var(--color-elevated)]/60 focus-visible:outline-none focus-visible:bg-[var(--color-elevated)]',
         selected && 'bg-[var(--color-primary-bg)]',
       )}

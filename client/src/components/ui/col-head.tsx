@@ -29,10 +29,13 @@ export function ColHead({
       <span className="truncate [&_b]:font-bold [&_b]:text-[var(--color-text)]">{children}</span>
       {action != null &&
         (onAction ? (
+          // Real hit area: the colhead action is often the only add control on
+          // the page, so it must clear the 24px WCAG target-size floor even
+          // though the label itself is tiny mono text.
           <button
             type="button"
             onClick={onAction}
-            className="shrink-0 font-bold text-[var(--color-primary)] hover:opacity-80"
+            className="shrink-0 -my-1 px-1 min-h-[28px] inline-flex items-center font-bold text-[var(--color-primary)] hover:opacity-80"
           >
             {action}
           </button>

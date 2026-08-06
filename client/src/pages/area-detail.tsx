@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Printer, Trash2 } from 'lucide-react';
+import { Plus, Printer, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { TitleBar } from '@/components/ui/title-bar';
 import { ColHead } from '@/components/ui/col-head';
@@ -136,14 +136,14 @@ export function AreaDetail() {
       <div className="flex flex-col">
         <ColHead
           action={
-            <span className="flex items-center gap-3">
+            <span className="flex items-center gap-2">
               {containers && containers.length > 0 && (
                 <button
                   type="button"
                   onClick={handleLabelAllBins}
                   aria-label="Label all bins"
                   title="Stage a label for every top-level bin in this area — nested bins stage from their parent bin's page"
-                  className="text-[var(--color-primary)] hover:opacity-80"
+                  className="-my-1 px-1 min-h-[28px] inline-flex items-center text-[var(--color-primary)] hover:opacity-80"
                 >
                   Label all ›
                 </button>
@@ -151,7 +151,7 @@ export function AreaDetail() {
               <button
                 type="button"
                 onClick={() => setCreateOpen(true)}
-                className="text-[var(--color-primary)] hover:opacity-80"
+                className="-my-1 px-1 min-h-[28px] inline-flex items-center text-[var(--color-primary)] hover:opacity-80"
               >
                 + Add
               </button>
@@ -164,9 +164,15 @@ export function AreaDetail() {
         {containersLoading && <Skeleton className="h-14 w-full mt-2" />}
 
         {containers && containers.length === 0 && (
-          <p className="font-mono text-[11px] uppercase tracking-[0.06em] text-[var(--color-text-muted)] py-6 text-center">
-            No containers yet — add one to start organizing
-          </p>
+          <div className="flex flex-col items-center gap-3 py-8">
+            <p className="font-mono text-[11px] uppercase tracking-[0.06em] text-[var(--color-text-muted)] text-center">
+              No containers yet
+            </p>
+            <Button size="sm" onClick={() => setCreateOpen(true)}>
+              <Plus className="w-4 h-4" />
+              Add Container
+            </Button>
+          </div>
         )}
 
         {containers?.map((container) => (

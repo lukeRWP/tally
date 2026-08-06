@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { MapPin, Trash2 } from 'lucide-react';
+import { MapPin, Plus, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { TitleBar } from '@/components/ui/title-bar';
 import { ColHead } from '@/components/ui/col-head';
@@ -109,9 +109,15 @@ export function PropertyDetail() {
         {areasLoading && <Skeleton className="h-14 w-full mt-2" />}
 
         {areas && areas.length === 0 && (
-          <p className="font-mono text-[11px] uppercase tracking-[0.06em] text-[var(--color-text-muted)] py-6 text-center">
-            No areas yet — add one to organize this property
-          </p>
+          <div className="flex flex-col items-center gap-3 py-8">
+            <p className="font-mono text-[11px] uppercase tracking-[0.06em] text-[var(--color-text-muted)] text-center">
+              No areas yet
+            </p>
+            <Button size="sm" onClick={() => setCreateOpen(true)}>
+              <Plus className="w-4 h-4" />
+              Add Area
+            </Button>
+          </div>
         )}
 
         {areas?.map((area) => (

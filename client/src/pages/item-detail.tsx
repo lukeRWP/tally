@@ -6,9 +6,9 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { LabelPrintDialog } from '@/components/labels/label-print-dialog';
-import { Badge } from '@/components/ui/badge';
 import { Card } from '@/components/ui/card';
 import { TitleBar } from '@/components/ui/title-bar';
+// (Badge import removed — it was dead; item-detail renders no <Badge>.)
 import { Skeleton } from '@/components/ui/skeleton';
 import { useItem, useDeleteItem, useUpdateItem } from '@/hooks/use-inventory';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
