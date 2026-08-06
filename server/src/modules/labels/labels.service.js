@@ -103,7 +103,7 @@ const LabelsService = {
 
     const minSize = Math.max(5.5, fontSize * 0.55);
     let size = fontSize;
-    let lines = 1;
+    let lines;
     for (;;) {
       doc.fontSize(size).font('Helvetica-Bold');
       const longestWord = Math.max(...str.split(/\s+/).filter(Boolean).map(word => doc.widthOfString(word)));
