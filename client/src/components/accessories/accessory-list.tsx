@@ -56,7 +56,7 @@ export function AccessoryList({ itemId }: AccessoryListProps) {
         >
           <button
             type="button"
-            onClick={() => navigate(`/items/${acc.accessoryId}`)}
+            onClick={() => navigate(`/item/${acc.accessoryId}`)}
             className="flex flex-col gap-0.5 min-w-0 text-left cursor-pointer hover:opacity-80 transition-opacity"
           >
             <p className="text-xs font-medium text-[var(--color-primary)] truncate">
