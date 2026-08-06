@@ -31,21 +31,30 @@ import { cn } from '@/lib/utils';
  * navigate-on-click never fires while selecting.
  */
 function SelectableCard({
+  name,
   isSelected,
   onToggle,
   children,
 }: {
+  name: string;
   isSelected: boolean;
   onToggle: () => void;
   children: React.ReactNode;
 }) {
   return (
     <div className="relative">
-      {children}
+      {/* inert takes the covered card out of the tab order AND the
+          accessibility tree — without it, Tab+Enter (or a screen-reader
+          double-tap) still fires the card's own navigate and nukes the
+          selection. React 18's types don't know the attribute yet. */}
+      <div {...({ inert: '' } as unknown as React.HTMLAttributes<HTMLDivElement>)}>
+        {children}
+      </div>
       <button
         type="button"
         role="checkbox"
         aria-checked={isSelected}
+        aria-label={`Select ${name}`}
         onClick={onToggle}
         className={cn(
           'absolute inset-0 rounded-[var(--radius-lg)] border-2 transition-colors',
@@ -96,6 +105,21 @@ export function ContainerDetail() {
   const createContainer = useCreateContainer();
   const createItem = useCreateItem();
   const stageMany = usePrintQueueStore((s) => s.addMany);
+
+  // A background refetch (30s staleTime + refetch-on-focus) can remove rows
+  // out from under an open selection — prune ghosts so the "N selected"
+  // count only ever counts rows that are still here.
+  useEffect(() => {
+    if (!selecting) return;
+    const valid = new Set([
+      ...(children ?? []).map((c) => `container:${c.id}`),
+      ...(items ?? []).map((i) => `item:${i.id}`),
+    ]);
+    setSelected((prev) => {
+      const next = new Set([...prev].filter((k) => valid.has(k)));
+      return next.size === prev.size ? prev : next;
+    });
+  }, [selecting, children, items]);
 
   function toggleSelected(key: string) {
     setSelected((prev) => {
@@ -203,6 +227,12 @@ export function ContainerDetail() {
           propertyId: propertyId > 0 ? propertyId : undefined,
         })),
     ];
+    if (inputs.length === 0) {
+      // Selection outlived the rows (deleted/moved elsewhere mid-selection).
+      toast('Those rows are no longer in this bin');
+      exitSelectMode();
+      return;
+    }
     const added = stageMany(inputs);
     toast(
       added > 0
@@ -273,7 +303,13 @@ export function ContainerDetail() {
         {selectable && (
           <button
             type="button"
-            onClick={() => (selecting ? exitSelectMode() : setSelecting(true))}
+            onClick={() => {
+              // The FAB is hidden while selecting but its open-menu state is
+              // not — without this it reappears pre-expanded after Cancel.
+              setFabOpen(false);
+              if (selecting) exitSelectMode();
+              else setSelecting(true);
+            }}
             className={cn(
               'w-11 h-11 rounded-full border flex items-center justify-center transition-all duration-200',
               selecting
@@ -326,6 +362,7 @@ export function ContainerDetail() {
               return selecting ? (
                 <SelectableCard
                   key={child.id}
+                  name={child.name}
                   isSelected={selected.has(`container:${child.id}`)}
                   onToggle={() => toggleSelected(`container:${child.id}`)}
                 >
@@ -369,6 +406,7 @@ export function ContainerDetail() {
               selecting ? (
                 <SelectableCard
                   key={item.id}
+                  name={item.name}
                   isSelected={selected.has(`item:${item.id}`)}
                   onToggle={() => toggleSelected(`item:${item.id}`)}
                 >

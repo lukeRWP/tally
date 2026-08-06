@@ -136,7 +136,13 @@ export function AreaDetail() {
         <h2 className="text-sm font-semibold text-[var(--color-text)]">Containers</h2>
         <div className="flex items-center gap-1.5">
           {containers && containers.length > 0 && (
-            <Button variant="outline" size="sm" onClick={handleLabelAllBins}>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleLabelAllBins}
+              aria-label="Label all bins"
+              title="Stage a label for every top-level bin in this area — nested bins stage from their parent bin's page"
+            >
               <Tags className="w-4 h-4" />
               <span className="hidden sm:inline">Label all bins</span>
             </Button>

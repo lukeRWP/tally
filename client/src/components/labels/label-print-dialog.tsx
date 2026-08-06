@@ -58,7 +58,7 @@ export function LabelPrintDialog({ entities, entityType, isOpen, onOpenChange, p
     : null;
   const rollMatches = printer?.loadedMedia === preset;
 
-  const stageLabels = usePrintQueueStore((st) => st.add);
+  const stageLabels = usePrintQueueStore((st) => st.addMany);
   // Reactive: subscribes to the staged list, so reopening the dialog after
   // queueing shows "In queue" instead of silently re-offering the add.
   const alreadyStaged = usePrintQueueStore(
@@ -67,20 +67,22 @@ export function LabelPrintDialog({ entities, entityType, isOpen, onOpenChange, p
 
   function handleAddToQueue() {
     // Staged locally — nothing reaches tally until you print the batch from
-    // the Print page, so this works fine mid-walk with patchy wifi.
-    for (const e of entities) {
-      stageLabels({
-        id: e.id,
-        entityType: entityType,
-        name: e.name,
-        qrCode: e.qrCode,
-        propertyId,
-        preset: preset as PrintablePreset,
-      });
-    }
-    toast(entities.length === 1
-      ? `Added to the print queue`
-      : `Added ${entities.length} labels to the print queue`);
+    // the Print page, so this works fine mid-walk with patchy wifi. addMany
+    // returns the freshly-staged count, so the toast never claims "Added N"
+    // when some were already in the queue.
+    const added = stageLabels(entities.map((e) => ({
+      id: e.id,
+      entityType,
+      name: e.name,
+      qrCode: e.qrCode,
+      propertyId,
+      preset: preset as PrintablePreset,
+    })));
+    toast(added === 0
+      ? 'Already in the print queue'
+      : added === 1 && entities.length === 1
+        ? 'Added to the print queue'
+        : `Added ${added} of ${entities.length} label${entities.length === 1 ? '' : 's'} to the print queue`);
     onOpenChange(false);
   }
 
