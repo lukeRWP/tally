@@ -1,5 +1,5 @@
 import type React from 'react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ScanLine, Printer, Share2, Plus, Package, Box, Check, CheckSquare } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -82,6 +82,13 @@ export function ContainerDetail() {
   // print-queue staging area in one batch instead of a dialog per label.
   const [selecting, setSelecting] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+
+  // Navigating bin→bin only changes :containerId — the component stays
+  // mounted, so without this a selection from the previous bin leaks in.
+  useEffect(() => {
+    setSelecting(false);
+    setSelected(new Set());
+  }, [id]);
 
   const { data: container, isLoading: containerLoading, isError: containerError, refetch: refetchContainer } = useContainer(id);
   const { data: children, isLoading: childrenLoading } = useContainerChildren(id);
