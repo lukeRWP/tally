@@ -165,20 +165,46 @@ const LabelsService = {
   // marginally wider than the nominal dot, so black creeps into the letterforms
   // and thin strokes close up. Banner type is therefore set larger and more
   // widely tracked than would look right on screen — it prints back to normal.
+  // Fit one line of banner type into `usable` points: tighten the tracking
+  // first (keeps the letters big), shrink the size second, hard-ellipsize as
+  // the last resort. Returns what to draw and how. Exported for tests.
+  _fitBannerLine(doc, str, usable, fontSize, track) {
+    const minSize = Math.max(7, fontSize * 0.55);
+    let size = fontSize, tr = track, shown = str;
+    const width = () => {
+      doc.fontSize(size).font('Helvetica-Bold');
+      return doc.widthOfString(shown) + tr * Math.max(0, shown.length - 1);
+    };
+    while (width() > usable && tr > 0.5) tr = Math.max(0.5, tr - 0.5);
+    while (width() > usable && size > minSize) size = Math.max(minSize, size - 0.5);
+    while (width() > usable && shown.length > 2) {
+      shown = shown.slice(0, -2).replace(/\s+$/, '') + '…';
+    }
+    return { size, tr, shown, width: width() };
+  },
+
   _verticalBanner(doc, text, H, bannerW, fontSize, track = 1) {
     doc.save().rect(0, 0, bannerW, H).fill('#000000').restore();
     doc.save();
     doc.rotate(-90, { origin: [bannerW / 2, H / 2] });
     // After rotating -90° about the banner centre, a normal horizontal text box
     // of width H (the label height) reads bottom-to-top down the strip.
-    doc.fontSize(fontSize).font('Helvetica-Bold');
+    //
+    // pdfkit wraps whenever a `width` option is present — lineBreak:false is
+    // NOT honoured — so a long zone name used to fold into a second, clipped
+    // column ("LINEN / CLOSET"). Fit the line ourselves and centre manually,
+    // with no width option, so wrapping is impossible by construction.
+    const str = String(text).toUpperCase();
+    const usable = H - 8;
+    const fit = LabelsService._fitBannerLine(doc, str, usable, fontSize, track);
+    doc.fontSize(fit.size).font('Helvetica-Bold');
     // In the rotated frame this y controls position ACROSS the strip's width,
     // so centring the measured line box centres the type in the black bar.
     const lineH = doc.currentLineHeight();
     doc.fillColor('#ffffff')
-      .text(String(text).toUpperCase(), bannerW / 2 - H / 2,
-        H / 2 - lineH / 2 + fontSize * 0.08,
-        { width: H, align: 'center', lineBreak: false, ellipsis: true, characterSpacing: track });
+      .text(fit.shown, bannerW / 2 - H / 2 + (H - fit.width) / 2,
+        H / 2 - lineH / 2 + fit.size * 0.08,
+        { lineBreak: false, characterSpacing: fit.tr });
     doc.restore();
     doc.fillColor('#000000');
   },

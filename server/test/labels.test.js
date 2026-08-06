@@ -349,3 +349,31 @@ test('renderManifestBundle concatenates several manifests into one PDF', async (
 test('generateZpl is removed from the service', () => {
   assert.equal(typeof Labels.generateZpl, 'undefined');
 });
+
+test('banner fit: tracking tightens before size shrinks, and never wraps', () => {
+  const svc = require('../src/modules/labels/labels.service');
+  const PDFDocument = require('pdfkit');
+  const doc = new PDFDocument({ size: [216, 216], margin: 0 });
+  const usable = 216 - 8;
+
+  // The real-world failure: "LINEN CLOSET" at medium's 20pt/track6 overflowed
+  // and folded into a clipped second column. Must now fit on one line, full
+  // text, by tracking reduction alone (size stays 20).
+  const linen = svc._fitBannerLine(doc, 'LINEN CLOSET', usable, 20, 6);
+  assert.equal(linen.shown, 'LINEN CLOSET');
+  assert.equal(linen.size, 20, 'size untouched — tracking absorbs the overflow');
+  assert.ok(linen.tr < 6, 'tracking reduced');
+  assert.ok(linen.width <= usable);
+
+  // A 41-char monster: tracking floors, size floors, then ellipsis — but the
+  // result always fits and never exceeds the strip.
+  const monster = svc._fitBannerLine(doc, 'SECOND FLOOR GUEST BEDROOM WALK-IN CLOSET', usable, 20, 6);
+  assert.ok(monster.shown.endsWith('…'), 'over-long name ellipsized');
+  assert.ok(monster.width <= usable, 'always fits');
+  assert.ok(monster.size >= 7, 'size floor respected');
+
+  // Short names keep the full designed tracking and size.
+  const short = svc._fitBannerLine(doc, 'GARAGE', usable, 20, 6);
+  assert.deepEqual([short.shown, short.size, short.tr], ['GARAGE', 20, 6]);
+  doc.end();
+});
