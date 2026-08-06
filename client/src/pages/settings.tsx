@@ -43,7 +43,7 @@ function CollapsibleSettingsSection({
         onClick={() => setOpen((v) => !v)}
         className="flex items-center w-full gap-2 text-left cursor-pointer"
       >
-        <h2 className="text-sm font-semibold text-[var(--color-text)] flex-1">{title}</h2>
+        <h2 className="font-mono text-[11px] uppercase tracking-[0.1em] font-semibold text-[var(--color-text)] flex-1">{title}</h2>
         {open ? (
           <ChevronDown className="w-4 h-4 text-[var(--color-text-muted)]" />
         ) : (
@@ -82,7 +82,7 @@ function ShareLinksSection() {
 
   return (
     <Card animationDelay="300ms">
-      <h2 className="text-sm font-semibold text-[var(--color-text)] mb-3 flex items-center gap-2">
+      <h2 className="font-mono text-[11px] uppercase tracking-[0.1em] font-semibold text-[var(--color-text)] mb-3 flex items-center gap-2">
         <Link2 className="w-4 h-4 text-[var(--color-primary)]" />
         Share Links
       </h2>
@@ -186,7 +186,7 @@ export function SettingsPage() {
                   </div>
                 )}
                 <div>
-                  <p className="text-sm font-semibold text-[var(--color-text)]">{user.displayName}</p>
+                  <p className="font-mono text-[11px] uppercase tracking-[0.1em] font-semibold text-[var(--color-text)]">{user.displayName}</p>
                   <p className="text-xs text-[var(--color-text-muted)]">{user.email}</p>
                 </div>
               </div>
@@ -197,7 +197,7 @@ export function SettingsPage() {
 
           {/* Theme -- expanded by default */}
           <Card animationDelay="50ms">
-            <h2 className="text-sm font-semibold text-[var(--color-text)] mb-3">Appearance</h2>
+            <h2 className="font-mono text-[11px] uppercase tracking-[0.1em] font-semibold text-[var(--color-text)] mb-3">Appearance</h2>
             <div className="flex gap-1 p-1 rounded-[var(--radius-md)] bg-[var(--color-elevated)]">
               {themeOptions.map(({ key, icon: Icon, label }) => (
                 <button
@@ -223,7 +223,7 @@ export function SettingsPage() {
               Reports lives here now instead of holding a permanent nav slot
               for a few-times-a-year export. */}
           <Card animationDelay="350ms">
-            <h2 className="text-sm font-semibold text-[var(--color-text)] mb-3">Data</h2>
+            <h2 className="font-mono text-[11px] uppercase tracking-[0.1em] font-semibold text-[var(--color-text)] mb-3">Data</h2>
             <div className="flex flex-col gap-1">
               <button
                 type="button"
@@ -250,7 +250,7 @@ export function SettingsPage() {
           {/* Tag Management with property pill selector */}
           {properties.length > 0 && (
             <Card animationDelay="100ms">
-              <h2 className="text-sm font-semibold text-[var(--color-text)] mb-3 flex items-center gap-2">
+              <h2 className="font-mono text-[11px] uppercase tracking-[0.1em] font-semibold text-[var(--color-text)] mb-3 flex items-center gap-2">
                 <Tags className="w-4 h-4 text-[var(--color-primary)]" />
                 Tag Management
               </h2>
@@ -283,14 +283,14 @@ export function SettingsPage() {
 
           {/* Notifications with toggle switches */}
           <Card animationDelay="200ms">
-            <h2 className="text-sm font-semibold text-[var(--color-text)] mb-3">Notifications</h2>
+            <h2 className="font-mono text-[11px] uppercase tracking-[0.1em] font-semibold text-[var(--color-text)] mb-3">Notifications</h2>
             <NotificationPrefsRedesigned />
           </Card>
 
           {/* Printing -- printer registration, loaded roll, job queue */}
           {selectedTagPropertyId > 0 && (
             <Card animationDelay="250ms">
-              <h2 className="text-sm font-semibold text-[var(--color-text)] mb-3">Printing</h2>
+              <h2 className="font-mono text-[11px] uppercase tracking-[0.1em] font-semibold text-[var(--color-text)] mb-3">Printing</h2>
               <PrinterSettings propertyId={selectedTagPropertyId} />
             </Card>
           )}

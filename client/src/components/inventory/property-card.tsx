@@ -1,7 +1,7 @@
 import { useNavigate } from 'react-router-dom';
-import { Home, Warehouse, ChevronRight } from 'lucide-react';
-import { Card } from '@/components/ui/card';
+import { Home, Warehouse } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
+import { RuledRow } from '@/components/ui/ruled-row';
 import type { Property } from '@/types/inventory';
 
 interface PropertyCardProps {
@@ -15,40 +15,20 @@ export function PropertyCard({ property, index = 0 }: PropertyCardProps) {
   const isStorage = property.name.toLowerCase().includes('storage');
   const Icon = isStorage ? Warehouse : Home;
 
+  const leading = (
+    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[var(--radius-sm)] border border-[var(--color-rule)] text-[var(--color-text-muted)]">
+      <Icon className="h-4 w-4" />
+    </span>
+  );
+
   return (
-    <Card
-      className="flex items-center gap-3 cursor-pointer hover:shadow-[0_2px_8px_rgba(0,0,0,0.06)] hover:border-[var(--color-primary)]/30"
+    <RuledRow
+      onNavigate={() => navigate(`/property/${property.id}`)}
       animationDelay={`${index * 50}ms`}
-      onClick={() => navigate(`/property/${property.id}`)}
-    >
-      <div
-        className={`flex items-center justify-center w-11 h-11 rounded-[var(--radius-lg)] shrink-0 ${
-          isStorage
-            ? 'bg-[var(--color-amber-bg)] text-[var(--color-amber)]'
-            : 'bg-[var(--color-primary-bg)] text-[var(--color-primary)]'
-        }`}
-      >
-        <Icon className="w-5 h-5" />
-      </div>
-
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2">
-          <span className="text-sm font-semibold text-[var(--color-text)] truncate">
-            {property.name}
-          </span>
-          {property.role !== 'owner' && (
-            <Badge variant="info">{property.role}</Badge>
-          )}
-        </div>
-        <p className="text-xs text-[var(--color-text-muted)] mt-0.5">
-          {property.areaCount} areas · {property.containerCount} containers · {property.itemCount} items
-        </p>
-        <p className="text-[10px] font-mono text-[var(--color-text-muted)] mt-0.5">
-          {property.qrCode}
-        </p>
-      </div>
-
-      <ChevronRight className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
-    </Card>
+      leading={leading}
+      title={property.name}
+      titleTrailing={property.role !== 'owner' ? <Badge variant="info">{property.role}</Badge> : undefined}
+      meta={`${property.qrCode} · ${property.areaCount} areas · ${property.containerCount} ctr · ${property.itemCount} items`}
+    />
   );
 }

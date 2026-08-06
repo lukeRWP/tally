@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, Plus, ChevronDown, Filter, Pencil, ArrowRight, Trash2, RotateCcw, Home as HomeIcon, Package, CircleDot } from 'lucide-react';
+import { Search, Plus, ChevronDown, Filter, Pencil, ArrowRight, Trash2, RotateCcw, Home as HomeIcon, Package } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -266,11 +266,6 @@ export function Home() {
   const totalContainers = properties?.reduce((sum, p) => sum + p.containerCount, 0) ?? 0;
   const totalAreas = properties?.reduce((sum, p) => sum + p.areaCount, 0) ?? 0;
 
-  // Find the most-populated property
-  const maxItemPropertyId = properties && properties.length > 0
-    ? properties.reduce((max, p) => (p.itemCount > max.itemCount ? p : max), properties[0]).id
-    : -1;
-
   // Group activity by day
   const activityEntries = recentActivity?.slice(0, 10) ?? [];
   const activityByDay: Array<{ label: string; entries: typeof activityEntries }> = [];
@@ -292,21 +287,12 @@ export function Home() {
           {getGreeting()}, {user?.displayName?.split(' ')[0] ?? 'there'}
         </h1>
 
-        {/* Stat chips */}
+        {/* Stat line — mono ledger figures, matching the property page */}
         {properties && properties.length > 0 && (
-          <div className="flex flex-wrap gap-2 mt-3">
-            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[var(--color-primary-bg)] text-[var(--color-primary)] text-xs font-semibold whitespace-nowrap shrink-0">
-              <Package className="w-3.5 h-3.5" />
-              {totalItems} items
-            </div>
-            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[var(--color-amber-bg)] text-[var(--color-amber)] text-xs font-semibold whitespace-nowrap shrink-0">
-              <CircleDot className="w-3.5 h-3.5" />
-              {totalContainers} containers
-            </div>
-            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[var(--color-purple-bg)] text-[var(--color-purple)] text-xs font-semibold whitespace-nowrap shrink-0">
-              <HomeIcon className="w-3.5 h-3.5" />
-              {totalAreas} areas
-            </div>
+          <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2 font-mono text-[11px] uppercase tracking-[0.06em] text-[var(--color-text-muted)]">
+            <span><b className="text-[var(--color-text)] font-semibold tabular-nums">{totalItems}</b> items</span>
+            <span><b className="text-[var(--color-text)] font-semibold tabular-nums">{totalContainers}</b> containers</span>
+            <span><b className="text-[var(--color-text)] font-semibold tabular-nums">{totalAreas}</b> areas</span>
           </div>
         )}
       </div>
@@ -453,10 +439,10 @@ export function Home() {
       {/* Search Results */}
       {searchQuery.length >= 1 && searchResults && searchResults.length > 0 && (
         <section className="animate-fade-up">
-          <h2 className="text-sm font-semibold text-[var(--color-text)] mb-2">
+          <h2 className="font-mono text-[11px] uppercase tracking-[0.1em] font-semibold text-[var(--color-text)] mb-2">
             Items ({searchResults.length})
           </h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div className="flex flex-col">
             {searchResults.map((item) => (
               <ItemCard key={item.id} item={item} />
             ))}
@@ -478,7 +464,7 @@ export function Home() {
       {activeLoans && activeLoans.length > 0 && (
         <section className="animate-fade-up" style={{ animationDelay: '50ms' }}>
           <div className="flex items-center justify-between mb-2">
-            <h2 className="text-sm font-semibold text-[var(--color-text)]">
+            <h2 className="font-mono text-[11px] uppercase tracking-[0.1em] font-semibold text-[var(--color-text)]">
               On loan ({activeLoans.length})
             </h2>
             <button
@@ -489,7 +475,7 @@ export function Home() {
               View all
             </button>
           </div>
-          <div className="flex flex-col gap-1.5">
+          <div className="flex flex-col">
             {activeLoans.slice(0, 3).map((loan) => {
               const overdueDays = loan.dueAt
                 ? daysOverdue(loan.dueAt)
@@ -499,16 +485,16 @@ export function Home() {
                   key={loan.id}
                   type="button"
                   onClick={() => navigate(`/item/${loan.itemId}`)}
-                  className="flex items-center gap-3 p-2.5 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-card)] text-left hover:bg-[var(--color-elevated)] transition-colors"
+                  className="flex items-center gap-3 py-3 border-b border-[var(--color-rule)] last:border-b-0 text-left transition-colors hover:bg-[var(--color-elevated)]/60 active:bg-[var(--color-elevated)]"
                 >
                   <span className="flex-1 min-w-0">
-                    <span className="block text-sm font-medium text-[var(--color-text)] truncate">
+                    <span className="block text-sm font-semibold text-[var(--color-text)] truncate">
                       {loan.itemName ?? `Item #${loan.itemId}`}
                     </span>
-                    <span className="block text-xs text-[var(--color-text-muted)]">
+                    <span className="block font-mono text-[11px] text-[var(--color-text-muted)] mt-0.5">
                       {loan.lentTo}
                       {overdueDays !== null && overdueDays > 0 && (
-                        <span className="text-[var(--color-red)] font-medium"> · {overdueDays}d overdue</span>
+                        <span className="text-[var(--color-red)] font-semibold uppercase"> · {overdueDays}d overdue</span>
                       )}
                     </span>
                   </span>
@@ -527,7 +513,7 @@ export function Home() {
             onClick={() => setActivityExpanded(!activityExpanded)}
             className="flex items-center gap-2"
           >
-            <h2 className="text-sm font-semibold text-[var(--color-text)]">Recent Activity</h2>
+            <h2 className="font-mono text-[11px] uppercase tracking-[0.1em] font-semibold text-[var(--color-text)]">Recent Activity</h2>
             <ChevronDown className={cn(
               "w-4 h-4 text-[var(--color-text-muted)] transition-transform duration-200",
               activityExpanded && "rotate-180"
@@ -658,7 +644,7 @@ export function Home() {
       {/* Properties */}
       <section className="animate-fade-up" style={{ animationDelay: '150ms' }}>
         <div className="flex items-center justify-between mb-2">
-          <h2 className="text-sm font-semibold text-[var(--color-text)]">
+          <h2 className="font-mono text-[11px] uppercase tracking-[0.1em] font-semibold text-[var(--color-text)]">
             {singleProperty ? singleProperty.name : 'Your Properties'}
           </h2>
           <div className="flex items-center gap-3">
@@ -703,7 +689,7 @@ export function Home() {
               <HomeIcon className="w-7 h-7 text-[var(--color-primary)]" />
             </div>
             <div className="text-center">
-              <p className="text-sm font-semibold text-[var(--color-text)]">No properties yet</p>
+              <p className="text-base font-bold text-[var(--color-text)]">No properties yet</p>
               <p className="text-xs text-[var(--color-text-muted)] mt-0.5">Create a property to start organizing your inventory</p>
             </div>
             <Button size="sm" onClick={() => setCreateOpen(true)}>
@@ -718,7 +704,7 @@ export function Home() {
           // single card that must be tapped through conveys nothing. Land on
           // the areas directly.
           singlePropertyAreas && singlePropertyAreas.length > 0 ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div className="flex flex-col">
               {singlePropertyAreas.map((area) => (
                 <AreaCard key={area.id} area={area} />
               ))}
@@ -729,16 +715,9 @@ export function Home() {
             </p>
           )
         ) : properties && properties.length > 0 ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div className="flex flex-col">
             {properties.map((property, idx) => (
-              <div
-                key={property.id}
-                className={cn(
-                  property.id === maxItemPropertyId && 'border-l-[3px] border-l-[var(--color-primary)] rounded-l-sm',
-                )}
-              >
-                <PropertyCard property={property} index={idx} />
-              </div>
+              <PropertyCard key={property.id} property={property} index={idx} />
             ))}
           </div>
         ) : null}

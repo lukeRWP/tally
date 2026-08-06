@@ -6,8 +6,9 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { LabelPrintDialog } from '@/components/labels/label-print-dialog';
-import { Badge } from '@/components/ui/badge';
 import { Card } from '@/components/ui/card';
+import { TitleBar } from '@/components/ui/title-bar';
+// (Badge import removed — it was dead; item-detail renders no <Badge>.)
 import { Skeleton } from '@/components/ui/skeleton';
 import { useItem, useDeleteItem, useUpdateItem } from '@/hooks/use-inventory';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
@@ -85,7 +86,7 @@ function CollapsibleSection({
         className="flex items-center w-full gap-2 text-left cursor-pointer"
       >
         {icon}
-        <h2 className="text-sm font-semibold text-[var(--color-text)] flex-1">{title}</h2>
+        <h2 className="font-mono text-[11px] uppercase tracking-[0.1em] font-semibold text-[var(--color-text)] flex-1">{title}</h2>
         {open ? (
           <ChevronDown className="w-4 h-4 text-[var(--color-text-muted)] transition-transform duration-200" />
         ) : (
@@ -270,12 +271,12 @@ export function ItemDetail() {
       {/* Breadcrumbs */}
       <Breadcrumbs items={breadcrumbItems} />
 
-      {/* Hero Section */}
-      <div className="animate-fade-up">
-        <h1 className="text-2xl font-extrabold text-[var(--color-text)] tracking-tight">{item.name}</h1>
+      {/* Hero Section — inverted title bar */}
+      <div className="animate-fade-up flex flex-col gap-2">
+        <TitleBar className="w-fit max-w-full">{item.name}</TitleBar>
 
         {/* Condition indicator strip */}
-        <div className="flex items-center gap-2 mt-2 flex-wrap">
+        <div className="flex items-center gap-2 flex-wrap">
           <div className="flex items-center gap-1.5">
             <span className={cn('w-3 h-3 rounded-full shrink-0', conditionColor[item.condition] ?? 'bg-[var(--color-text-muted)]')} />
             <span className="text-xs font-medium text-[var(--color-text-secondary)] capitalize">{item.condition}</span>

@@ -2,6 +2,7 @@ import * as React from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, Search as SearchIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { ColHead } from '@/components/ui/col-head';
 import { Input } from '@/components/ui/input';
 import { ItemCard } from '@/components/inventory/item-card';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -93,7 +94,7 @@ export function SearchPage() {
         </div>
       </div>
 
-      {/* Status chips — always visible, never inside a collapsed panel */}
+      {/* Status chips — mono, uppercase, ink-bordered */}
       <div className="px-4 pt-3 flex gap-1.5">
         {STATUS_CHIPS.map((c) => (
           <button
@@ -101,10 +102,12 @@ export function SearchPage() {
             type="button"
             onClick={() => setStatus(c.value)}
             className={cn(
-              'px-3 py-1 rounded-full text-xs font-medium border transition-colors',
+              // Filter chips stay pills (the mockup's .fchip is rounded) — only
+              // badges and buttons are squared in this language.
+              'px-3 py-1.5 rounded-full font-mono text-[10px] uppercase tracking-[0.08em] border transition-colors',
               status === c.value
                 ? 'bg-[var(--color-text)] text-[var(--color-bg)] border-[var(--color-text)]'
-                : 'border-[var(--color-border)] text-[var(--color-text-secondary)] hover:bg-[var(--color-elevated)]',
+                : 'border-[var(--color-text)] text-[var(--color-text-secondary)] hover:bg-[var(--color-elevated)]',
             )}
           >
             {c.label}
@@ -112,17 +115,17 @@ export function SearchPage() {
         ))}
       </div>
 
-      <div className="flex flex-col gap-2 p-4">
+      <div className="flex flex-col px-4 pt-4 pb-4">
         {debounced === '' ? (
           <p className="text-sm text-[var(--color-text-muted)] text-center pt-10">
             Type a name — results show where each thing lives.
           </p>
         ) : isLoading ? (
-          <>
-            <Skeleton className="h-16" />
-            <Skeleton className="h-16" />
-            <Skeleton className="h-16" />
-          </>
+          <div className="flex flex-col gap-2">
+            <Skeleton className="h-14" />
+            <Skeleton className="h-14" />
+            <Skeleton className="h-14" />
+          </div>
         ) : isError ? (
           // A failed request must never masquerade as "you don't own that" —
           // on the app's #1 surface that is a lie with consequences.
@@ -136,9 +139,7 @@ export function SearchPage() {
           </div>
         ) : results && results.length > 0 ? (
           <>
-            <p className="text-xs text-[var(--color-text-muted)]">
-              {results.length} result{results.length === 1 ? '' : 's'}
-            </p>
+            <ColHead>{results.length} result{results.length === 1 ? '' : 's'}</ColHead>
             {results.map((item) => (
               <ItemCard key={item.id} item={item} />
             ))}

@@ -1,8 +1,9 @@
 import { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Plus, Printer, Tags, Trash2 } from 'lucide-react';
+import { Plus, Printer, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Card } from '@/components/ui/card';
+import { TitleBar } from '@/components/ui/title-bar';
+import { ColHead } from '@/components/ui/col-head';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Breadcrumbs } from '@/components/layout/breadcrumbs';
 import { ContainerCard } from '@/components/inventory/container-card';
@@ -96,21 +97,21 @@ export function AreaDetail() {
       {/* Breadcrumbs */}
       <Breadcrumbs items={breadcrumbItems} />
 
-      {/* Header */}
-      <div>
-        <div className="flex items-center justify-between gap-2">
-          <h1 className="text-lg font-bold text-[var(--color-text)] min-w-0 truncate">{area.name}</h1>
+      {/* Header — inverted title bar, mono code, thermal actions */}
+      <div className="flex flex-col gap-2">
+        <div className="flex items-start justify-between gap-2">
+          <TitleBar className="min-w-0">{area.name}</TitleBar>
           <div className="flex items-center gap-1.5 shrink-0">
             <Button variant="outline" size="sm" onClick={() => setPrintOpen(true)}>
               <Printer className="w-4 h-4" />
-              <span className="hidden sm:inline">Print Label</span>
+              <span className="hidden sm:inline">Label</span>
             </Button>
             <Button
               variant="outline"
               size="sm"
               onClick={() => setDeleteOpen(true)}
               disabled={deleteArea.isPending}
-              className="text-[var(--color-red)] border-[var(--color-red)] hover:bg-[var(--color-red-bg)]"
+              className="text-[var(--color-red)] border-[var(--color-red)] hover:bg-[var(--color-red)] hover:text-white"
             >
               <Trash2 className="w-4 h-4" />
               <span className="hidden sm:inline">Delete</span>
@@ -119,62 +120,65 @@ export function AreaDetail() {
         </div>
         <p className="text-[11px] font-mono text-[var(--color-text-muted)]">{area.qrCode}</p>
         {area.description && (
-          <p className="text-sm text-[var(--color-text-secondary)] mt-1">{area.description}</p>
+          <p className="text-sm text-[var(--color-text-secondary)]">{area.description}</p>
         )}
       </div>
 
       {/* Tags */}
       {area.propertyId > 0 && (
-        <Card>
-          <h2 className="text-sm font-semibold text-[var(--color-text)] mb-3">Tags</h2>
+        <div className="flex flex-col gap-2">
+          <ColHead>Tags</ColHead>
           <TagPicker entityType="area" entityId={area.id} propertyId={area.propertyId} />
-        </Card>
+        </div>
       )}
 
       {/* Containers */}
-      <div className="flex items-center justify-between">
-        <h2 className="text-sm font-semibold text-[var(--color-text)]">Containers</h2>
-        <div className="flex items-center gap-1.5">
-          {containers && containers.length > 0 && (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleLabelAllBins}
-              aria-label="Label all bins"
-              title="Stage a label for every top-level bin in this area — nested bins stage from their parent bin's page"
-            >
-              <Tags className="w-4 h-4" />
-              <span className="hidden sm:inline">Label all bins</span>
+      <div className="flex flex-col">
+        <ColHead
+          action={
+            <span className="flex items-center gap-2">
+              {containers && containers.length > 0 && (
+                <button
+                  type="button"
+                  onClick={handleLabelAllBins}
+                  aria-label="Label all bins"
+                  title="Stage a label for every top-level bin in this area — nested bins stage from their parent bin's page"
+                  className="-my-1 px-1 min-h-[28px] inline-flex items-center text-[var(--color-primary)] hover:opacity-80"
+                >
+                  Label all ›
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => setCreateOpen(true)}
+                className="-my-1 px-1 min-h-[28px] inline-flex items-center text-[var(--color-primary)] hover:opacity-80"
+              >
+                + Add
+              </button>
+            </span>
+          }
+        >
+          Containers · {containers?.length ?? 0}
+        </ColHead>
+
+        {containersLoading && <Skeleton className="h-14 w-full mt-2" />}
+
+        {containers && containers.length === 0 && (
+          <div className="flex flex-col items-center gap-3 py-8">
+            <p className="font-mono text-[11px] uppercase tracking-[0.06em] text-[var(--color-text-muted)] text-center">
+              No containers yet
+            </p>
+            <Button size="sm" onClick={() => setCreateOpen(true)}>
+              <Plus className="w-4 h-4" />
+              Add Container
             </Button>
-          )}
-          <Button size="sm" onClick={() => setCreateOpen(true)}>
-            <Plus className="w-4 h-4" />
-            Add Container
-          </Button>
-        </div>
+          </div>
+        )}
+
+        {containers?.map((container) => (
+          <ContainerCard key={container.id} container={container} />
+        ))}
       </div>
-
-      {containersLoading && (
-        <div className="flex flex-col gap-2">
-          {[1, 2].map((i) => (
-            <Skeleton key={i} className="h-20 w-full" />
-          ))}
-        </div>
-      )}
-
-      {containers && containers.length === 0 && (
-        <p className="text-sm text-[var(--color-text-muted)] text-center py-8">
-          No containers yet. Add one to start organizing.
-        </p>
-      )}
-
-      {containers && containers.length > 0 && (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          {containers.map((container) => (
-            <ContainerCard key={container.id} container={container} />
-          ))}
-        </div>
-      )}
 
       <EntityForm
         open={createOpen}

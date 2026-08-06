@@ -657,7 +657,7 @@ export function Scan() {
             <Card className="flex flex-col gap-3">
               <div className="flex items-center gap-2">
                 <Package className="w-5 h-5 text-[var(--color-primary)]" />
-                <h2 className="text-base font-semibold text-[var(--color-text)]">
+                <h2 className="font-mono text-xs uppercase tracking-[0.1em] font-semibold text-[var(--color-text)]">
                   Add to Inventory
                 </h2>
               </div>
