@@ -263,6 +263,9 @@ const ItemsService = {
       `LEFT JOIN TALLY.products p ON i.PRODUCT_ID = p.ID`,
       `JOIN TALLY.containers c ON i.CONTAINER_ID = c.ID`,
       `JOIN TALLY.areas a ON c.AREA_ID = a.ID`,
+      // Location names ride along so a search result can say WHERE the thing
+      // is — the answer "Where is X?" actually needs. Same pattern getById uses.
+      `JOIN TALLY.properties pr ON a.PROPERTY_ID = pr.ID`,
       `JOIN TALLY.property_members pm ON a.PROPERTY_ID = pm.PROPERTY_ID`,
     ];
 
@@ -299,7 +302,8 @@ const ItemsService = {
     }
 
     const sql = `
-      SELECT DISTINCT i.*, p.NAME AS PRODUCT_NAME, p.BRAND AS PRODUCT_BRAND
+      SELECT DISTINCT i.*, p.NAME AS PRODUCT_NAME, p.BRAND AS PRODUCT_BRAND,
+             c.NAME AS CONTAINER_NAME, a.NAME AS AREA_NAME, pr.NAME AS PROPERTY_NAME
       FROM TALLY.items i
       ${joins.join('\n      ')}
       WHERE ${where.join('\n        AND ')}
@@ -307,7 +311,16 @@ const ItemsService = {
 
     const rows = await _db.query(sql, params);
 
-    return rows.map(ItemsService._mapItem);
+    return rows.map(row => {
+      const item = ItemsService._mapItem(row);
+      // Presentation stays client-side; the server just names the places.
+      item.location = {
+        property: row.PROPERTY_NAME || null,
+        area: row.AREA_NAME || null,
+        container: row.CONTAINER_NAME || null,
+      };
+      return item;
+    });
   },
 
   async getPropertyIdForItem(itemId) {

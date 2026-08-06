@@ -9,8 +9,10 @@ import { LabelPrintDialog } from '@/components/labels/label-print-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Card } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
-import { useItem, useDeleteItem } from '@/hooks/use-inventory';
+import { useItem, useDeleteItem, useUpdateItem } from '@/hooks/use-inventory';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
+import { EntityForm } from '@/components/inventory/entity-form';
+import { MoveItemDialog } from '@/components/inventory/move-item-dialog';
 import { ErrorState } from '@/components/ui/error-state';
 import { toast } from '@/components/ui/toast';
 import { Breadcrumbs } from '@/components/layout/breadcrumbs';
@@ -193,6 +195,9 @@ export function ItemDetail() {
     setDeleteOpen(false);
   }
 
+  const updateItem = useUpdateItem();
+  const [editOpen, setEditOpen] = React.useState(false);
+  const [moveOpen, setMoveOpen] = React.useState(false);
   const [conditionFormOpen, setConditionFormOpen] = React.useState(false);
   const [printOpen, setPrintOpen] = React.useState(false);
   const [dateFormOpen, setDateFormOpen] = React.useState(false);
@@ -294,11 +299,11 @@ export function ItemDetail() {
 
       {/* Primary Action Row */}
       <div className="flex gap-2 animate-fade-up" style={{ animationDelay: '50ms' }}>
-        <Button variant="outline" size="sm" className="flex-1 text-xs" onClick={() => toast('Edit coming soon')}>
+        <Button variant="outline" size="sm" className="flex-1 text-xs" onClick={() => setEditOpen(true)}>
           <Pencil className="w-3.5 h-3.5" />
           Edit
         </Button>
-        <Button variant="outline" size="sm" className="flex-1 text-xs" onClick={() => toast('Move coming soon')}>
+        <Button variant="outline" size="sm" className="flex-1 text-xs" onClick={() => setMoveOpen(true)}>
           <ArrowRightLeft className="w-3.5 h-3.5" />
           Move
         </Button>
@@ -557,6 +562,41 @@ export function ItemDetail() {
         onOpenChange={setPrintOpen}
         propertyId={propertyId > 0 ? propertyId : undefined}
       />
+      {editOpen && (
+        <EntityForm
+          open
+          onOpenChange={(o) => { if (!o) setEditOpen(false); }}
+          type="item"
+          defaultValues={{
+            name: item.name,
+            description: item.description ?? '',
+            quantity: item.quantity,
+            purchasePrice: item.purchasePrice ?? '',
+            condition: item.condition,
+          }}
+          isPending={updateItem.isPending}
+          onSubmit={async (data) => {
+            try {
+              await updateItem.mutateAsync({ id, ...data });
+              toast('Item updated');
+            } catch (err) {
+              toast(err instanceof Error ? err.message : 'Could not update the item');
+              throw err; // keep the form open with the user's input
+            }
+          }}
+        />
+      )}
+
+      <MoveItemDialog
+        open={moveOpen}
+        onOpenChange={setMoveOpen}
+        itemId={id}
+        itemName={item.name}
+        defaultPropertyId={propertyId || undefined}
+        currentContainerId={containerId}
+        onMoved={() => refetch()}
+      />
+
       <ShareDialog
         entityType="item"
         entityId={item.id}

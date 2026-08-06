@@ -83,6 +83,10 @@ const CONDITIONS: Array<{ label: string; value: string | null }> = [
 ];
 
 const STATUSES: Array<{ label: string; value: string }> = [
+  // 'All' first and default: the thing you most need to FIND is often exactly
+  // the thing that is lent out — hiding those by default made search return
+  // zero results for the very item you were hunting.
+  { label: 'All', value: 'all' },
   { label: 'Active', value: 'active' },
   { label: 'Removed', value: 'removed' },
   { label: 'Lent', value: 'lent' },
@@ -175,7 +179,7 @@ export function Home() {
   // Filter state
   const [selectedTagIds, setSelectedTagIds] = React.useState<number[]>([]);
   const [selectedCondition, setSelectedCondition] = React.useState<string | null>(null);
-  const [selectedStatus, setSelectedStatus] = React.useState<string>('active');
+  const [selectedStatus, setSelectedStatus] = React.useState<string>('all');
 
   // Filter panel visibility (collapsible on mobile)
   const [filtersOpen, setFiltersOpen] = React.useState(false);
@@ -196,7 +200,7 @@ export function Home() {
   const filters: SearchFilters = {
     tagIds: selectedTagIds.length > 0 ? selectedTagIds : undefined,
     condition: selectedCondition ?? undefined,
-    status: selectedStatus,
+    status: selectedStatus === 'all' ? undefined : selectedStatus,
   };
 
   const { data: searchResults } = useSearchItems(searchQuery, filters);
@@ -237,7 +241,7 @@ export function Home() {
 
   const selectedTags = allTags.filter((t) => selectedTagIds.includes(t.id));
   const hasActiveFilters =
-    selectedTagIds.length > 0 || selectedCondition !== null || selectedStatus !== 'active';
+    selectedTagIds.length > 0 || selectedCondition !== null || selectedStatus !== 'all';
 
   // Compute stats from properties
   const totalItems = properties?.reduce((sum, p) => sum + p.itemCount, 0) ?? 0;
@@ -317,7 +321,7 @@ export function Home() {
             <span className="text-[10px] font-semibold leading-none">
               {(selectedTagIds.length > 0 ? 1 : 0) +
                 (selectedCondition !== null ? 1 : 0) +
-                (selectedStatus !== 'active' ? 1 : 0)}
+                (selectedStatus !== 'all' ? 1 : 0)}
             </span>
           )}
         </button>

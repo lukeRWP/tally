@@ -173,6 +173,15 @@ export function Scan() {
   }, []);
 
   const handleBarcodeScanned = useCallback(async (code: string) => {
+    // A tally QR is not a product barcode. Scanning the label on one of our
+    // own bins used to fall through to the product lookup and dead-end at
+    // "No product found" — the only working path was leaving the app for the
+    // OS camera. Route TLY codes through the existing resolver instead, which
+    // lands on the entity (a container opens straight onto its contents).
+    if (TLY_CODE_REGEX.test(code)) {
+      navigate(`/s/${code}`);
+      return;
+    }
     setState('looking_up');
     setCurrentBarcode(code);
 
@@ -200,7 +209,7 @@ export function Scan() {
       setState('not_found');
       setLookupResult({ source: 'not_found', product: { barcode: code } });
     }
-  }, []);
+  }, [navigate]);
 
   const handleAddToInventory = useCallback((product: Record<string, unknown>) => {
     setSelectedProduct(product);
