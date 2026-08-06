@@ -2,6 +2,8 @@ import * as React from 'react';
 import { Link } from 'react-router-dom';
 import { Printer as PrinterIcon, Trash2, RotateCw, Send, X, Inbox } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { ColHead } from '@/components/ui/col-head';
 import { Card } from '@/components/ui/card';
 import { TitleBar } from '@/components/ui/title-bar';
 import { toast } from '@/components/ui/toast';
@@ -182,16 +184,13 @@ export function PrintQueuePage() {
           <div className="flex flex-col gap-3">
             <div className="flex items-center gap-2">
               <PrinterIcon className="w-4 h-4" />
-              <span className="text-sm font-medium">{printer.name}</span>
-              <span className={`text-[10px] px-2 py-0.5 rounded-full ${
-                problem ? 'bg-[var(--color-red-bg)] text-[var(--color-red)]'
-                : online ? 'bg-[var(--color-green-bg)] text-[var(--color-green)]'
-                : 'bg-[var(--color-elevated)] text-[var(--color-text-muted)]'}`}>
+              <span className="text-sm font-semibold">{printer.name}</span>
+              <Badge variant={problem ? 'danger' : online ? 'success' : 'default'}>
                 {problem ?? (online ? 'Online' : 'Offline')}
-              </span>
+              </Badge>
             </div>
             <div>
-              <p className="text-xs text-[var(--color-text-muted)] mb-1.5">Loaded roll</p>
+              <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-[var(--color-text-muted)] mb-1.5">Loaded roll</p>
               <div className="flex gap-2">
                 {ROLLS.map((r) => (
                   <Button key={r.value} size="sm"
@@ -214,8 +213,8 @@ export function PrintQueuePage() {
       {/* ── Staging area ────────────────────────────────────────────── */}
       <div>
         <div className="flex items-center gap-2 mb-2">
-          <h2 className="text-sm font-semibold text-[var(--color-text)]">
-            Ready to print{staged.length > 0 && ` (${staged.length})`}
+          <h2 className="font-mono text-[11px] uppercase tracking-[0.1em] font-semibold text-[var(--color-text)]">
+            Ready to print{staged.length > 0 && ` · ${staged.length}`}
           </h2>
           {staged.length > 0 && (
             <div className="ml-auto flex items-center gap-1.5">
@@ -246,7 +245,7 @@ export function PrintQueuePage() {
                 one preset; switching fifty rows one-by-one defeats the point. */}
             {staged.length > 1 && (
               <div className="flex items-center gap-1.5 pb-1">
-                <p className="text-xs text-[var(--color-text-muted)]">Set all to</p>
+                <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-[var(--color-text-muted)]">Set all to</p>
                 {ROLLS.map((r) => {
                   // Mirror the per-row rule: a manifest is meaningless for an
                   // item, so an all-item queue never offers 4×6 at all, and a
@@ -310,7 +309,7 @@ export function PrintQueuePage() {
 
       {/* ── Live queue ──────────────────────────────────────────────── */}
       <div>
-        <h2 className="text-sm font-semibold text-[var(--color-text)] mb-2">
+        <h2 className="font-mono text-[11px] uppercase tracking-[0.1em] font-semibold text-[var(--color-text)] mb-2">
           In the queue{live.length > 0 && ` (${live.length})`}
         </h2>
         {live.length === 0 ? (
@@ -339,7 +338,7 @@ export function PrintQueuePage() {
       {/* ── History ─────────────────────────────────────────────────── */}
       {recent.length > 0 && (
         <div>
-          <h2 className="text-sm font-semibold text-[var(--color-text)] mb-2">Recent</h2>
+          <h2 className="font-mono text-[11px] uppercase tracking-[0.1em] font-semibold text-[var(--color-text)] mb-2">Recent</h2>
           <div className="flex flex-col gap-1.5">
             {recent.map((j) => (
               <Card key={j.id} className="p-2.5 flex flex-col gap-1 text-xs">
