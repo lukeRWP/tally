@@ -48,6 +48,8 @@ export interface Item {
   status: 'active' | 'removed' | 'lent';
   createdAt: string;
   breadcrumb?: BreadcrumbItem[];
+  /** Present on search results: where the item lives, for the result card. */
+  location?: { property: string | null; area: string | null; container: string | null };
   // Product data (flat fields from API, joined from products table)
   productName?: string | null;
   productBrand?: string | null;
