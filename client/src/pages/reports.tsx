@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
+import { TitleBar } from '@/components/ui/title-bar';
 import { useProperties } from '@/hooks/use-inventory';
 import { usePropertyTags } from '@/hooks/use-tags';
 import { useGenerateReport } from '@/hooks/use-reports';
@@ -277,7 +278,7 @@ export function Reports() {
 
   return (
     <div className="flex flex-col gap-4">
-      <h1 className="text-2xl font-extrabold text-[var(--color-text)] tracking-tight animate-fade-up">Reports</h1>
+      <h1 className="animate-fade-up"><TitleBar>Reports</TitleBar></h1>
 
       {/* Property selector -- pill style */}
       <div className="animate-fade-up" style={{ animationDelay: '50ms' }}>

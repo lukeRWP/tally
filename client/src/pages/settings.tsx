@@ -3,6 +3,7 @@ import { LogOut, Sun, Moon, Monitor, Trash2, Link2, Copy, Tags, ChevronRight, Ch
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
+import { TitleBar } from '@/components/ui/title-bar';
 import { useAuthStore } from '@/store/auth-store';
 import { useProperties } from '@/hooks/use-inventory';
 import { TagManager } from '@/components/tags/tag-manager';
@@ -163,7 +164,7 @@ export function SettingsPage() {
 
   return (
     <div className="flex flex-col gap-4">
-      <h1 className="text-2xl font-extrabold text-[var(--color-text)] tracking-tight animate-fade-up">Settings</h1>
+      <h1 className="animate-fade-up"><TitleBar>Settings</TitleBar></h1>
 
       {/* Desktop: 2-column layout / Mobile: single column */}
       <div className="lg:grid lg:grid-cols-2 lg:gap-6">
