@@ -377,3 +377,45 @@ test('banner fit: tracking tightens before size shrinks, and never wraps', () =>
   assert.deepEqual([short.shown, short.size, short.tr], ['GARAGE', 20, 6]);
   doc.end();
 });
+
+test('single-line fields clamp instead of wrapping (pdfkit ignores lineBreak:false)', () => {
+  // pdfkit runs its line breaker whenever `width` is set — `lineBreak: false`
+  // is NOT honoured, and `ellipsis` only engages once a `height` is present.
+  // Without the clamp a 14-char TLY code (67.2pt) overflowed the 2x1 label's
+  // 66pt code field and split across two lines on the printed label.
+  const PDFDocument = require('pdfkit');
+  const doc = new PDFDocument({ size: [144, 72], margin: 0 });
+  doc.fontSize(8).font('Courier');
+  const lineH = doc.currentLineHeight();
+  const code = 'TLY-C-7BDFD878';
+  assert.ok(doc.widthOfString(code) > 66, 'this code really is wider than the field');
+
+  // Measure what RENDERING actually consumes: heightOfString ignores the
+  // height option, so only the doc.y delta reveals the wrap.
+  const consumed = (opts) => { const y0 = 20; doc.text(code, 6, y0, opts); return doc.y - y0; };
+  const wrapped = consumed({ width: 66, lineBreak: false, ellipsis: true });
+  const clamped = consumed({ width: 66, height: lineH, lineBreak: false, ellipsis: true });
+  assert.ok(wrapped > lineH * 1.5, 'without height it wraps (the bug)');
+  assert.ok(clamped < lineH * 1.5, 'with a height clamp it stays on one line');
+  doc.end();
+});
+
+test('every width-constrained single-line field carries a height clamp', () => {
+  // Guardrail for the whole renderer: any .text() that sets `width` and asks
+  // for lineBreak:false must also set `height`, or it silently wraps.
+  const fs = require('fs');
+  const src = fs.readFileSync(require.resolve('../src/modules/labels/labels.service'), 'utf8');
+  const offenders = [];
+  for (const m of src.matchAll(/\.text\(/g)) {
+    let depth = 0, i = m.index + m[0].length - 1;
+    for (; i < src.length; i++) {
+      if (src[i] === '(') depth++;
+      else if (src[i] === ')' && --depth === 0) break;
+    }
+    const call = src.slice(m.index, i + 1);
+    if (call.includes('lineBreak: false') && call.includes('width:') && !/height:/.test(call)) {
+      offenders.push(src.slice(0, m.index).split('\n').length);
+    }
+  }
+  assert.deepEqual(offenders, [], `these .text() calls can wrap; add a height clamp (lines: ${offenders})`);
+});
