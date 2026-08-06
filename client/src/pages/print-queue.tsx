@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { Printer as PrinterIcon, Trash2, RotateCw, Send, X, Inbox } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
+import { TitleBar } from '@/components/ui/title-bar';
 import { toast } from '@/components/ui/toast';
 import { useProperties } from '@/hooks/use-inventory';
 import {
@@ -154,7 +155,7 @@ export function PrintQueuePage() {
 
   return (
     <div className="flex flex-col gap-4 p-4 pb-24">
-      <h1 className="text-lg font-semibold text-[var(--color-text)]">Print</h1>
+      <h1><TitleBar>Print</TitleBar></h1>
 
       {/* ── Printer ─────────────────────────────────────────────────── */}
       <Card className="p-3">

@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { toast } from '@/components/ui/toast';
 import { NotificationList } from '@/components/notifications/notification-list';
+import { TitleBar } from '@/components/ui/title-bar';
 import { useActiveLoans, useReturnItem } from '@/hooks/use-lending';
 import { daysOverdue, formatDueDate } from '@/lib/dates';
 
@@ -86,6 +87,7 @@ function OnLoanSection() {
 export function NotificationListPage() {
   return (
     <div className="flex flex-col gap-4 p-4">
+      <h1 className="max-w-2xl mx-auto w-full"><TitleBar>Alerts</TitleBar></h1>
       <OnLoanSection />
       <NotificationList />
     </div>
