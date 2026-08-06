@@ -80,3 +80,16 @@ test('return reactivates the item only when no other open lending remains', asyn
   assert.ok(result && result.id === 9);
   assert.equal(activated, true);
 });
+
+test('getActive lists every unreturned loan, membership-scoped, soonest due first', async () => {
+  const Lending = require('../src/modules/lending/lending.service');
+  let sql = '', params = null;
+  Lending.init({ db: { query: async (s, p) => { sql = s; params = p; return []; } },
+                 logger: { warn() {}, info() {}, error() {} } });
+  await Lending.getActive(42);
+  assert.match(sql, /RETURNED_AT IS NULL/, 'only loans still out');
+  assert.ok(!/DUE_AT < NOW\(\)/.test(sql), 'not restricted to overdue');
+  assert.match(sql, /pm\.USER_ID = \?/, 'membership-scoped');
+  assert.match(sql, /ORDER BY il\.DUE_AT IS NULL, il\.DUE_AT/, 'soonest due first, undated last');
+  assert.deepEqual(params, [42]);
+});
