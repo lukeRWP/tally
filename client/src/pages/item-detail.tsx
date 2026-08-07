@@ -1,12 +1,11 @@
 import * as React from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
-  Pencil, ArrowRightLeft, Trash2, Plus, Printer, Link, CalendarPlus, HandCoins, Share2,
-  ChevronRight, ChevronDown, MoreHorizontal, Upload, Camera, X,
+  Pencil, ArrowRightLeft, Trash2, Printer, HandCoins, Share2,
+  MoreHorizontal, X,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { LabelPrintDialog } from '@/components/labels/label-print-dialog';
-import { Card } from '@/components/ui/card';
 import { TitleBar } from '@/components/ui/title-bar';
 import { ColHead } from '@/components/ui/col-head';
 import { Badge } from '@/components/ui/badge';
@@ -37,7 +36,7 @@ import { useItemFiles, useUploadFile, useConditionHistory } from '@/hooks/use-fi
 import { useAccessories } from '@/hooks/use-accessories';
 import { useLendingHistory } from '@/hooks/use-lending';
 import { ShareDialog } from '@/components/sharing/share-dialog';
-import { safeExternalUrl } from '@/lib/utils';
+import { safeExternalUrl, cn } from '@/lib/utils';
 
 function computeDepreciation(
   purchasePrice: number,
@@ -57,48 +56,6 @@ function computeDepreciation(
 }
 
 // -- Collapsible Section -------------------------------------------------------
-
-function CollapsibleSection({
-  title,
-  icon,
-  defaultOpen,
-  action,
-  children,
-  animationDelay,
-}: {
-  title: string;
-  icon?: React.ReactNode;
-  defaultOpen: boolean;
-  action?: React.ReactNode;
-  children: React.ReactNode;
-  animationDelay?: string;
-}) {
-  const [open, setOpen] = React.useState(defaultOpen);
-
-  return (
-    <Card animationDelay={animationDelay}>
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="flex items-center w-full gap-2 text-left cursor-pointer"
-      >
-        {icon}
-        <h2 className="font-mono text-[11px] uppercase tracking-[0.1em] font-semibold text-[var(--color-text)] flex-1">{title}</h2>
-        {open ? (
-          <ChevronDown className="w-4 h-4 text-[var(--color-text-muted)] transition-transform duration-200" />
-        ) : (
-          <ChevronRight className="w-4 h-4 text-[var(--color-text-muted)] transition-transform duration-200" />
-        )}
-      </button>
-      {open && (
-        <div className="mt-3 animate-fade-up">
-          {action && <div className="flex justify-end mb-2">{action}</div>}
-          {children}
-        </div>
-      )}
-    </Card>
-  );
-}
 
 // -- Overflow menu --------------------------------------------------------------
 
@@ -173,7 +130,45 @@ function OverflowMenu({
  * writes to the change log, so this is a read of truth the app was recording
  * and never showing.
  */
-function ItemHistory({ itemId }: { itemId: number }) {
+/** "created" is a database word. The mockup writes "Added to Tote". */
+const HISTORY_VERB: Record<string, string> = {
+  created: 'Added',
+  updated: 'Edited',
+  moved: 'Moved',
+  deleted: 'Deleted',
+  restored: 'Restored',
+  lent: 'Lent',
+  returned: 'Returned',
+};
+
+function describeEntry(
+  e: { action: string; changes?: Record<string, unknown> },
+  containerId?: number,
+  containerName?: string | null,
+): string {
+  const verb = HISTORY_VERB[e.action] ?? e.action;
+  // Only name the destination when the entry's container is still where the
+  // item lives — otherwise the row would assert a location that later changed.
+  const to = e.changes?.containerId;
+  if ((e.action === 'created' || e.action === 'moved') && containerName && to === containerId) {
+    return `${verb} to ${containerName}`;
+  }
+  if (e.action === 'updated' && e.changes) {
+    const fields = Object.keys(e.changes);
+    if (fields.length === 1) return `${verb} ${fields[0]}`;
+  }
+  return verb;
+}
+
+function ItemHistory({
+  itemId,
+  containerId,
+  containerName,
+}: {
+  itemId: number;
+  containerId?: number;
+  containerName?: string | null;
+}) {
   const { data: entries } = useEntityHistory('item', itemId);
   const [all, setAll] = React.useState(false);
   const list = entries ?? [];
@@ -198,7 +193,7 @@ function ItemHistory({ itemId }: { itemId: number }) {
               {new Date(e.createdAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
             </span>
             <span className="text-sm flex-1 min-w-0">
-              <span className="capitalize">{e.action}</span>
+              <span>{describeEntry(e, containerId, containerName)}</span>
               {e.displayName ? (
                 <span className="text-[var(--color-text-muted)]"> · {e.displayName}</span>
               ) : null}
@@ -210,16 +205,61 @@ function ItemHistory({ itemId }: { itemId: number }) {
   );
 }
 
-/** A dashed invitation to add one missing fact. */
-function AddChip({ label, onClick }: { label: string; onClick: () => void }) {
+/**
+ * One line of the ledger: a label, and either the fact or an invitation to
+ * supply it. Keeping absent facts VISIBLE is the whole idea of this design —
+ * the page is a list of what it knows and what it could know, on one rule.
+ */
+function LedgerRow({
+  label,
+  value,
+  onAdd,
+  onEdit,
+  wrap,
+}: {
+  label: string;
+  value?: React.ReactNode;
+  onAdd?: () => void;
+  onEdit?: () => void;
+  /** Let the value wrap instead of ellipsing — for prose like a description. */
+  wrap?: boolean;
+}) {
+  const filled = value !== null && value !== undefined && value !== '';
+  // min-h on the ROW, not on the button — otherwise an empty row stands taller
+  // than a filled one and the rule stops being even.
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="font-mono text-[10px] uppercase tracking-[0.06em] border border-dashed border-[var(--color-text-muted)] text-[var(--color-text-muted)] rounded-full px-3 min-h-[28px] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)]"
-    >
-      + {label}
-    </button>
+    <div className="flex items-center gap-3 min-h-[44px] border-b border-[var(--color-rule)] last:border-b-0">
+      {/* The label is user-controlled for dates, so it must be able to give way
+          — otherwise a long type name pushes the fact itself off the row. */}
+      <span className="font-mono text-[10px] uppercase tracking-[0.1em] text-[var(--color-text-muted)] shrink-0 max-w-[45%] truncate">
+        {label}
+      </span>
+      <span className="flex-1" />
+      {filled ? (
+        <button
+          type="button"
+          onClick={onEdit}
+          disabled={!onEdit}
+          aria-label={onEdit ? `Edit ${label}` : undefined}
+          className={cn(
+            'text-sm font-semibold text-right min-w-0 disabled:cursor-default',
+            wrap ? 'whitespace-normal py-2' : 'truncate',
+          )}
+        >
+          {value}
+        </button>
+      ) : (
+        // Full-height hit area without changing the row's height.
+        <button
+          type="button"
+          onClick={onAdd}
+          aria-label={`Add ${label}`}
+          className="self-stretch flex items-center font-mono text-[10px] uppercase tracking-[0.06em] text-[var(--color-primary)] px-1"
+        >
+          + add
+        </button>
+      )}
+    </div>
   );
 }
 
@@ -293,9 +333,14 @@ export function ItemDetail() {
   // the other is a picture of something like it.
   const photo = item?.photoUrl || item?.productImageUrl || null;
 
+  const photoCount = (itemFiles ?? []).filter((f) => f.fileType === 'photo').length;
+  // The loan the "Lent to" row names — there is at most one open at a time.
+  const openLoan = (lendingHistory ?? []).find((l) => !l.returnedAt);
+
   const hasConditions = (conditions?.length ?? 0) > 0;
-  const hasFiles = (itemFiles?.length ?? 0) > 0;
-  const hasDates = (itemDates?.length ?? 0) > 0;
+  // Any file at all: FileList carries the ONLY open/delete controls for files,
+  // photos included, so gating it on non-photo files stranded them.
+  const hasFilesAny = (itemFiles ?? []).length > 0;
   const hasAccessories = (accessories?.length ?? 0) > 0;
   const hasLending = (lendingHistory?.length ?? 0) > 0;
 
@@ -349,73 +394,36 @@ export function ItemDetail() {
       {/* Breadcrumbs */}
       <Breadcrumbs items={breadcrumbItems} />
 
-      {/* Identity — the photo you took, the facts on one line, the code.
-          Capture leads with a photograph, so the item's own page has to show
-          it; it used to appear only as a filename buried in Files, while the
-          top of the page showed nothing at all. */}
+      {/* Identity: name, then the three stamps that identify it — code,
+          condition, state. The ledger below carries everything else. */}
       <div className="animate-fade-up flex flex-col gap-2">
         <TitleBar className="w-fit max-w-full">{item.name}</TitleBar>
-
-        <div className="flex items-start gap-3">
-          {photo ? (
-            <button
-              type="button"
-              onClick={() => setPhotoOpen(true)}
-              className="shrink-0 w-16 h-16 rounded-[var(--radius-sm)] overflow-hidden border border-[var(--color-rule)]"
-            >
-              <img src={photo} alt={item.name} className="w-full h-full object-cover" />
-            </button>
-          ) : (
-            <button
-              type="button"
-              onClick={() => photoInput.current?.click()}
-              aria-label="Add a photo"
-              className="shrink-0 w-16 h-16 rounded-[var(--radius-sm)] border border-dashed border-[var(--color-text-muted)] flex items-center justify-center text-[var(--color-text-muted)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)]"
-            >
-              <Camera className="w-5 h-5" />
-            </button>
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="font-mono text-[11px] text-[var(--color-text-muted)]">{item.qrCode}</span>
+          {item.condition && (
+            <Badge>{item.condition.charAt(0).toUpperCase() + item.condition.slice(1)}</Badge>
           )}
-
-          <div className="min-w-0 flex-1 flex flex-col gap-1">
-            {/* Facts on ONE line. Most items are "a thing in a bin" — quantity,
-                condition and value said once, in order, beat four labelled cards. */}
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-sm font-semibold text-[var(--color-text)]">
-                {[
-                  item.quantity > 1 ? `${item.quantity}` : null,
-                  item.condition ? item.condition.charAt(0).toUpperCase() + item.condition.slice(1) : null,
-                  item.purchasePrice != null ? `$${item.purchasePrice.toFixed(2)}` : null,
-                ].filter(Boolean).join(' · ')}
-              </span>
-              {item.status !== 'active' && <Badge variant="info">{item.status}</Badge>}
-              <span className="font-mono text-[11px] text-[var(--color-text-muted)]">{item.qrCode}</span>
-            </div>
-
-            {item.description && (
-              <p className="text-sm text-[var(--color-text-secondary)]">{item.description}</p>
-            )}
-
-            {propertyId > 0 && (
-              <TagPicker entityType="item" entityId={item.id} propertyId={propertyId} />
-            )}
-          </div>
+          {/* 'active' is the unremarkable case, so it gets the plain ink stamp;
+              only the states worth noticing take a colour. */}
+          <Badge variant={item.status === 'lent' ? 'warning' : item.status === 'active' ? 'default' : 'danger'}>
+            {item.status}
+          </Badge>
         </div>
       </div>
 
-      {/* Actions. Lend leads: it is the one thing you do TO an item that the
-          app can't infer, and it used to be buried inside a collapsed card. */}
+      {/* Actions, in the mockup's order. */}
       <div className="flex gap-2 animate-fade-up" style={{ animationDelay: '50ms' }}>
-        <Button size="sm" className="flex-1 text-xs" onClick={() => setLendFormOpen(true)}>
-          <HandCoins className="w-3.5 h-3.5" />
-          {item.status === 'lent' ? 'Return' : 'Lend'}
+        <Button variant="outline" size="sm" className="flex-1 text-xs" onClick={() => setEditOpen(true)}>
+          <Pencil className="w-3.5 h-3.5" />
+          Edit
         </Button>
         <Button
           variant="outline"
           size="sm"
           className="flex-1 text-xs"
           onClick={() => {
-            // Flow A: Move picks the item UP. The carry banner then follows you
-            // anywhere, and any container label you scan puts it down.
+            // Move picks the item UP; the carry banner follows you and any
+            // container label you scan puts it down.
             pickUp([{
               id: item.id,
               name: item.name,
@@ -430,9 +438,9 @@ export function ItemDetail() {
           <ArrowRightLeft className="w-3.5 h-3.5" />
           Move
         </Button>
-        <Button variant="outline" size="sm" className="flex-1 text-xs" onClick={() => setEditOpen(true)}>
-          <Pencil className="w-3.5 h-3.5" />
-          Edit
+        <Button variant="outline" size="sm" className="flex-1 text-xs" onClick={() => setLendFormOpen(true)}>
+          <HandCoins className="w-3.5 h-3.5" />
+          {item.status === 'lent' ? 'Return' : 'Lend'}
         </Button>
         <OverflowMenu
           onShare={() => setShareOpen(true)}
@@ -441,272 +449,176 @@ export function ItemDetail() {
         />
       </div>
 
-      {/* What this item could still tell us. Creation captures almost nothing
-          on purpose, so the gaps must read as invitations rather than
-          emptiness — each chip opens the thing that fills it, and a chip
-          disappears once its fact exists. */}
-      {(!photo || item.purchasePrice == null || !item.description || !hasDates || !hasFiles || !hasConditions) && (
-        <div className="flex flex-col gap-1.5 animate-fade-up" style={{ animationDelay: '80ms' }}>
-          <ColHead>Add what you know</ColHead>
-          <div className="flex flex-wrap gap-1.5">
-            {!photo && <AddChip label="photo" onClick={() => photoInput.current?.click()} />}
-            {item.purchasePrice == null && <AddChip label="value" onClick={() => setEditOpen(true)} />}
-            {!item.description && <AddChip label="description" onClick={() => setEditOpen(true)} />}
-            {!hasDates && <AddChip label="warranty" onClick={() => setDateFormOpen(true)} />}
-            {!hasFiles && <AddChip label="receipt" onClick={() => photoInput.current?.click()} />}
-            {!hasConditions && <AddChip label="condition" onClick={() => setConditionFormOpen(true)} />}
+      {/* THE LEDGER. Every fact on one rule, present or not. An absent fact
+          keeps its row and ends in "+ add", so the page states what it could
+          still know instead of hiding it behind an empty card. */}
+      <div className="flex flex-col animate-fade-up" style={{ animationDelay: '80ms' }}>
+        <ColHead action="Edit" onAction={() => setEditOpen(true)}>Details</ColHead>
+
+        {/* 0 is a real answer ("none left"), not a missing one — and QUANTITY
+            is NOT NULL in the schema, so this row is never an invitation. */}
+        <LedgerRow label="Quantity" value={item.quantity} onEdit={() => setEditOpen(true)} />
+
+        <LedgerRow
+          label="Condition"
+          value={item.condition ? item.condition.charAt(0).toUpperCase() + item.condition.slice(1) : null}
+          onEdit={() => setConditionFormOpen(true)}
+          onAdd={() => setConditionFormOpen(true)}
+        />
+
+        <LedgerRow
+          label="Value"
+          value={item.purchasePrice != null ? `$${item.purchasePrice.toFixed(2)}` : null}
+          onEdit={() => setEditOpen(true)}
+          onAdd={() => setEditOpen(true)}
+        />
+
+        {/* Depreciation was only ever shown inside the Value card; as a row it
+            survives the rebuild and reads better next to what was paid. */}
+        {depreciation && (
+          <LedgerRow
+            label="Now worth"
+            value={`$${depreciation.currentValue.toFixed(2)} · ${depreciation.ratePercent}%/yr`}
+            onEdit={() => setEditOpen(true)}
+          />
+        )}
+
+        <LedgerRow label="Description" value={item.description || null} wrap
+          onEdit={() => setEditOpen(true)} onAdd={() => setEditOpen(true)} />
+
+        {/* Dates are user-named, so the row shows the soonest one and the
+            section below lists the rest when there is more than one. */}
+        <LedgerRow
+          label={itemDates?.[0]?.dateType || 'Warranty'}
+          value={itemDates?.[0] ? new Date(itemDates[0].dateValue).toLocaleDateString() : null}
+          onAdd={() => setDateFormOpen(true)}
+        />
+
+        <LedgerRow
+          label="Photos"
+          value={photo ? (
+            <span className="inline-flex items-center gap-2">
+              <img src={photo} alt="" className="w-8 h-8 rounded-[var(--radius-sm)] object-cover" />
+              {photoCount > 1 ? `${photoCount}` : ''}
+            </span>
+          ) : null}
+          onEdit={() => setPhotoOpen(true)}
+          onAdd={() => photoInput.current?.click()}
+        />
+
+        <LedgerRow
+          label="Lent to"
+          value={item.status === 'lent' ? (openLoan?.lentTo ?? 'Someone') : null}
+          onEdit={() => setLendFormOpen(true)}
+          onAdd={() => setLendFormOpen(true)}
+        />
+
+      </div>
+
+      {propertyId > 0 && (
+        <div className="flex flex-col">
+          <ColHead>Tags</ColHead>
+          <div className="py-2">
+            <TagPicker entityType="item" entityId={item.id} propertyId={propertyId} />
           </div>
         </div>
       )}
 
-      <ItemHistory itemId={id} />
+      <ItemHistory
+        itemId={id}
+        containerId={containerId}
+        containerName={breadcrumb?.filter((b) => b.type === 'container').at(-1)?.name ?? null}
+      />
 
-      {/* Desktop: 2-column layout / Mobile: single column */}
-      <div className="lg:grid lg:grid-cols-3 lg:gap-6">
-        {/* Left column (main info) */}
-        <div className="lg:col-span-2 flex flex-col gap-4">
-          {/* Product Info */}
-          {(item.productName || item.productImageUrl) && (
-            <Card animationDelay="50ms">
-              <h2 className="text-sm font-semibold text-[var(--color-text)] mb-2">Product Info</h2>
-              {item.productImageUrl && (
-                <img
-                  src={item.productImageUrl}
-                  alt={item.productName || item.name}
-                  className="w-full h-40 object-contain rounded-[var(--radius-md)] mb-3 bg-[var(--color-elevated)]"
-                />
+      {/* Below the ledger: only things that are genuinely LISTS, and only when
+          they have contents. Single column — the ledger design is one rule top
+          to bottom, so a desktop sidebar would cut that rule in half. Anything
+          with no rows is already represented in the ledger as "+ add". */}
+
+      {(item.productName || item.productImageUrl) && (
+        <div className="flex flex-col">
+          <ColHead>Product</ColHead>
+          <div className="flex items-start gap-3 py-3">
+            {item.productImageUrl && (
+              <img
+                src={item.productImageUrl}
+                alt={item.productName || item.name}
+                className="w-16 h-16 object-contain rounded-[var(--radius-sm)] bg-[var(--color-elevated)] shrink-0"
+              />
+            )}
+            <div className="min-w-0 flex-1">
+              {item.productName && <p className="text-sm font-semibold">{item.productName}</p>}
+              {item.productBrand && (
+                <p className="font-mono text-[10px] uppercase tracking-[0.06em] text-[var(--color-text-muted)]">
+                  {item.productBrand}
+                </p>
               )}
               {item.productDescription && (
-                <p className="text-xs text-[var(--color-text-secondary)] mb-3 leading-relaxed">{item.productDescription}</p>
+                <p className="text-sm text-[var(--color-text-secondary)] mt-1">{item.productDescription}</p>
               )}
-              <div className="grid grid-cols-2 gap-2 text-xs">
-                {item.productBrand && (
-                  <div>
-                    <span className="text-[var(--color-text-muted)]">Brand</span>
-                    <p className="text-[var(--color-text)] font-medium">{item.productBrand}</p>
-                  </div>
-                )}
-                {item.productCategory && (
-                  <div>
-                    <span className="text-[var(--color-text-muted)]">Category</span>
-                    <p className="text-[var(--color-text)] font-medium">{item.productCategory}</p>
-                  </div>
-                )}
-                {item.productRetailPrice != null && (
-                  <div>
-                    <span className="text-[var(--color-text-muted)]">Retail Price</span>
-                    <p className="text-[var(--color-green)] font-semibold">${item.productRetailPrice.toFixed(2)}</p>
-                  </div>
-                )}
-                {item.productBarcode && (
-                  <div>
-                    <span className="text-[var(--color-text-muted)]">Barcode</span>
-                    <p className="text-[var(--color-text)] font-mono text-[11px]">{item.productBarcode}</p>
-                  </div>
-                )}
-                {item.productDataSource && (
-                  <div>
-                    <span className="text-[var(--color-text-muted)]">Source</span>
-                    <p className="text-[var(--color-text)]">{item.productDataSource.replace(/_/g, ' ')}</p>
-                  </div>
-                )}
-              </div>
-
-              {/* Product Specs */}
-              {item.productSpecs && Object.keys(item.productSpecs).length > 0 && (
-                <div className="mt-3 pt-3 border-t border-[var(--color-border)]">
-                  <p className="text-[10px] uppercase tracking-wide text-[var(--color-text-muted)] font-medium mb-2">Specifications</p>
-                  <div className="grid grid-cols-2 gap-1.5 text-xs">
-                    {Object.entries(item.productSpecs)
-                      .filter(([, v]) => v != null && v !== '')
-                      .map(([key, value]) => (
-                        <div key={key}>
-                          <span className="text-[var(--color-text-muted)] capitalize">{key.replace(/_/g, ' ')}</span>
-                          <p className="text-[var(--color-text)]">{String(value)}</p>
-                        </div>
-                      ))}
-                  </div>
+              {(item.productRetailLinks?.length ?? 0) > 0 && (
+                <div className="flex flex-wrap gap-1.5 mt-2">
+                  {item.productRetailLinks!.slice(0, 5).map((link, i) => (
+                    <a
+                      key={i}
+                      href={safeExternalUrl(link.url)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 border border-[var(--color-rule)] rounded-[var(--radius-sm)] px-2 min-h-[28px] font-mono text-[10px] uppercase tracking-[0.06em] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)]"
+                    >
+                      <span className="truncate max-w-[110px]">{link.retailer}</span>
+                      {link.price != null && <span>${link.price.toFixed(2)}</span>}
+                    </a>
+                  ))}
                 </div>
               )}
-
-              {/* Retail Links */}
-              {item.productRetailLinks && item.productRetailLinks.length > 0 && (
-                <div className="mt-3 pt-3 border-t border-[var(--color-border)]">
-                  <p className="text-[10px] uppercase tracking-wide text-[var(--color-text-muted)] font-medium mb-2">Where to buy</p>
-                  <div className="flex flex-wrap gap-1.5">
-                    {item.productRetailLinks.slice(0, 5).map((link, i) => (
-                      <a
-                        key={i}
-                        href={safeExternalUrl(link.url)}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="flex items-center gap-1 px-2 py-1 rounded-[var(--radius-sm)] border border-[var(--color-border)] bg-[var(--color-elevated)] text-[11px] text-[var(--color-text-secondary)] hover:text-[var(--color-primary)] hover:border-[var(--color-primary)] transition-colors"
-                      >
-                        <span className="truncate max-w-[100px]">{link.retailer}</span>
-                        {link.price != null && <span className="text-[var(--color-green)]">${link.price.toFixed(2)}</span>}
-                      </a>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </Card>
-          )}
-
-          {/* Dates -- collapsible, default open if has data */}
-          {hasDates && (
-          <CollapsibleSection
-            title="Dates"
-            defaultOpen={hasDates}
-            animationDelay="200ms"
-            action={
-              <Button size="sm" variant="outline" onClick={() => setDateFormOpen(true)}>
-                <CalendarPlus className="w-3.5 h-3.5" />
-                Add Date
-              </Button>
-            }
-          >
-            <DateList itemId={id} />
-            <DateForm
-              itemId={id}
-              isOpen={dateFormOpen}
-              onOpenChange={setDateFormOpen}
-            />
-          </CollapsibleSection>
-          )}
-
-          {/* Accessories -- collapsible, default open if has data */}
-          {hasAccessories && (
-          <CollapsibleSection
-            title="Accessories"
-            defaultOpen={hasAccessories}
-            animationDelay="250ms"
-            action={
-              <Button size="sm" variant="outline" onClick={() => setAccessoryPickerOpen(true)}>
-                <Link className="w-3.5 h-3.5" />
-                Link
-              </Button>
-            }
-          >
-            <AccessoryList itemId={id} />
-            <AccessoryPicker
-              itemId={id}
-              isOpen={accessoryPickerOpen}
-              onOpenChange={setAccessoryPickerOpen}
-            />
-          </CollapsibleSection>
-          )}
-
-          {/* Lending -- collapsible, default open if has data */}
-          {hasLending && (
-          <CollapsibleSection
-            title="Lending"
-            defaultOpen={hasLending}
-            animationDelay="300ms"
-            action={
-              item.status === 'active' ? (
-                <Button size="sm" variant="outline" onClick={() => setLendFormOpen(true)}>
-                  <HandCoins className="w-3.5 h-3.5" />
-                  Lend
-                </Button>
-              ) : undefined
-            }
-          >
-            <LendingList itemId={id} itemName={item.name} />
-            <LendForm
-              itemId={id}
-              isOpen={lendFormOpen}
-              onOpenChange={setLendFormOpen}
-            />
-          </CollapsibleSection>
-          )}
-        </div>
-
-        {/* Right column (sidebar) */}
-        <div className="lg:col-span-1 flex flex-col gap-4 mt-4 lg:mt-0">
-          {/* Value — only once there IS one. Absent value is the "+ value"
-              chip above, not a card announcing that nothing is recorded. */}
-          {item.purchasePrice != null && (
-          <Card animationDelay="100ms">
-            <h2 className="text-sm font-semibold text-[var(--color-text)] mb-3">Value</h2>
-            {item.purchasePrice != null ? (
-              <div>
-                <div>
-                  <span className="text-xs text-[var(--color-text-muted)]">Purchase Price</span>
-                  <p className="text-3xl font-extrabold text-[var(--color-text)] mt-0.5 tracking-tight">
-                    <span className="text-[var(--color-text-muted)] text-xl">$</span>
-                    {item.purchasePrice.toFixed(2)}
-                  </p>
-                </div>
-                {item.currentValue != null && item.currentValue !== item.purchasePrice && (
-                  <div className="mt-3 pt-3 border-t border-[var(--color-border)]">
-                    <span className="text-xs text-[var(--color-text-muted)]">Current Value</span>
-                    <p className="text-xl font-bold text-[var(--color-primary)] mt-0.5">
-                      ${item.currentValue.toFixed(2)}
-                    </p>
-                  </div>
-                )}
-              </div>
-            ) : (
-              <p className="text-sm text-[var(--color-text-muted)]">No price recorded</p>
-            )}
-            {depreciation && (
-              <div className="mt-3 pt-3 border-t border-[var(--color-border)]">
-                <p className="text-xs text-[var(--color-text-secondary)]">
-                  Est. Value: <span className="font-semibold text-[var(--color-text)]">${depreciation.currentValue.toFixed(2)}</span>
-                  {' '}
-                  <span className="text-[var(--color-text-muted)]">
-                    ({depreciation.ratePercent}% annual, since {depreciation.sinceYear})
-                  </span>
-                </p>
-              </div>
-            )}
-          </Card>
-          )}
-
-          {/* Files — the empty dropzone duplicated the + receipt chip, so the
-              card appears only when files exist. */}
-          {hasFiles && (
-          <Card animationDelay="350ms">
-            <h2 className="text-sm font-semibold text-[var(--color-text)] mb-3">Files</h2>
-            {hasFiles ? (
-              <>
-                <FileList itemId={id} />
-                <div className="mt-3">
-                  <FileUpload itemId={id} />
-                </div>
-              </>
-            ) : (
-              <div className="border-2 border-dashed border-[var(--color-border)] rounded-lg p-6 text-center">
-                <Upload className="w-6 h-6 text-[var(--color-text-muted)] mx-auto mb-2" />
-                <p className="text-xs text-[var(--color-text-muted)] mb-3">
-                  No files attached yet
-                </p>
-                <FileUpload itemId={id} />
-              </div>
-            )}
-          </Card>
-          )}
-
-          {/* Condition History — only once something has been recorded. The
-              "+ condition" chip above is how you record the first one. */}
-          {hasConditions && (
-          <Card animationDelay="400ms">
-            <div className="flex items-center justify-between mb-3">
-              <h2 className="text-sm font-semibold text-[var(--color-text)]">Condition History</h2>
-              <Button size="sm" variant="outline" onClick={() => setConditionFormOpen(true)}>
-                <Plus className="w-3.5 h-3.5" />
-                Record
-              </Button>
             </div>
-            <ConditionTimeline itemId={id} />
-            <ConditionForm
-              itemId={id}
-              isOpen={conditionFormOpen}
-              onOpenChange={setConditionFormOpen}
-              onComplete={() => {}}
-            />
-          </Card>
-          )}
+          </div>
+        </div>
+      )}
+
+      {/* The soonest date is a ledger row; this is the rest of them. */}
+      {(itemDates?.length ?? 0) > 0 && (
+        <div className="flex flex-col">
+          <ColHead action="Add date" onAction={() => setDateFormOpen(true)}>Dates</ColHead>
+          <DateList itemId={id} />
+        </div>
+      )}
+
+      {hasAccessories && (
+        <div className="flex flex-col">
+          <ColHead action="Link" onAction={() => setAccessoryPickerOpen(true)}>Accessories</ColHead>
+          <AccessoryList itemId={id} />
+        </div>
+      )}
+
+      {/* The OPEN loan is a ledger row ("Lent to"); this is the record. */}
+      {hasLending && (
+        <div className="flex flex-col">
+          <ColHead>Lending history</ColHead>
+          <LendingList itemId={id} itemName={item.name} />
+        </div>
+      )}
+
+      {hasConditions && (
+        <div className="flex flex-col">
+          <ColHead action="Record" onAction={() => setConditionFormOpen(true)}>Condition history</ColHead>
+          <ConditionTimeline itemId={id} />
+        </div>
+      )}
+
+      {/* Photos live in the ledger row, so this is receipts, manuals, warranties. */}
+      {hasFilesAny && (
+        <div className="flex flex-col">
+          <ColHead>Files</ColHead>
+          <FileList itemId={id} />
+        </div>
+      )}
+
+      <div className="flex flex-col">
+        <ColHead>Attach</ColHead>
+        <div className="py-2">
+          <FileUpload itemId={id} />
         </div>
       </div>
 
@@ -774,6 +686,13 @@ export function ItemDetail() {
         isOpen={shareOpen}
         onOpenChange={setShareOpen}
       />
+
+      {/* Forms the ledger rows open. They used to be nested inside the section
+          cards; the ledger opens them directly from its "+ add". */}
+      <DateForm itemId={id} isOpen={dateFormOpen} onOpenChange={setDateFormOpen} />
+      <AccessoryPicker itemId={id} isOpen={accessoryPickerOpen} onOpenChange={setAccessoryPickerOpen} />
+      <LendForm itemId={id} isOpen={lendFormOpen} onOpenChange={setLendFormOpen} />
+      <ConditionForm itemId={id} isOpen={conditionFormOpen} onOpenChange={setConditionFormOpen} onComplete={() => {}} />
 
       {/* Photo capture from the page itself: the chip and the empty thumbnail
           both open this, so "add a photo" is one tap wherever you notice it. */}
