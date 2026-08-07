@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { PackageOpen, List, Undo2, X } from 'lucide-react';
-import { CameraScanner } from '@/components/scanner/camera-scanner';
+import { TagScanner } from '@/components/scanner/tag-scanner';
 import { DestinationPicker } from '@/components/inventory/destination-picker';
 import { Button } from '@/components/ui/button';
 import { ColHead } from '@/components/ui/col-head';
@@ -26,8 +26,6 @@ import { useMoveItem, useMoveContainer } from '@/hooks/use-inventory';
  * catch-all. A product barcode is not an error, it is just the wrong kind of
  * answer, and is told so.
  */
-
-const TLY_CODE_REGEX = /^TLY-[PACI]-[0-9A-Fa-f]{4,8}$/;
 
 interface ResolvedEntity {
   type: string;
@@ -85,13 +83,9 @@ export function PutDown() {
     }
   }, [putDown, navigate]);
 
+  // Only tally tags reach here — the scanner decodes nothing else — so this
+  // only has to decide whether the tag names somewhere a load can go.
   const handleCode = React.useCallback(async (code: string) => {
-    if (!TLY_CODE_REGEX.test(code)) {
-      // A product barcode is a reasonable thing to point a camera at — it is
-      // just not an answer to "where does this go".
-      toast('That is a product barcode — scan the bin or area label');
-      return;
-    }
     try {
       const entity = await api.get<ResolvedEntity>(
         `/api/labels/_x_/resolve/${encodeURIComponent(code)}`,
@@ -189,7 +183,7 @@ export function PutDown() {
 
       <ColHead>Where does it go?</ColHead>
 
-      <CameraScanner isActive={!picking} onBarcodeScanned={handleCode} onClose={() => navigate(-1)} />
+      <TagScanner isActive={!picking} onTag={handleCode} onClose={() => navigate(-1)} />
       <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-[var(--color-text-muted)] text-center">
         {busy ? 'Moving…' : 'Scan a bin or an area label'}
       </p>

@@ -8,6 +8,13 @@ interface CameraScannerProps {
   onBarcodeScanned: (code: string) => void;
   onClose: () => void;
   isActive: boolean;
+  /**
+   * Which symbologies to decode. Constraining this is not just an
+   * optimisation — a scanner that can only read one kind of code cannot
+   * mistake one job for another, and each frame is cheaper to decode.
+   * Defaults to everything for callers that genuinely take any code.
+   */
+  formats?: Html5QrcodeSupportedFormats[];
 }
 
 const SUPPORTED_FORMATS = [
@@ -20,7 +27,7 @@ const SUPPORTED_FORMATS = [
   Html5QrcodeSupportedFormats.CODE_39,
 ];
 
-export function CameraScanner({ onBarcodeScanned, onClose, isActive }: CameraScannerProps) {
+export function CameraScanner({ onBarcodeScanned, onClose, isActive, formats }: CameraScannerProps) {
   const reactId = useId();
   const scannerId = useRef(`scanner-${reactId.replace(/:/g, '')}`).current;
   const scannerRef = useRef<Html5Qrcode | null>(null);
@@ -65,7 +72,7 @@ export function CameraScanner({ onBarcodeScanned, onClose, isActive }: CameraSca
       container.replaceChildren();
 
       const scanner = new Html5Qrcode(scannerId, {
-        formatsToSupport: SUPPORTED_FORMATS,
+        formatsToSupport: formats ?? SUPPORTED_FORMATS,
         verbose: false,
       });
       scannerRef.current = scanner;
