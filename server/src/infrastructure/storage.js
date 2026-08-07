@@ -19,10 +19,12 @@ function init() {
     forcePathStyle: true, // Required for MinIO
   });
 
-  presignClient = config.storage.publicEndpoint === config.storage.endpoint
+  const publicEndpoint = normalisePublicEndpoint(config.storage.publicEndpoint);
+
+  presignClient = publicEndpoint === config.storage.endpoint
     ? s3Client
     : new S3Client({
-        endpoint: config.storage.publicEndpoint,
+        endpoint: publicEndpoint,
         region: config.storage.region,
         credentials: {
           accessKeyId: config.storage.accessKeyId,
@@ -30,6 +32,52 @@ function init() {
         },
         forcePathStyle: true,
       });
+}
+
+/**
+ * SigV4 signs the request PATH, and with forcePathStyle the SDK builds that
+ * path as /{bucket}/{key}. So any path already on the endpoint is a
+ * signature-breaking trap:
+ *
+ *   endpoint https://host/tally-files  ->  signs /tally-files/tally-files/key
+ *
+ * which S3 answers with NoSuchKey, or — if something in front rewrites the
+ * path on the way through — SignatureDoesNotMatch, an error that says nothing
+ * about the actual cause.
+ *
+ * A trailing copy of the bucket is unambiguous, so strip it. Any OTHER path is
+ * left alone (a proxy may genuinely serve S3 at a sub-path) but warned about
+ * loudly, because it only works if that proxy passes the path through byte for
+ * byte, and silence here costs hours.
+ */
+function normalisePublicEndpoint(endpoint) {
+  if (!endpoint) return endpoint;
+  let url;
+  try {
+    url = new URL(endpoint);
+  } catch {
+    logger.warn(`S3 public endpoint is not a valid URL: ${endpoint}`);
+    return endpoint;
+  }
+
+  const path = url.pathname.replace(/\/+$/, '');
+  if (path === `/${config.storage.bucket}`) {
+    url.pathname = '/';
+    const fixed = url.toString().replace(/\/$/, '');
+    logger.warn(
+      `S3 public endpoint included the bucket ("${path}") — using ${fixed} instead. ` +
+      'The SDK appends the bucket itself, so leaving it on the endpoint signs it twice.',
+    );
+    return fixed;
+  }
+
+  if (path && path !== '') {
+    logger.warn(
+      `S3 public endpoint has a path ("${path}"). SigV4 signs the path, so presigned ` +
+      'links only work if whatever serves this origin forwards the path unchanged.',
+    );
+  }
+  return endpoint.replace(/\/+$/, '');
 }
 
 async function ensureBucket() {
