@@ -1,7 +1,10 @@
 import * as React from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Camera, Check, X, Printer, Plus, MapPin, SkipForward, List, AlertTriangle } from 'lucide-react';
-import { CameraScanner } from '@/components/scanner/camera-scanner';
+import { Camera, Check, X, Printer, Plus, MapPin, SkipForward, List, AlertTriangle, Search } from 'lucide-react';
+import { ProductScanner } from '@/components/scanner/product-scanner';
+import { TagScanner } from '@/components/scanner/tag-scanner';
+import { ProductSearch } from '@/components/scanner/product-search';
+import { UrlExtractor } from '@/components/scanner/url-extractor';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ColHead } from '@/components/ui/col-head';
@@ -126,6 +129,8 @@ export function Capture() {
   const [destConfirmed, setDestConfirmed] = React.useState(false);
   const [phase, setPhase] = React.useState<Phase>('photo');
   const [picking, setPicking] = React.useState(false);
+  // Step 2 without a usable barcode: search the catalogue or paste a link.
+  const [identifying, setIdentifying] = React.useState(false);
   const [dupes, setDupes] = React.useState<Dupe[]>([]);
   const [draft, setDraft] = React.useState<Draft>({ name: '' });
   const [receipts, setReceipts] = React.useState<Receipt[]>([]);
@@ -173,6 +178,17 @@ export function Capture() {
   React.useEffect(() => {
     if (phase !== 'place') setPicking(false);
   }, [phase]);
+
+  function adoptProduct(product: Record<string, unknown>) {
+    const name = typeof product.name === 'string' ? product.name : '';
+    setDraft((d) => ({
+      ...d,
+      name: name ? tidyName(name) : d.name,
+      productId: typeof product.id === 'number' ? product.id : d.productId,
+      barcode: typeof product.barcode === 'string' && product.barcode ? product.barcode : d.barcode,
+    }));
+    setIdentifying(false);
+  }
 
   function pinDestination(d: Destination) {
     setDest(d);
@@ -444,11 +460,57 @@ export function Capture() {
       {/* ── step 2/3: the camera hunts codes ────────────────────────────── */}
       {(phase === 'identify' || phase === 'place') && (
         <div className="flex flex-col gap-2">
-          <CameraScanner isActive onBarcodeScanned={handleCode} onClose={() => navigate(-1)} />
+          {/* Step 2 reads the maker's barcode, step 3 reads tally's tag. Two
+              different questions, so two different scanners — the product one
+              cannot decode a QR, so a bin label can no longer be swallowed
+              while you are naming something, and vice versa. */}
+          {phase === 'identify' ? (
+            <ProductScanner onBarcode={handleCode} onClose={() => navigate(-1)} />
+          ) : (
+            <TagScanner isActive={!picking} onTag={handleCode} onClose={() => navigate(-1)} />
+          )}
           <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-[var(--color-text-muted)] text-center">
-            {phase === 'identify' ? 'Find the product barcode' : 'Scan the bin or area label'}
-            {' · '}either works
+            {phase === 'identify' ? 'Find the product barcode' : 'Scan the bin or area tag'}
           </p>
+
+          {/* Not everything has a scannable barcode. These answer the same
+              question as step 2 — "what is this?" — so they live here rather
+              than on a separate add screen. */}
+          {phase === 'identify' && (
+            identifying ? (
+              <div className="flex flex-col gap-2 border-2 border-[var(--color-text)] rounded-[var(--radius-sm)] p-3">
+                <div className="flex items-center justify-between">
+                  <span className="font-mono text-[10px] uppercase tracking-[0.1em] font-bold">What is it?</span>
+                  <button
+                    type="button"
+                    aria-label="Close"
+                    onClick={() => setIdentifying(false)}
+                    className="min-w-[32px] min-h-[32px] flex items-center justify-center text-[var(--color-text-muted)]"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+                <ProductSearch
+                  onProductSelected={adoptProduct}
+                  onCreateManually={() => setIdentifying(false)}
+                  onClose={() => setIdentifying(false)}
+                />
+                <UrlExtractor onProductExtracted={adoptProduct} />
+              </div>
+            ) : (
+              <Button variant="ghost" size="sm" onClick={() => setIdentifying(true)}>
+                <Search className="w-3.5 h-3.5" />
+                No barcode? Search or paste a link
+              </Button>
+            )
+          )}
+
+          {phase === 'identify' && !dest && (
+            <Button variant="ghost" size="sm" onClick={() => setPhase('place')}>
+              <MapPin className="w-3.5 h-3.5" />
+              Choose the bin first
+            </Button>
+          )}
 
           {phase === 'identify' && (
             <div className="flex gap-2">
