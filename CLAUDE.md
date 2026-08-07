@@ -494,6 +494,14 @@ These rules exist because every one of them was learned from a production failur
 
 17. **Local dev applies migrations via `SQL/init/002_apply_migrations.sh`.** `docker-compose` mounts `SQL/migrations/` at `/docker-entrypoint-migrations/` and that script applies them after the base schema — MySQL's entrypoint ignores subdirectories, so they cannot simply be mounted alongside `init/`. Without this, `task db:reset` produces a database with *no* migrations applied.
 
+#### Object storage: presigned URLs and the proxy in front of them
+
+18. **`client/nginx.conf` is NOT what serves production.** It has a correct `location ^~ /tally-files/` MinIO proxy and has since the first commit — but prod is fronted by the PW deployment's own nginx, which serves the built client statically and proxies only `/api` and `/health`. Verified 2026-08-07: `GET https://tally.<domain>/tally-files/anything` returns `index.html` from disk (`etag`, `last-modified`, `content-type: text/html`), not a proxy response. **Editing `client/nginx.conf` changes local dev only.** Routing changes for prod belong in the PW repo, exactly like `app.yml` (rule 1).
+
+19. **A presigned URL is bound to the host it was signed for.** SigV4 signs the `Host` header, so the browser must reach MinIO at *the same* host the server signed against, and every proxy in the chain must forward `Host` unchanged (`proxy_set_header Host $host;` — **not** `$proxy_host`). A mismatch surfaces as `SignatureDoesNotMatch`, which names the key and bucket and says nothing about the host, so it reads like a credentials problem and is not one.
+
+20. **`S3_PUBLIC_ENDPOINT` must be an origin, with no path.** With `forcePathStyle` the SDK builds `/{bucket}/{key}` itself, so a path on the endpoint gets signed twice (`/tally-files/tally-files/key` → `NoSuchKey`). `storage.js` strips a trailing copy of the bucket and warns; any other path is left alone but warned about, because it only works if the proxy forwards the path byte for byte. When unset it falls back to `S3_ENDPOINT`, which is the internal service name — links the browser can never load, which is why uploaded photos appeared nowhere for so long.
+
 #### Adding New Server Files
 
 11. **If you add a new top-level file the server needs at runtime** (e.g., a config file, seed script), you must update THREE places: (a) `app.yml` `build.components.server.tarball.includes`, (b) `build.yml` tar command, (c) `.dockerignore` if applicable.
