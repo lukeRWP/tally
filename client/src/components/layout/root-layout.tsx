@@ -27,7 +27,7 @@ function Sidebar() {
   const unread = typeof unreadCount === 'number' ? unreadCount : 0;
 
   return (
-    <aside className="hidden lg:flex lg:flex-col lg:w-56 lg:fixed lg:inset-y-0 bg-[var(--color-bg)] border-r-2 border-[var(--color-text)] z-50">
+    <aside className="hidden xl:flex xl:flex-col xl:w-56 xl:fixed xl:inset-y-0 bg-[var(--color-bg)] border-r-2 border-[var(--color-text)] z-50">
       {/* Logo */}
       <div className="px-5 py-4 border-b-2 border-[var(--color-text)] flex items-center gap-2">
         {/* Same ink chip + mono wordmark as the mobile header — the desktop
@@ -89,6 +89,15 @@ function Sidebar() {
   );
 }
 
+/**
+ * Three experiences, not two:
+ *   phone  (<md)       bottom nav, Scan in the thumb slot
+ *   tablet (md..<xl)   same touch chrome — a tablet has a camera and gets
+ *                      carried to the shelf, so it keeps Scan; only the
+ *                      content column widens. iPad landscape (1024) lives
+ *                      HERE, which is why the sidebar starts at xl, not lg.
+ *   desktop(>=xl)      sidebar; Scan is dropped (no usable camera at a desk)
+ */
 export function RootLayout() {
   const { user, isLoading } = useAuth();
   const mainRef = useRef<HTMLElement>(null);
@@ -115,18 +124,18 @@ export function RootLayout() {
       <Sidebar />
 
       {/* Main content area */}
-      <div className="flex-1 flex flex-col lg:ml-56 overflow-x-hidden">
+      <div className="flex-1 flex flex-col xl:ml-56 overflow-x-hidden">
         {/* Header - mobile/tablet only */}
-        <div className="lg:hidden pt-[env(safe-area-inset-top)]">
+        <div className="xl:hidden pt-[env(safe-area-inset-top)]">
           <Header />
         </div>
-        <main ref={mainRef} className="flex-1 overflow-y-auto overflow-x-hidden pb-[calc(5rem+env(safe-area-inset-bottom))] lg:pb-6 px-4 pt-4">
-          <div className="md:max-w-[640px] lg:max-w-[800px] mx-auto">
+        <main ref={mainRef} className="flex-1 overflow-y-auto overflow-x-hidden pb-[calc(5rem+env(safe-area-inset-bottom))] xl:pb-6 px-4 pt-4">
+          <div className="md:max-w-[720px] lg:max-w-[860px] xl:max-w-[800px] mx-auto">
             <Outlet />
           </div>
         </main>
         {/* Bottom nav - mobile/tablet only */}
-        <div className="lg:hidden">
+        <div className="xl:hidden">
           <BottomNav />
         </div>
       </div>
