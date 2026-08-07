@@ -1,5 +1,5 @@
 import { useLocation, useNavigate } from 'react-router-dom';
-import { Home, ScanLine, Bell, Settings, Printer } from 'lucide-react';
+import { Home, Plus, Bell, Settings, Printer } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useUnreadCount } from '@/hooks/use-notifications';
 
@@ -10,36 +10,36 @@ import { useUnreadCount } from '@/hooks/use-notifications';
 //   now lives in Settings.
 // - Notifications arrives: overdue loans and warranty dates are daily-attention
 //   surfaces that were previously mobile-reachable only via the small header bell.
+//
+// The centre slot is ADD, not Scan. The thumb button should be the thing you do
+// most, and in a house that is "put this object into the system" — scanning is a
+// step inside that, not a destination of its own. Scanning to LOOK something up
+// keeps its own affordance in the header, so the gesture did not go away.
 const tabs = [
   { path: '/', icon: Home, label: 'Home' },
   { path: '/print', icon: Printer, label: 'Print' },
-  { path: '/scan', icon: ScanLine, label: 'Scan', center: true },
+  { path: '/capture', icon: Plus, label: 'Add', center: true },
   { path: '/notifications', icon: Bell, label: 'Alerts', badge: true },
   { path: '/settings', icon: Settings, label: 'Settings' },
 ];
 
 /**
- * Build a context-aware scan URL based on the current page.
- * When viewing a property/area/container, the scan page pre-fills
- * the location dropdowns so scanned items go to the right place.
+ * Where you are standing is almost always where the new thing goes, so the
+ * centre button carries the current page into the create flow: a container
+ * pre-pins as the destination, an area pre-selects the picker's area so the
+ * bin list is one tap away. Standing nowhere in particular just opens the flow.
  */
-function buildScanUrl(pathname: string): string {
-  // /container/:id → pass containerId (area and property resolved server-side)
-  const containerMatch = pathname.match(/^\/container\/(\d+)/);
-  if (containerMatch) {
-    return `/scan?containerId=${containerMatch[1]}`;
-  }
-  // /area/:id → pass areaId
-  const areaMatch = pathname.match(/^\/area\/(\d+)/);
-  if (areaMatch) {
-    return `/scan?areaId=${areaMatch[1]}`;
-  }
-  // /property/:id → pass propertyId
-  const propertyMatch = pathname.match(/^\/property\/(\d+)/);
-  if (propertyMatch) {
-    return `/scan?propertyId=${propertyMatch[1]}`;
-  }
-  return '/scan';
+function buildCaptureUrl(pathname: string): string {
+  const container = pathname.match(/^\/container\/(\d+)/);
+  if (container) return `/capture?containerId=${container[1]}`;
+
+  const area = pathname.match(/^\/area\/(\d+)/);
+  if (area) return `/capture?areaId=${area[1]}`;
+
+  const property = pathname.match(/^\/property\/(\d+)/);
+  if (property) return `/capture?propertyId=${property[1]}`;
+
+  return '/capture';
 }
 
 export function BottomNav() {
@@ -53,16 +53,16 @@ export function BottomNav() {
       <div className="flex items-center justify-around py-1 md:py-2 max-w-lg mx-auto">
         {tabs.map((tab) => {
           const isActive = location.pathname === tab.path ||
-            (tab.path === '/scan' && location.pathname.startsWith('/scan')) ||
+            (tab.path === '/capture' && location.pathname.startsWith('/capture')) ||
             // Detail pages highlight Home now that the Inventory tab is gone —
             // Home is where browsing starts.
             (tab.path === '/' && /^\/(property|area|container|item)\//.test(location.pathname));
           const Icon = tab.icon;
 
           if (tab.center) {
-            const scanUrl = buildScanUrl(location.pathname);
+            const captureUrl = buildCaptureUrl(location.pathname);
             return (
-              <button key={tab.path} onClick={() => navigate(scanUrl)}
+              <button key={tab.path} onClick={() => navigate(captureUrl)}
                 className="flex flex-col items-center -mt-5 transition-transform duration-200 active:scale-95 min-w-[44px]">
                 <div className="w-13 h-13 rounded-full bg-[var(--color-primary)] flex items-center justify-center shadow-lg">
                   <Icon className="w-6 h-6 text-white" />
