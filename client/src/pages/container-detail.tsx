@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ScanLine, Printer, Share2, Plus, Package, Box, CheckSquare } from 'lucide-react';
+import { ScanLine, Printer, Share2, Plus, Package, Box, CheckSquare, Camera } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { TitleBar } from '@/components/ui/title-bar';
@@ -377,6 +377,24 @@ export function ContainerDetail() {
             >
               <Box className="w-4 h-4" />
               Add Item
+            </Button>
+            {/* The capture loop, pre-pinned to this bin: picture → scan → done */}
+            <Button
+              size="sm"
+              onClick={() => {
+                try {
+                  localStorage.setItem('tally-last-container', JSON.stringify({
+                    id, name: container?.name ?? `#${id}`,
+                    areaId: container?.areaId, propertyId: propertyId > 0 ? propertyId : undefined,
+                  }));
+                } catch { /* private mode */ }
+                navigate('/capture');
+              }}
+              className="shadow-lg animate-scale-in"
+              style={{ animationDelay: '60ms' }}
+            >
+              <Camera className="w-4 h-4" />
+              Capture
             </Button>
           </>
         )}

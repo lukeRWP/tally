@@ -12,6 +12,7 @@ import { AreaDetail } from '@/pages/area-detail';
 import { ContainerDetail } from '@/pages/container-detail';
 import { ItemDetail } from '@/pages/item-detail';
 import { Scan } from '@/pages/scan';
+import { Capture } from '@/pages/capture';
 import { Reports } from '@/pages/reports';
 import { PrintQueuePage } from '@/pages/print-queue';
 import { SearchPage } from '@/pages/search';
@@ -37,6 +38,7 @@ export function App() {
         <Route path="/container/:containerId" element={<ContainerDetail />} />
         <Route path="/item/:itemId" element={<ItemDetail />} />
         <Route path="/scan" element={<Scan />} />
+        <Route path="/capture" element={<Capture />} />
         <Route path="/reports" element={<Reports />} />
         <Route path="/print" element={<PrintQueuePage />} />
         <Route path="/settings" element={<SettingsPage />} />

@@ -54,6 +54,8 @@ export interface Item {
   productName?: string | null;
   productBrand?: string | null;
   productImageUrl?: string | null;
+  /** Newest uploaded photo (presigned). Preferred over the catalogue image. */
+  photoUrl?: string | null;
   productDescription?: string | null;
   productCategory?: string | null;
   productBarcode?: string | null;

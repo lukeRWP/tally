@@ -34,9 +34,11 @@ export function ItemCard({ item, selectable, selected, onToggle }: ItemCardProps
   // receipt line, not a card.
   const leading = (
     <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[var(--radius-sm)] border border-[var(--color-rule)] bg-[var(--color-elevated)] text-[var(--color-text-muted)] overflow-hidden">
-      {item.productImageUrl ? (
+      {item.photoUrl || item.productImageUrl ? (
         <img
-          src={item.productImageUrl}
+          // The photo YOU took wins over the catalogue stock image — it is the
+          // one that makes a barcode-less object recognisable in a list.
+          src={item.photoUrl || item.productImageUrl || ''}
           alt=""
           className="h-8 w-8 object-cover"
           loading="lazy"
