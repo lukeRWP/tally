@@ -222,6 +222,19 @@ export function useUpdateItem() {
  * re-home it to an area's top level (parentContainerId null + areaId). The
  * server owns the cycle guard — a container cannot land inside its own subtree.
  */
+/**
+ * Delete a container. Cascades server-side to its whole subtree — and, since
+ * the delete is batch-stamped, the whole subtree comes back together from the
+ * recycle bin. The UI had no way to delete a bin at all until that was true.
+ */
+export function useDeleteContainer() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) => api.del(`/api/containers/_d_/${id}`),
+    onSuccess: () => invalidateTree(qc),
+  });
+}
+
 export function useMoveContainer() {
   const qc = useQueryClient();
   return useMutation({

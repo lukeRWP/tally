@@ -1,5 +1,6 @@
 const { generateCode } = require('../../utils/qr');
 const AuditService = require('../audit/audit.service');
+const RecycleService = require('../recycle/recycle.service');
 
 let _db = null;
 let _logger = null;
@@ -8,6 +9,7 @@ const AreasService = {
   // ── Initialization ─────────────────────────────────────────────────────────
 
   init({ db, logger }) {
+    RecycleService.init({ db, logger });
     _db = db;
     _logger = logger;
   },
@@ -121,6 +123,14 @@ const AreasService = {
    */
   async cascadeDelete(areaId, userId, executor = _db) {
     const propertyId = await AreasService.getPropertyIdForArea(areaId, executor);
+    const nameRows = await executor.query('SELECT NAME FROM TALLY.areas WHERE ID = ?', [areaId]);
+    // Opened on the same executor so it shares the caller's transaction when
+    // there is one (property delete loops this per area) — a rolled-back
+    // cascade must not leave a header naming a deletion that never happened.
+    const batchId = await RecycleService.openBatch(executor, {
+      propertyId, rootType: 'area', rootId: areaId,
+      rootName: nameRows[0]?.NAME || 'Area', userId,
+    });
 
     // Set-based cascade (was a per-container × per-item loop issuing thousands
     // of statements for a large area). Every container in an area carries that
@@ -140,11 +150,11 @@ const AreasService = {
 
     // 2. Soft-delete every item in the area's containers.
     await executor.query(
-      `UPDATE TALLY.items SET DELETED_AT = NOW(), STATUS = 'removed'
+      `UPDATE TALLY.items SET DELETED_AT = NOW(), STATUS = 'removed', DELETE_BATCH_ID = ?
        WHERE DELETED_AT IS NULL AND CONTAINER_ID IN (
          SELECT ID FROM TALLY.containers WHERE AREA_ID = ?
        )`,
-      [areaId]
+      [batchId, areaId]
     );
 
     // 3. Soft-delete every container in the area. Closure paths are LEFT
@@ -154,14 +164,14 @@ const AreasService = {
     // could orphan a container whose parent lived in another area. Closure
     // destruction belongs to permanent delete only.)
     await executor.query(
-      'UPDATE TALLY.containers SET DELETED_AT = NOW() WHERE DELETED_AT IS NULL AND AREA_ID = ?',
-      [areaId]
+      'UPDATE TALLY.containers SET DELETED_AT = NOW(), DELETE_BATCH_ID = ? WHERE DELETED_AT IS NULL AND AREA_ID = ?',
+      [batchId, areaId]
     );
 
     // 4. Soft-delete the area.
     await executor.query(
-      'UPDATE TALLY.areas SET DELETED_AT = NOW() WHERE ID = ?',
-      [areaId]
+      'UPDATE TALLY.areas SET DELETED_AT = NOW(), DELETE_BATCH_ID = ? WHERE ID = ?',
+      [batchId, areaId]
     );
 
     // 5. Audit

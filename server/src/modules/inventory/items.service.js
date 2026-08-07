@@ -1,5 +1,6 @@
 const { generateCode } = require('../../utils/qr');
 const AuditService = require('../audit/audit.service');
+const RecycleService = require('../recycle/recycle.service');
 const storage = require('../../infrastructure/storage');
 
 let _db = null;
@@ -9,6 +10,7 @@ const ItemsService = {
   // ── Initialization ─────────────────────────────────────────────────────────
 
   init({ db, logger }) {
+    RecycleService.init({ db, logger });
     _db = db;
     _logger = logger;
   },
@@ -252,19 +254,41 @@ const ItemsService = {
         err.statusCode = 409;
         throw err;
       }
+      // A single-item delete is a batch of one, so the bin can show and
+      // restore it through exactly the same path as a cascade.
+      const nameRows = await tx.query('SELECT NAME FROM TALLY.items WHERE ID = ?', [id]);
+      const batchId = await RecycleService.openBatch(tx, {
+        propertyId, rootType: 'item', rootId: id,
+        rootName: nameRows[0]?.NAME || 'Item', userId,
+      });
       await tx.query(
-        "UPDATE TALLY.items SET DELETED_AT = NOW(), STATUS = 'removed' WHERE ID = ?",
-        [id]
+        "UPDATE TALLY.items SET DELETED_AT = NOW(), STATUS = 'removed', DELETE_BATCH_ID = ? WHERE ID = ?",
+        [batchId, id]
       );
     });
     AuditService.logChange(userId, 'item', id, 'deleted', {}, propertyId);
   },
 
   async restore(id, userId) {
-    await _db.query(
-      "UPDATE TALLY.items SET DELETED_AT = NULL, STATUS = 'active' WHERE ID = ?",
-      [id]
-    );
+    await _db.withTransaction(async (tx) => {
+      const rows = await tx.query('SELECT DELETE_BATCH_ID FROM TALLY.items WHERE ID = ?', [id]);
+      const batchId = rows[0]?.DELETE_BATCH_ID || null;
+      await tx.query(
+        "UPDATE TALLY.items SET DELETED_AT = NULL, STATUS = 'active', DELETE_BATCH_ID = NULL WHERE ID = ?",
+        [id]
+      );
+      // Drop the header once nothing is left pointing at it, or the bin would
+      // keep listing a deletion whose contents are all back.
+      if (batchId) {
+        await tx.query(
+          `DELETE FROM TALLY.delete_batches WHERE ID = ?
+             AND NOT EXISTS (SELECT 1 FROM TALLY.items      x WHERE x.DELETE_BATCH_ID = ?)
+             AND NOT EXISTS (SELECT 1 FROM TALLY.containers x WHERE x.DELETE_BATCH_ID = ?)
+             AND NOT EXISTS (SELECT 1 FROM TALLY.areas      x WHERE x.DELETE_BATCH_ID = ?)`,
+          [batchId, batchId, batchId, batchId]
+        );
+      }
+    });
     const propertyId = await ItemsService.getPropertyIdForItem(id);
     AuditService.logChange(userId, 'item', id, 'restored', {}, propertyId);
     return ItemsService.getById(id);

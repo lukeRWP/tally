@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ScanLine, Printer, Share2, Plus, Package, Box, CheckSquare, Camera, MoveRight } from 'lucide-react';
+import { ScanLine, Printer, Share2, Plus, Package, Box, CheckSquare, Camera, MoveRight, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { TitleBar } from '@/components/ui/title-bar';
@@ -17,9 +17,11 @@ import {
   useItems,
   useCreateContainer,
   useCreateItem,
+  useDeleteContainer,
 } from '@/hooks/use-inventory';
 import { toast } from '@/components/ui/toast';
 import { TagPicker } from '@/components/tags/tag-picker';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { LabelPrintDialog } from '@/components/labels/label-print-dialog';
 import { ShareDialog } from '@/components/sharing/share-dialog';
 import { usePrintQueueStore } from '@/store/print-queue-store';
@@ -34,6 +36,7 @@ export function ContainerDetail() {
   const [fabOpen, setFabOpen] = useState(false);
   const [printOpen, setPrintOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
   // Select mode: checkboxes over the item/nested-container cards, feeding the
   // print-queue staging area in one batch instead of a dialog per label.
   const [selecting, setSelecting] = useState(false);
@@ -52,6 +55,7 @@ export function ContainerDetail() {
   const createContainer = useCreateContainer();
   const createItem = useCreateItem();
   const stageMany = usePrintQueueStore((s) => s.addMany);
+  const deleteContainer = useDeleteContainer();
   const pickUp = useCarryStore((s) => s.pickUp);
   const carried = useCarryStore((s) => s.carried);
 
@@ -242,6 +246,20 @@ export function ContainerDetail() {
     navigate('/scan?mode=move');
   }
 
+  function confirmDelete() {
+    if (!container) return;
+    deleteContainer.mutate(id, {
+      onSuccess: () => {
+        setDeleteOpen(false);
+        toast('Moved to the recycle bin');
+        // Back to the area — this page's subject no longer exists.
+        navigate(`/area/${container.areaId}`);
+      },
+      onError: (err: unknown) =>
+        toast(err instanceof Error ? err.message : 'Could not delete it'),
+    });
+  }
+
   function handleSelectAll() {
     setSelected(
       new Set([
@@ -295,6 +313,10 @@ export function ContainerDetail() {
         <Button variant="outline" size="sm" onClick={() => setShareOpen(true)}>
           <Share2 className="w-4 h-4" />
           Share
+        </Button>
+        <Button variant="outline" size="sm" onClick={() => setDeleteOpen(true)}>
+          <Trash2 className="w-4 h-4" />
+          Delete
         </Button>
         {selectable && (
           <Button
@@ -468,6 +490,20 @@ export function ContainerDetail() {
         onOpenChange={setPrintOpen}
         propertyId={propertyId > 0 ? propertyId : undefined}
       />
+      <ConfirmDialog
+        open={deleteOpen}
+        onOpenChange={setDeleteOpen}
+        title={`Delete "${container.name}"?`}
+        description={
+          `This moves the bin${(container.containerCount ?? 0) > 0 ? `, its ${container.containerCount} nested ${container.containerCount === 1 ? 'bin' : 'bins'}` : ''}` +
+          ` and ${container.itemCount ?? 0} ${(container.itemCount ?? 0) === 1 ? 'item' : 'items'} to the recycle bin, where you can put it all back for 30 days.`
+        }
+        destructive
+        confirmLabel="Delete"
+        isPending={deleteContainer.isPending}
+        onConfirm={confirmDelete}
+      />
+
       <ShareDialog
         entityType="container"
         entityId={container.id}

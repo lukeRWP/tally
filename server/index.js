@@ -136,6 +136,7 @@ require('./src/modules/audit/audit.routes')({ app, db, logger, config });
 require('./src/modules/notifications/notifications.routes')({ app, db, logger, config });
 require('./src/modules/reports/reports.routes')({ app, db, logger, config });
 require('./src/modules/sharing/sharing.routes')({ app, db, logger, config });
+require('./src/modules/recycle/recycle.routes')({ app, db, logger, config });
 require('./src/modules/print/print.routes')({ app, db, logger, config });
 
 // ── Error Handler (must be last) ────────────────────────────────────────────
