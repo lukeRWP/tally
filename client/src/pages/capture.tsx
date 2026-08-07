@@ -111,6 +111,18 @@ export function Capture() {
       return p && typeof p.id === 'number' && p.id > 0 ? p : null;
     } catch { return null; }
   });
+  /**
+   * Whether the destination was chosen IN THIS SESSION (scanned, picked, or
+   * carried in from the page you tapped Add on) rather than merely remembered
+   * from last time.
+   *
+   * The loop — "item two is just picture + scan" — depends on committing the
+   * moment a product barcode resolves. But that is only right once you have
+   * actually told the flow where you are standing. Treating a leftover
+   * localStorage bin as an answer silently filed items into whatever tote you
+   * used days ago and skipped the scan-the-bin step entirely.
+   */
+  const [destConfirmed, setDestConfirmed] = React.useState(false);
   const [phase, setPhase] = React.useState<Phase>('photo');
   const [picking, setPicking] = React.useState(false);
   const [dupes, setDupes] = React.useState<Dupe[]>([]);
@@ -136,8 +148,8 @@ export function Capture() {
 
   // The scanner callback is handed to the camera once, so it must not close
   // over stale state.
-  const stateRef = React.useRef({ dest, draft, phase });
-  React.useEffect(() => { stateRef.current = { dest, draft, phase }; }, [dest, draft, phase]);
+  const stateRef = React.useRef({ dest, draft, phase, destConfirmed });
+  React.useEffect(() => { stateRef.current = { dest, draft, phase, destConfirmed }; }, [dest, draft, phase, destConfirmed]);
 
   // Where you were standing when you tapped Add. A container pre-pins outright;
   // an area or property only seeds the picker, because "somewhere in the garage"
@@ -192,6 +204,7 @@ export function Capture() {
 
   function pinDestination(d: Destination) {
     setDest(d);
+    setDestConfirmed(true);
     try { localStorage.setItem(DEST_KEY, JSON.stringify(d)); } catch { /* private mode */ }
   }
 
@@ -244,7 +257,7 @@ export function Capture() {
   }
 
   const handleCode = React.useCallback(async (code: string) => {
-    const { dest: curDest, draft: curDraft } = stateRef.current;
+    const { dest: curDest, draft: curDraft, destConfirmed: curConfirmed } = stateRef.current;
 
     // Rule 1: route by code shape, not by which step we think we're on.
     if (TLY_CODE_REGEX.test(code)) {
@@ -308,11 +321,13 @@ export function Capture() {
         productId: product?.id,
       };
       setDraft(next);
-      if (product?.name && curDest) {
+      if (product?.name && curDest && curConfirmed) {
         // Named and homed: commit straight away — this is what makes it a loop.
         void commit(next, curDest);
       } else {
-        setPhase(curDest ? 'identify' : 'place');
+        // Named but not homed yet: go to the step that asks where it goes,
+        // which is the whole point of scan → scan → done.
+        setPhase('place');
         if (!product?.name) toast('No match — name it yourself');
       }
     } catch {
@@ -349,23 +364,39 @@ export function Capture() {
         </span>
       </div>
 
-      <button
-        type="button"
-        onClick={() => setPhase('place')}
-        className={cn('flex items-center gap-2 rounded-[var(--radius-sm)] border-2 px-3 py-2 text-left',
-          dest ? 'border-[var(--color-text)]' : 'border-dashed border-[var(--color-primary)]')}
+      {/* Where it goes. A destination confirmed in this session is a statement;
+          one merely remembered from last time is an offer, and must look like
+          one — the difference is the whole bug this drawing fixes. */}
+      <div className={cn('flex items-center gap-2 rounded-[var(--radius-sm)] border-2 px-3 py-2',
+        dest && destConfirmed ? 'border-[var(--color-text)]' : 'border-dashed border-[var(--color-primary)]')}
       >
         <MapPin className="w-4 h-4 shrink-0" />
-        <span className="min-w-0 flex-1">
+        <button type="button" onClick={() => setPhase('place')} className="min-w-0 flex-1 text-left">
           <span className="block font-mono text-[10px] uppercase tracking-[0.1em] text-[var(--color-text-muted)]">
-            {dest ? 'adding to' : 'no bin chosen'}
+            {!dest ? 'no bin chosen' : destConfirmed ? 'adding to' : 'last used'}
           </span>
           <span className="block text-sm font-semibold truncate">
             {dest ? dest.name : 'Scan a bin or area label'}
           </span>
-        </span>
-        <span className="font-mono text-[10px] uppercase text-[var(--color-primary)]">change</span>
-      </button>
+        </button>
+        {dest && !destConfirmed ? (
+          <button
+            type="button"
+            onClick={() => setDestConfirmed(true)}
+            className="shrink-0 bg-[var(--color-primary)] text-white rounded-[var(--radius-sm)] px-2.5 min-h-[32px] font-mono text-[10px] font-bold uppercase tracking-[0.06em]"
+          >
+            Still here
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setPhase('place')}
+            className="shrink-0 font-mono text-[10px] uppercase text-[var(--color-primary)] px-1 min-h-[32px]"
+          >
+            change
+          </button>
+        )}
+      </div>
 
       {/* the draft being built */}
       {(draft.photoUrl || draft.name || draft.barcode) && (
