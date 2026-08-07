@@ -1,4 +1,4 @@
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { X, ScanLine, Undo2 } from 'lucide-react';
 import { useCarryStore, type CarriedItem } from '@/store/carry-store';
 import { useMoveItem, useMoveContainer } from '@/hooks/use-inventory';
@@ -25,6 +25,7 @@ function describeLoad(load: CarriedItem[]): string {
 
 export function CarryBanner() {
   const navigate = useNavigate();
+  const { pathname } = useLocation();
   const carried = useCarryStore((s) => s.carried);
   const lastMove = useCarryStore((s) => s.lastMove);
   const clear = useCarryStore((s) => s.clear);
@@ -64,6 +65,11 @@ export function CarryBanner() {
       toast(err instanceof Error ? err.message : 'Could not undo the move');
     }
   }
+
+  // /move asks "where does this go?" and owns both the carrying state and the
+  // undo for what it just did. The guard has to come BEFORE the lastMove
+  // branch or that banner still renders there, giving one move two Undos.
+  if (pathname === '/move') return null;
 
   if (lastMove) {
     return (
@@ -120,7 +126,7 @@ export function CarryBanner() {
       </span>
       <button
         type="button"
-        onClick={() => navigate('/scan?mode=move')}
+        onClick={() => navigate('/move')}
         className="shrink-0 inline-flex items-center gap-1 bg-[var(--color-primary)] text-white rounded-[var(--radius-sm)] px-2.5 min-h-[34px] font-mono text-[10px] font-bold uppercase tracking-[0.06em]"
       >
         <ScanLine className="w-3.5 h-3.5" />

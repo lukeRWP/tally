@@ -8,7 +8,8 @@ import { ColHead } from '@/components/ui/col-head';
 import { toast } from '@/components/ui/toast';
 import { api } from '@/lib/api';
 import { findOrCreateLooseContainer } from '@/hooks/use-put-down';
-import { useCreateItem, useProperties, useAreas, useContainers } from '@/hooks/use-inventory';
+import { DestinationPicker } from '@/components/inventory/destination-picker';
+import { useCreateItem } from '@/hooks/use-inventory';
 import { useUploadFile } from '@/hooks/use-files';
 import { usePrinters, useCreatePrintJob } from '@/hooks/use-print';
 import { usePrintQueueStore } from '@/store/print-queue-store';
@@ -130,14 +131,6 @@ export function Capture() {
   const [receipts, setReceipts] = React.useState<Receipt[]>([]);
   const [busy, setBusy] = React.useState<string | null>(null);
 
-  // The picker is the keyboard path to a destination: no label on the bin, no
-  // camera, or simply knowing where it goes. Seeded from wherever you tapped Add.
-  const [pickProperty, setPickProperty] = React.useState(0);
-  const [pickArea, setPickArea] = React.useState(0);
-  const { data: pickProperties } = useProperties();
-  const { data: pickAreas } = useAreas(pickProperty);
-  const { data: pickContainers } = useContainers(pickArea);
-
   const createItem = useCreateItem();
   const uploadFile = useUploadFile();
   const createPrintJob = useCreatePrintJob();
@@ -172,27 +165,6 @@ export function Capture() {
     })();
     return () => { cancelled = true; };
   }, [ctxContainer]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  React.useEffect(() => {
-    if (ctxArea) setPickArea(ctxArea);
-    if (ctxProperty) setPickProperty(ctxProperty);
-  }, [ctxArea, ctxProperty]);
-
-  // One property is the common case; pre-select it so the picker opens on areas.
-  React.useEffect(() => {
-    if (!pickProperty && pickProperties?.length === 1) setPickProperty(pickProperties[0].id);
-  }, [pickProperties, pickProperty]);
-
-  // An area arriving without its property leaves the cascade blank, so backfill.
-  React.useEffect(() => {
-    if (!ctxArea || pickProperty) return;
-    (async () => {
-      try {
-        const { area } = await api.get<{ area: { propertyId: number } }>(`/api/areas/_x_/${ctxArea}`);
-        if (area?.propertyId) setPickProperty(area.propertyId);
-      } catch { /* the picker still works, it just starts at the property step */ }
-    })();
-  }, [ctxArea, pickProperty]);
 
   // The picker belongs to the "where does this go" step. Any path that leaves
   // that step — scanning a bin, committing, discarding the draft, starting the
@@ -501,56 +473,24 @@ export function Capture() {
 
       {/* ── the keyboard path to a destination ──────────────────────────── */}
       {picking && (
-        <div className="flex flex-col gap-2 border-2 border-[var(--color-text)] rounded-[var(--radius-sm)] p-3">
-          <div className="flex items-center justify-between">
-            <span className="font-mono text-[10px] uppercase tracking-[0.1em] font-bold">Choose a bin</span>
-            <button type="button" aria-label="Close" onClick={() => setPicking(false)}
-              className="min-w-[32px] min-h-[32px] flex items-center justify-center text-[var(--color-text-muted)]">
-              <X className="w-4 h-4" />
-            </button>
-          </div>
-
-          {(pickProperties?.length ?? 0) > 1 && (
-            <select value={pickProperty} onChange={(e) => { setPickProperty(Number(e.target.value)); setPickArea(0); }}
-              className="w-full min-h-[40px] px-2 rounded-[var(--radius-sm)] border border-[var(--color-rule)] bg-[var(--color-bg)] text-sm">
-              <option value={0}>Property…</option>
-              {pickProperties?.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-            </select>
-          )}
-
-          <select value={pickArea} onChange={(e) => setPickArea(Number(e.target.value))} disabled={!pickProperty}
-            className="w-full min-h-[40px] px-2 rounded-[var(--radius-sm)] border border-[var(--color-rule)] bg-[var(--color-bg)] text-sm disabled:opacity-50">
-            <option value={0}>Area…</option>
-            {pickAreas?.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
-          </select>
-
-          {pickArea > 0 && (
-            (pickContainers?.length ?? 0) === 0 ? (
-              <p className="font-mono text-[10px] uppercase tracking-[0.06em] text-[var(--color-text-muted)] py-2">
-                No bins in this area yet — scan its area label to file loose
-              </p>
-            ) : (
-              <div className="flex flex-col max-h-56 overflow-y-auto">
-                {pickContainers?.map((c) => (
-                  <button key={c.id} type="button"
-                    onClick={() => {
-                      pinDestination({ id: c.id, name: c.name, areaId: c.areaId });
-                      setPicking(false);
-                      toast.success(`Adding to ${c.name}`);
-                      const d = stateRef.current.draft;
-                      if (d.name || d.photo || d.barcode) void commit(d, { id: c.id, name: c.name, areaId: c.areaId });
-                      else setPhase('photo');
-                    }}
-                    className="flex items-center gap-2 py-2.5 border-b border-[var(--color-rule)] last:border-b-0 text-left">
-                    <MapPin className="w-3.5 h-3.5 shrink-0 text-[var(--color-text-muted)]" />
-                    <span className="min-w-0 flex-1 text-sm font-medium truncate">{c.name}</span>
-                    <span className="font-mono text-[10px] text-[var(--color-text-muted)]">{c.itemCount ?? 0}</span>
-                  </button>
-                ))}
-              </div>
-            )
-          )}
-        </div>
+        <DestinationPicker
+          {...(ctxArea
+            // Both from the same URL, so they always agree.
+            ? { seedAreaId: ctxArea, seedPropertyId: ctxProperty }
+            // Otherwise seed from the pinned bin ALONE and let the picker
+            // backfill its property: pairing a remembered area with a
+            // property from elsewhere can list another property's bins.
+            : { seedAreaId: dest?.areaId })}
+          onPick={(bin) => {
+            pinDestination({ id: bin.id, name: bin.name, areaId: bin.areaId });
+            setPicking(false);
+            toast.success(`Adding to ${bin.name}`);
+            const d = stateRef.current.draft;
+            if (d.name || d.photo || d.barcode) void commit(d, { id: bin.id, name: bin.name, areaId: bin.areaId });
+            else setPhase('photo');
+          }}
+          onClose={() => setPicking(false)}
+        />
       )}
 
       {/* ── receipts ─────────────────────────────────────────────────────── */}

@@ -221,12 +221,13 @@ export function ContainerDetail() {
         kind: 'item' as const,
         fromContainerId: id,
         fromContainerName: container?.name,
+        fromAreaId: container?.areaId,
       })),
     ]);
     exitSelectMode();
     const n = pickedItems.length + pickedBins.length;
     toast(`Carrying ${n} thing${n === 1 ? '' : 's'} — scan where they go`);
-    navigate('/scan?mode=move');
+    navigate('/move');
   }
 
   /**
@@ -243,7 +244,7 @@ export function ContainerDetail() {
       fromAreaId: container.areaId,
     }]);
     toast(`Carrying ${container.name} — scan an area or a bin to put it in`);
-    navigate('/scan?mode=move');
+    navigate('/move');
   }
 
   function confirmDelete() {
