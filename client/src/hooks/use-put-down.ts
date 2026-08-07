@@ -11,8 +11,16 @@ export interface PutDownTarget {
   name: string;
 }
 
-/** The name given to the auto-created catch-all container for an area. */
-export const looseNameFor = (areaName: string) => `Loose in ${areaName}`;
+/**
+ * The name given to the auto-created catch-all container for an area.
+ * Clamped to the server's 255-char NAME limit, which an area name close to its
+ * own 255 limit would otherwise blow past — a 422 that would repeat on every
+ * scan of that area's label. Lookup and create must clamp identically or the
+ * find half would never match what the create half wrote.
+ */
+const NAME_MAX = 255;
+export const looseNameFor = (areaName: string) =>
+  `Loose in ${areaName}`.slice(0, NAME_MAX);
 
 /**
  * Items must live in a container — the schema has no "item sitting in a room".
@@ -76,20 +84,24 @@ export function usePutDown() {
           ? !(b.fromAreaId === dest.id && !b.fromContainerId)
           : b.id !== dest.id && b.fromContainerId !== dest.id,
       );
-      const itemsToMove = items.filter((i) => isArea || i.fromContainerId !== dest.id);
+
+      // Items are filtered against the container they will actually land in,
+      // which for an area is its catch-all bin — so that has to be resolved
+      // first. Comparing fromContainerId to an AREA id would be meaningless
+      // (the two tables have independent id sequences), and skipping the check
+      // would file items into the bin they were picked up from and log a move
+      // that never happened. Resolving first cannot litter: if the catch-all
+      // had to be created, nothing could have come from it.
+      let itemTarget: { id: number; name: string } | null = null;
+      if (items.length > 0) {
+        itemTarget = isArea
+          ? await findOrCreateLooseContainer(dest.id, dest.name)
+          : { id: dest.id, name: dest.name };
+      }
+      const target = itemTarget;
+      const itemsToMove = target ? items.filter((i) => i.fromContainerId !== target.id) : [];
 
       if (binsToMove.length === 0 && itemsToMove.length === 0) return null;
-
-      // Only mint the catch-all container if items actually need one.
-      let itemTarget: { id: number; name: string } | null = null;
-      if (itemsToMove.length > 0) {
-        if (isArea) {
-          const loose = await findOrCreateLooseContainer(dest.id, dest.name);
-          itemTarget = { id: loose.id, name: loose.name };
-        } else {
-          itemTarget = { id: dest.id, name: dest.name };
-        }
-      }
 
       for (const bin of binsToMove) {
         await moveContainer.mutateAsync(
@@ -99,7 +111,7 @@ export function usePutDown() {
         );
       }
       for (const it of itemsToMove) {
-        await moveItem.mutateAsync({ id: it.id, containerId: (itemTarget as { id: number }).id });
+        await moveItem.mutateAsync({ id: it.id, containerId: (target as { id: number }).id });
       }
 
       const moved = [...binsToMove, ...itemsToMove];

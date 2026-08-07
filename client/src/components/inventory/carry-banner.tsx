@@ -57,7 +57,7 @@ export function CarryBanner() {
           ? `Put ${reversible.length} back — ${skipped} had no previous home`
           : reversible.length === 1
             ? `${reversible[0].name} put back`
-            : `${reversible.length} items put back`,
+            : `${describeLoad(reversible)} put back`,
       );
       clearLastMove();
     } catch (err) {
