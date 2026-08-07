@@ -129,16 +129,29 @@ html {
   100% { box-shadow: 0 0 0 0 oklch(0.62 0.19 40 / 0); }
 }
 
+/* BACKWARDS, not BOTH.
+ *
+ * `both` keeps the animation applying after it finishes, and a filled
+ * `transform: none` still computes to matrix(1,0,0,1,0,0) — which creates a
+ * stacking context that never goes away. Any dropdown inside an animated
+ * container is then sealed in, however high its z-index, and every later
+ * sibling paints over it. That is exactly how the item page's overflow menu
+ * ended up underneath the ledger.
+ *
+ * `backwards` still applies the from-state during animation-delay (so nothing
+ * flashes in before its turn), but releases the element afterwards, leaving
+ * transform genuinely none. Same picture, no trapped stacking context.
+ */
 .animate-fade-up {
-  animation: fade-up 0.3s ease-out both;
+  animation: fade-up 0.3s ease-out backwards;
 }
 
 .animate-scale-in {
-  animation: scale-in 0.2s ease-out both;
+  animation: scale-in 0.2s ease-out backwards;
 }
 
 .animate-slide-up {
-  animation: slide-up 0.3s ease-out both;
+  animation: slide-up 0.3s ease-out backwards;
 }
 
 .animate-pulse-ring {
