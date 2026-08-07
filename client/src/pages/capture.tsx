@@ -194,6 +194,7 @@ export function Capture() {
   // underneath "Take the picture" with its selects still live.
   React.useEffect(() => {
     if (phase !== 'place') setPicking(false);
+    if (phase !== 'identify') setIdentifying(false);
   }, [phase]);
 
   function adoptProduct(product: Record<string, unknown>) {
@@ -361,9 +362,9 @@ export function Capture() {
   const step = phase === 'photo' ? 1 : phase === 'identify' ? 2 : 3;
 
   return (
-    <div className="flex flex-col gap-3 p-4 pb-28 max-w-lg mx-auto">
+    <div className="flex flex-col gap-3 max-w-lg mx-auto h-full">
       {/* progress + destination */}
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 shrink-0">
         {[1, 2, 3].map((n) => (
           <span key={n} className={cn('h-[3px] rounded-full transition-all duration-300 ease-out',
             n === step ? 'w-8 bg-[var(--color-primary)]' : 'w-5',
@@ -378,7 +379,7 @@ export function Capture() {
 
       {/* the draft being built */}
       {(draft.photoUrl || draft.name || draft.barcode) && (
-        <div className="flex items-center gap-2 border border-[var(--color-rule)] rounded-[var(--radius-sm)] p-2">
+        <div className="flex items-center gap-2 border border-[var(--color-rule)] rounded-[var(--radius-sm)] p-2 shrink-0">
           {draft.photoUrl
             ? <img src={draft.photoUrl} alt="" className="w-11 h-11 rounded-[var(--radius-sm)] object-cover" />
             : <span className="w-11 h-11 rounded-[var(--radius-sm)] border border-dashed border-[var(--color-rule)]" />}
@@ -399,7 +400,7 @@ export function Capture() {
       )}
 
       {dupes.length > 0 && (
-        <div className="flex items-start gap-2 border-2 border-[var(--color-amber)] rounded-[var(--radius-sm)] p-2.5">
+        <div className="flex items-start gap-2 border-2 border-[var(--color-amber)] rounded-[var(--radius-sm)] p-2.5 shrink-0">
           <AlertTriangle className="w-4 h-4 shrink-0 text-[var(--color-amber)] mt-0.5" />
           <span className="min-w-0 flex-1">
             <span className="block font-mono text-[10px] uppercase tracking-[0.1em] font-bold text-[var(--color-amber)]">
@@ -425,13 +426,9 @@ export function Capture() {
         </div>
       )}
 
-      {busy && (
-        <p className="font-mono text-[11px] uppercase tracking-[0.08em] text-[var(--color-primary)] text-center">{busy}</p>
-      )}
-
       {/* Each step enters as its own move, so advancing reads as progress
           rather than the same page quietly rearranging itself. */}
-      <div key={phase} className="animate-step-in flex flex-col gap-3">
+      <div key={phase} className={cn('animate-step-in flex flex-col gap-3', phase !== 'photo' && 'flex-1 min-h-0')}>
       {/* ── step 1: the picture ─────────────────────────────────────────── */}
       {phase === 'photo' && (
         <div className="flex flex-col gap-2">
@@ -451,25 +448,67 @@ export function Capture() {
 
       {/* ── step 2/3: the camera hunts codes ────────────────────────────── */}
       {(phase === 'identify' || phase === 'place') && (
-        <div className="flex flex-col gap-2">
-          {/* The instruction goes ABOVE the frame — you read it before you
-              raise the phone, not after you have already pointed it somewhere.
-              Step 2 reads the maker's barcode, step 3 reads tally's tag: two
-              different questions, two different scanners, and the product one
-              cannot decode a QR, so a bin label can no longer be swallowed
-              while you are naming something (or the reverse). */}
-          {phase === 'identify' ? (
-            <ProductScanner onBarcode={handleCode} onClose={() => navigate(-1)} />
+        <div className="flex flex-col gap-2 flex-1 min-h-0">
+          {/* Exactly ONE of four things fills the space above the controls.
+              A panel REPLACES the camera rather than stacking under it: that
+              is what keeps the step one screen tall, and it also means the
+              camera is not decoding while you type into a search box.
+              Step 2 reads the maker's barcode, step 3 reads tally's tag — two
+              questions, two scanners, and the product one cannot decode a QR,
+              so a bin label can no longer be swallowed mid-naming. */}
+          {phase === 'identify' && identifying ? (
+            <div className="flex flex-col gap-2 border-2 border-[var(--color-text)] rounded-[var(--radius-sm)] p-3 flex-1 min-h-0">
+              <div className="flex items-center justify-between shrink-0">
+                <span className="font-mono text-[10px] uppercase tracking-[0.1em] font-bold">What is it?</span>
+                <button
+                  type="button"
+                  aria-label="Close"
+                  onClick={() => setIdentifying(false)}
+                  className="min-w-[32px] min-h-[32px] flex items-center justify-center text-[var(--color-text-muted)]"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+              <ProductSearch initialQuery={draft.name} onProductSelected={adoptProduct} />
+              <UrlExtractor onProductExtracted={adoptProduct} />
+            </div>
+          ) : phase === 'place' && picking ? (
+            <DestinationPicker
+              {...(ctxArea
+                // Both from the same URL, so they always agree.
+                ? { seedAreaId: ctxArea, seedPropertyId: ctxProperty }
+                // Otherwise seed from the pinned bin ALONE and let the picker
+                // backfill its property: pairing a remembered area with a
+                // property from elsewhere can list another property's bins.
+                : { seedAreaId: dest?.areaId })}
+              onPick={(bin) => {
+                pinDestination({ id: bin.id, name: bin.name, areaId: bin.areaId });
+                setPicking(false);
+                toast.success(`Adding to ${bin.name}`);
+                const d = stateRef.current.draft;
+                if (d.name || d.photo || d.barcode) void commit(d, { id: bin.id, name: bin.name, areaId: bin.areaId });
+                else setPhase('photo');
+              }}
+              onClose={() => setPicking(false)}
+            />
+          ) : phase === 'identify' ? (
+            <ProductScanner
+              label={busy ?? 'Scan product barcode'}
+              onBarcode={handleCode}
+              onClose={() => navigate(-1)}
+            />
           ) : (
-            <TagScanner isActive={!picking} onTag={handleCode} onClose={() => navigate(-1)} />
+            <TagScanner
+              label={busy ?? 'Scan tote/area tag'}
+              onTag={handleCode}
+              onClose={() => navigate(-1)}
+            />
           )}
 
-          {/* Destination lives ONLY on the step that asks for one. Carried
-              through steps 1 and 2 it was a banner answering a question
-              nobody had reached yet. Under the frame, because you look here
-              after the camera has failed to find a tag. */}
-          {phase === 'place' && (
-            <div className="flex flex-col gap-1.5">
+          {/* Destination lives ONLY on the step that asks for one, and under
+              the frame, because you look here after the camera has failed. */}
+          {phase === 'place' && !picking && (
+            <div className="flex flex-col gap-1.5 shrink-0">
               {dest && (
                 <div className="flex items-center gap-2">
                   <MapPin className="w-3.5 h-3.5 shrink-0 text-[var(--color-text-muted)]" />
@@ -510,54 +549,38 @@ export function Capture() {
             </div>
           )}
 
-          {/* Not everything has a scannable barcode. These answer the same
-              question as step 2 — "what is this?" — so they live here rather
-              than on a separate add screen. */}
-          {phase === 'identify' && (
-            identifying ? (
-              <div className="flex flex-col gap-2 border-2 border-[var(--color-text)] rounded-[var(--radius-sm)] p-3">
-                <div className="flex items-center justify-between">
-                  <span className="font-mono text-[10px] uppercase tracking-[0.1em] font-bold">What is it?</span>
-                  <button
-                    type="button"
-                    aria-label="Close"
-                    onClick={() => setIdentifying(false)}
-                    className="min-w-[32px] min-h-[32px] flex items-center justify-center text-[var(--color-text-muted)]"
-                  >
-                    <X className="w-4 h-4" />
-                  </button>
-                </div>
-                <ProductSearch
-                  onProductSelected={adoptProduct}
-                  onCreateManually={() => setIdentifying(false)}
-                  onClose={() => setIdentifying(false)}
-                />
-                <UrlExtractor onProductExtracted={adoptProduct} />
-              </div>
-            ) : (
-              <Button variant="ghost" size="sm" onClick={() => setIdentifying(true)}>
-                <Search className="w-3.5 h-3.5" />
-                No barcode? Search or paste a link
+          {/* Two escape hatches from the camera on ONE row, not two: the
+              catalogue when the thing has no barcode, and the bin step when
+              the remembered bin has not been confirmed this session. The
+              placeholder below carries the search affordance. */}
+          {phase === 'identify' && !identifying && (
+            <div className="flex gap-2 shrink-0">
+              <Button variant="ghost" size="sm" className="flex-1 min-w-0" onClick={() => setIdentifying(true)}>
+                <Search className="w-3.5 h-3.5 shrink-0" />
+                <span className="truncate">Search</span>
               </Button>
-            )
-          )}
-
-          {/* Reachable whenever the destination is not SETTLED, not merely
-              when it is absent: with the chip gone from this step, a
-              remembered-but-unconfirmed bin would otherwise leave no way
-              forward except scanning a product barcode. */}
-          {phase === 'identify' && !destConfirmed && (
-            <Button variant="ghost" size="sm" onClick={() => setPhase('place')}>
-              <MapPin className="w-3.5 h-3.5" />
-              {dest ? `Still ${dest.name}?` : 'Choose the bin first'}
-            </Button>
+              {!destConfirmed && (
+                <Button variant="ghost" size="sm" className="flex-1 min-w-0" onClick={() => setPhase('place')}>
+                  <MapPin className="w-3.5 h-3.5 shrink-0" />
+                  <span className="truncate">{dest ? 'Where?' : 'Choose bin'}</span>
+                </Button>
+              )}
+            </div>
           )}
 
           {phase === 'identify' && (
-            <div className="flex gap-2">
-              <Input placeholder="Or type a name…" value={draft.name}
+            <div className="flex gap-2 shrink-0">
+              <Input placeholder="Name it, or search…" value={draft.name}
                 onChange={(e) => setDraft((d) => ({ ...d, name: e.target.value }))} />
-              <Button size="sm" disabled={!dest || !!busy}
+              {/* Once the bin IS confirmed the row above disappears, which
+                  used to leave no way back to step 3. Costs no vertical px. */}
+              {destConfirmed && (
+                <Button size="sm" variant="outline" aria-label="Change the bin"
+                  className="shrink-0" onClick={() => setPhase('place')}>
+                  <MapPin className="w-4 h-4" />
+                </Button>
+              )}
+              <Button size="sm" className="shrink-0" disabled={!dest || !!busy}
                 onClick={() => dest && commit(draft, dest)}>
                 <Check className="w-4 h-4" />
                 Add
@@ -566,7 +589,7 @@ export function Capture() {
           )}
 
           {phase === 'place' && !picking && (
-            <Button variant="outline" size="sm" onClick={() => setPicking(true)}>
+            <Button variant="outline" size="sm" className="shrink-0" onClick={() => setPicking(true)}>
               <List className="w-4 h-4" />
               Pick a bin from the list
             </Button>
@@ -576,30 +599,10 @@ export function Capture() {
 
       </div>
 
-      {/* ── the keyboard path to a destination ──────────────────────────── */}
-      {picking && (
-        <DestinationPicker
-          {...(ctxArea
-            // Both from the same URL, so they always agree.
-            ? { seedAreaId: ctxArea, seedPropertyId: ctxProperty }
-            // Otherwise seed from the pinned bin ALONE and let the picker
-            // backfill its property: pairing a remembered area with a
-            // property from elsewhere can list another property's bins.
-            : { seedAreaId: dest?.areaId })}
-          onPick={(bin) => {
-            pinDestination({ id: bin.id, name: bin.name, areaId: bin.areaId });
-            setPicking(false);
-            toast.success(`Adding to ${bin.name}`);
-            const d = stateRef.current.draft;
-            if (d.name || d.photo || d.barcode) void commit(d, { id: bin.id, name: bin.name, areaId: bin.areaId });
-            else setPhase('photo');
-          }}
-          onClose={() => setPicking(false)}
-        />
-      )}
-
       {/* ── receipts ─────────────────────────────────────────────────────── */}
-      {receipts.length > 0 && (
+      {/* Step 1 only: this list is unbounded, and steps 2 and 3 are sized to
+          the viewport. Step 1 has no frame to steal from. */}
+      {phase === 'photo' && receipts.length > 0 && (
         <div className="flex flex-col">
           <ColHead
             action={receipts.length > 1 ? `Queue all ${receipts.length}` : undefined}

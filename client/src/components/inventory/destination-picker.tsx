@@ -68,8 +68,8 @@ export function DestinationPicker({
   }, [seedAreaId, propertyId]);
 
   return (
-    <div className="flex flex-col gap-2 border-2 border-[var(--color-text)] rounded-[var(--radius-sm)] p-3">
-      <div className="flex items-center justify-between">
+    <div className="flex flex-col gap-2 border-2 border-[var(--color-text)] rounded-[var(--radius-sm)] p-3 flex-1 min-h-0">
+      <div className="flex items-center justify-between shrink-0">
         <span className="font-mono text-[10px] uppercase tracking-[0.1em] font-bold">Choose a bin</span>
         <button
           type="button"
@@ -89,7 +89,7 @@ export function DestinationPicker({
             setPropertyId(Number(e.target.value));
             setAreaId(0);
           }}
-          className="w-full min-h-[40px] px-2 rounded-[var(--radius-sm)] border border-[var(--color-rule)] bg-[var(--color-bg)] text-sm"
+          className="w-full min-h-[40px] px-2 rounded-[var(--radius-sm)] border border-[var(--color-rule)] bg-[var(--color-bg)] text-sm shrink-0"
         >
           <option value={0}>Property…</option>
           {properties?.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
@@ -100,7 +100,7 @@ export function DestinationPicker({
         value={areaId}
         onChange={(e) => { seeded.current = true; setAreaId(Number(e.target.value)); }}
         disabled={!propertyId}
-        className="w-full min-h-[40px] px-2 rounded-[var(--radius-sm)] border border-[var(--color-rule)] bg-[var(--color-bg)] text-sm disabled:opacity-50"
+        className="w-full min-h-[40px] px-2 rounded-[var(--radius-sm)] border border-[var(--color-rule)] bg-[var(--color-bg)] text-sm disabled:opacity-50 shrink-0"
       >
         <option value={0}>Area…</option>
         {areas?.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
@@ -108,11 +108,11 @@ export function DestinationPicker({
 
       {areaId > 0 && (
         (containers?.length ?? 0) === 0 ? (
-          <p className="font-mono text-[10px] uppercase tracking-[0.06em] text-[var(--color-text-muted)] py-2">
+          <p className="font-mono text-[10px] uppercase tracking-[0.06em] text-[var(--color-text-muted)] py-2 shrink-0">
             No bins in this area yet — scan its area label to file loose
           </p>
         ) : (
-          <div className="flex flex-col max-h-56 overflow-y-auto">
+          <div className="flex flex-col flex-1 min-h-[100px] overflow-y-auto">
             {containers?.map((c) => (
               <button
                 key={c.id}

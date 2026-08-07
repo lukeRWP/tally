@@ -133,7 +133,7 @@ export function PutDown() {
   // Nothing in hand: this screen has no question to ask.
   if (carried.length === 0) {
     return (
-      <div className="flex flex-col gap-4 p-4 pb-28 max-w-lg mx-auto">
+      <div className="flex flex-col gap-4 max-w-lg mx-auto">
         <TitleBar className="w-fit">Move</TitleBar>
         <div className="flex flex-col items-center gap-2 py-12 text-center">
           <PackageOpen className="w-7 h-7 text-[var(--color-text-muted)]" />
@@ -156,9 +156,9 @@ export function PutDown() {
   }
 
   return (
-    <div className="flex flex-col gap-3 p-4 pb-28 max-w-lg mx-auto">
+    <div className="flex flex-col gap-3 max-w-lg mx-auto h-full">
       {/* What is in your hands, and the one question this screen asks. */}
-      <div className="flex items-center gap-2 border-2 border-[var(--color-primary)] bg-[var(--color-primary-bg)] rounded-[var(--radius-sm)] px-3 py-2">
+      <div className="flex items-center gap-2 border-2 border-[var(--color-primary)] bg-[var(--color-primary-bg)] rounded-[var(--radius-sm)] px-3 py-2 shrink-0">
         <span className="min-w-0 flex-1">
           <span className="block font-mono text-[10px] uppercase tracking-[0.1em] text-[var(--color-primary)] font-bold">
             carrying
@@ -180,16 +180,6 @@ export function PutDown() {
         </button>
       </div>
 
-      {/* The action is drawn inside the frame, so it is read while aiming
-          rather than before or after. It doubles as the progress indicator
-          while the move is in flight. */}
-      <TagScanner
-        isActive={!picking}
-        label={busy ? 'Moving…' : 'Scan tote/area tag'}
-        onTag={handleCode}
-        onClose={() => navigate(-1)}
-      />
-
       {picking ? (
         <DestinationPicker
           seedAreaId={carried[0]?.fromAreaId}
@@ -197,10 +187,19 @@ export function PutDown() {
           onClose={() => setPicking(false)}
         />
       ) : (
-        <Button variant="outline" size="sm" onClick={() => setPicking(true)}>
-          <List className="w-4 h-4" />
-          Pick a bin from the list
-        </Button>
+        <>
+          {/* The action is drawn inside the frame, so it is read while aiming.
+              It doubles as the progress indicator while the move is in flight. */}
+          <TagScanner
+            label={busy ? 'Moving…' : 'Scan tote/area tag'}
+            onTag={handleCode}
+            onClose={() => navigate(-1)}
+          />
+          <Button variant="outline" size="sm" className="shrink-0" onClick={() => setPicking(true)}>
+            <List className="w-4 h-4" />
+            Pick a bin from the list
+          </Button>
+        </>
       )}
     </div>
   );
