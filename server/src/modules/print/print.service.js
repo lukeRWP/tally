@@ -89,6 +89,17 @@ const PrintService = {
     if (resolved.error) return { error: resolved.error };
     const { propertyId } = resolved;
 
+    // The property is only known after resolving the entities, so this is the
+    // first point a role gate can run — the routes cannot do it up front.
+    // Printing is an editing action: a viewer must not be able to queue jobs
+    // (or, via a large-preset manifest, render the whole inventory).
+    const member = await _db.query(
+      'SELECT ROLE FROM TALLY.property_members WHERE PROPERTY_ID = ? AND USER_ID = ?',
+      [propertyId, userId]
+    );
+    const role = member[0]?.ROLE || null;
+    if (role !== 'owner' && role !== 'editor') return { error: 'forbidden' };
+
     // Hold the job when a roll is loaded that does not match. With no agent
     // registered yet the job simply waits as `queued`.
     //

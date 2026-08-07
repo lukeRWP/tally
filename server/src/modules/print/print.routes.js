@@ -3,12 +3,21 @@ module.exports = function printRoutes({ app, db, logger, config }) {
   PrintService.init({ db, logger, config });
 
   const { requireAgent } = require('./agent.middleware');
+  const { requirePrintRole } = require('./role.middleware');
   const { createJob, setLoadedMedia, createAgent, agentClaim, agentAck } = require('./print.schema');
   const validate = require('../../middleware/validate');
   const { success, error } = require('../../utils/response');
 
   const { requireAuth } = app.locals;
   const agentAuth = requireAgent({ db });
+
+  // Device management is owner-only; queueing/cancelling a print is an editing
+  // action; listing is any member. Mirrors items/containers/tags — this module
+  // previously had NO role checks at all.
+  const OWNER = ['owner'];
+  const EDITOR = ['owner', 'editor'];
+  const MEMBER = ['owner', 'editor', 'viewer'];
+  const role = (roles, from) => requirePrintRole({ db }, roles, from);
 
   // ── User endpoints (session auth) ─────────────────────────────────────────
 
@@ -18,30 +27,31 @@ module.exports = function printRoutes({ app, db, logger, config }) {
     const out = await PrintService.createJob({ entityType, entityIds, preset, userId: req.user.id });
     if (out.error === 'not_found') return error(res, 'No entities found for the given IDs', 404);
     if (out.error === 'mixed') return error(res, 'All labels in one job must belong to the same property', 400);
+    if (out.error === 'forbidden') return error(res, 'Insufficient permissions', 403);
     return success(res, out);
   });
 
   // ── GET /api/print/_x_/jobs — the queue for a property ────────────────────
-  app.get('/api/print/_x_/jobs', requireAuth, async (req, res) => {
+  app.get('/api/print/_x_/jobs', requireAuth, role(MEMBER, 'query'), async (req, res) => {
     const propertyId = Number(req.query.propertyId);
     if (!propertyId) return error(res, 'propertyId is required', 400);
     return success(res, await PrintService.listJobs(propertyId, req.user.id, 50));
   });
 
   // ── PATCH /api/print/_p_/jobs/:id/cancel ──────────────────────────────────
-  app.patch('/api/print/_p_/jobs/:id/cancel', requireAuth, async (req, res) => {
+  app.patch('/api/print/_p_/jobs/:id/cancel', requireAuth, role(EDITOR, 'job'), async (req, res) => {
     const ok = await PrintService.cancelJob(Number(req.params.id), req.user.id);
     return ok ? success(res, { canceled: true }) : error(res, 'Job not found or already finished', 404);
   });
 
   // ── POST /api/print/_y_/jobs/:id/retry ────────────────────────────────────
-  app.post('/api/print/_y_/jobs/:id/retry', requireAuth, async (req, res) => {
+  app.post('/api/print/_y_/jobs/:id/retry', requireAuth, role(EDITOR, 'job'), async (req, res) => {
     const ok = await PrintService.retryJob(Number(req.params.id), req.user.id);
     return ok ? success(res, { requeued: true }) : error(res, 'Job not found or not in a failed state', 404);
   });
 
   // ── POST /api/print/_y_/agents — register a printer ───────────────────────
-  app.post('/api/print/_y_/agents', requireAuth, validate(createAgent, 'body'), async (req, res) => {
+  app.post('/api/print/_y_/agents', requireAuth, role(OWNER, 'body'), validate(createAgent, 'body'), async (req, res) => {
     const out = await PrintService.createAgent({
       propertyId: req.body.propertyId, name: req.body.name, userId: req.user.id,
     });
@@ -51,20 +61,20 @@ module.exports = function printRoutes({ app, db, logger, config }) {
   });
 
   // ── GET /api/print/_x_/agents ─────────────────────────────────────────────
-  app.get('/api/print/_x_/agents', requireAuth, async (req, res) => {
+  app.get('/api/print/_x_/agents', requireAuth, role(MEMBER, 'query'), async (req, res) => {
     const propertyId = Number(req.query.propertyId);
     if (!propertyId) return error(res, 'propertyId is required', 400);
     return success(res, await PrintService.listAgents(propertyId, req.user.id));
   });
 
   // ── DELETE /api/print/_d_/agents/:id ──────────────────────────────────────
-  app.delete('/api/print/_d_/agents/:id', requireAuth, async (req, res) => {
+  app.delete('/api/print/_d_/agents/:id', requireAuth, role(OWNER, 'agent'), async (req, res) => {
     const ok = await PrintService.revokeAgent(Number(req.params.id), req.user.id);
     return ok ? success(res, { revoked: true }) : error(res, 'Printer not found', 404);
   });
 
   // ── PUT /api/print/_u_/agents/:id/loaded-media ────────────────────────────
-  app.put('/api/print/_u_/agents/:id/loaded-media', requireAuth, validate(setLoadedMedia, 'body'), async (req, res) => {
+  app.put('/api/print/_u_/agents/:id/loaded-media', requireAuth, role(OWNER, 'agent'), validate(setLoadedMedia, 'body'), async (req, res) => {
     const out = await PrintService.setLoadedMedia(Number(req.params.id), req.body.loadedMedia, req.user.id);
     return out ? success(res, out) : error(res, 'Printer not found', 404);
   });

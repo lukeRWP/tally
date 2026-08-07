@@ -173,6 +173,7 @@ test('resolveProperty rejects an empty id array without querying the db', async 
 
 test('createJob queues when the loaded roll matches and holds when it does not', async () => {
   const mk = (loaded) => fakeDb((sql) => {
+    if (/SELECT ROLE FROM TALLY\.property_members/i.test(sql)) return [{ ROLE: 'owner' }];
     if (/property_members/i.test(sql)) return [{ ENTITY_ID: 5, PROPERTY_ID: 3 }];
     if (/FROM TALLY\.printer_agents/i.test(sql)) return [{ LOADED_MEDIA: loaded }];
     if (/INSERT INTO TALLY\.print_jobs/i.test(sql)) return { insertId: 11 };
@@ -192,6 +193,7 @@ test('createJob queues when the loaded roll matches and holds when it does not',
 
 test('createJob queues normally when no agent is registered yet', async () => {
   PrintService.init({ db: fakeDb((sql) => {
+    if (/SELECT ROLE FROM TALLY\.property_members/i.test(sql)) return [{ ROLE: 'owner' }];
     if (/property_members/i.test(sql)) return [{ ENTITY_ID: 1, PROPERTY_ID: 3 }];
     if (/FROM TALLY\.printer_agents/i.test(sql)) return [];      // no agent
     if (/INSERT INTO TALLY\.print_jobs/i.test(sql)) return { insertId: 12 };
@@ -216,6 +218,7 @@ test('createJob refuses a partially-visible batch and never inserts', async () =
   let inserted = false;
   PrintService.init({ db: fakeDb((sql) => {
     if (/INSERT/i.test(sql)) { inserted = true; return { insertId: 1 }; }
+    if (/SELECT ROLE FROM TALLY\.property_members/i.test(sql)) return [{ ROLE: 'owner' }];
     if (/property_members/i.test(sql)) return [{ ENTITY_ID: 5, PROPERTY_ID: 3 }]; // 999 never resolves
     return [];
   }), logger, config });
@@ -227,6 +230,7 @@ test('createJob refuses a partially-visible batch and never inserts', async () =
 test('createJob picks the printer agent deterministically when more than one is registered', async () => {
   let agentSql = '';
   PrintService.init({ db: fakeDb((sql) => {
+    if (/SELECT ROLE FROM TALLY\.property_members/i.test(sql)) return [{ ROLE: 'owner' }];
     if (/property_members/i.test(sql)) return [{ ENTITY_ID: 5, PROPERTY_ID: 3 }];
     if (/FROM TALLY\.printer_agents/i.test(sql)) { agentSql = sql; return [{ LOADED_MEDIA: 'small' }]; }
     if (/INSERT INTO TALLY\.print_jobs/i.test(sql)) return { insertId: 1 };
@@ -610,4 +614,71 @@ test('renderJobPdf large branch builds a manifest bundle as the queuing user', a
     Labels.getManifest = origManifest;
     Labels.renderManifestBundle = origBundle;
   }
+});
+
+// ── Role enforcement ────────────────────────────────────────────────────────
+// The print module shipped with NO role checks: every route was requireAuth
+// only. A viewer could mint a printer bearer token and use it to pull
+// large-preset contents manifests — the whole inventory — and could delete the
+// owner's real printer. These pin the gate shut.
+
+test('createJob refuses a viewer: printing is an editing action', async () => {
+  const db = fakeDb((sql) => {
+    if (/SELECT ROLE FROM TALLY\.property_members/i.test(sql)) return [{ ROLE: 'viewer' }];
+    if (/property_members/i.test(sql)) return [{ ENTITY_ID: 5, PROPERTY_ID: 3 }];
+    if (/INSERT INTO TALLY\.print_jobs/i.test(sql)) return { insertId: 11 };
+    return [];
+  });
+  PrintService.init({ db, logger, config });
+  const out = await PrintService.createJob({
+    entityType: 'container', entityIds: [5], preset: 'large', userId: 42,
+  });
+  assert.deepEqual(out, { error: 'forbidden' }, 'a viewer must not be able to queue a job');
+});
+
+test('createJob still allows owner and editor', async () => {
+  for (const role of ['owner', 'editor']) {
+    const db = fakeDb((sql) => {
+      if (/SELECT ROLE FROM TALLY\.property_members/i.test(sql)) return [{ ROLE: role }];
+      if (/property_members/i.test(sql)) return [{ ENTITY_ID: 5, PROPERTY_ID: 3 }];
+      if (/INSERT INTO TALLY\.print_jobs/i.test(sql)) return { insertId: 11 };
+      return [];
+    });
+    PrintService.init({ db, logger, config });
+    const out = await PrintService.createJob({
+      entityType: 'container', entityIds: [5], preset: 'large', userId: 42,
+    });
+    assert.equal(out.id, 11, `${role} must still be able to print`);
+  }
+});
+
+test('requirePrintRole resolves the property per route shape and gates on role', async () => {
+  const { requirePrintRole } = require('../src/modules/print/role.middleware');
+  const run = async (from, req, roles, rows) => {
+    const db = fakeDb((sql) => {
+      if (/FROM TALLY\.print_jobs/i.test(sql)) return [{ PROPERTY_ID: 3 }];
+      if (/FROM TALLY\.printer_agents/i.test(sql)) return [{ PROPERTY_ID: 3 }];
+      if (/property_members/i.test(sql)) return rows;
+      return [];
+    });
+    let status = null, body = null, nexted = false;
+    const res = { status(c) { status = c; return this; }, json(b) { body = b; return this; } };
+    await requirePrintRole({ db }, roles, from)({ user: { id: 1 }, params: { id: 9 }, body: {}, query: {}, ...req }, res, () => { nexted = true; });
+    return { status, body, nexted };
+  };
+
+  // agent management is owner-only, resolved from the agent row
+  assert.equal((await run('agent', {}, ['owner'], [{ ROLE: 'viewer' }])).status, 403, 'viewer cannot manage the printer');
+  assert.equal((await run('agent', {}, ['owner'], [{ ROLE: 'owner' }])).nexted, true, 'owner can');
+
+  // job routes resolve the property from the job row
+  assert.equal((await run('job', {}, ['owner', 'editor'], [{ ROLE: 'viewer' }])).status, 403);
+  assert.equal((await run('job', {}, ['owner', 'editor'], [{ ROLE: 'editor' }])).nexted, true);
+
+  // listing is any member; query-string property ids resolve too
+  assert.equal((await run('query', { query: { propertyId: '3' } }, ['owner', 'editor', 'viewer'], [{ ROLE: 'viewer' }])).nexted, true,
+    'a viewer may still LIST jobs/printers');
+
+  // a non-member gets 404, not 403 — do not leak that the property exists
+  assert.equal((await run('agent', {}, ['owner'], [])).status, 404);
 });
