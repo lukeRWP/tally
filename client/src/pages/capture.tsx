@@ -182,6 +182,14 @@ export function Capture() {
     })();
   }, [ctxArea, pickProperty]);
 
+  // The picker belongs to the "where does this go" step. Any path that leaves
+  // that step — scanning a bin, committing, discarding the draft, starting the
+  // next item — must take the panel with it, or it strands itself open
+  // underneath "Take the picture" with its selects still live.
+  React.useEffect(() => {
+    if (phase !== 'place') setPicking(false);
+  }, [phase]);
+
   function pinDestination(d: Destination) {
     setDest(d);
     try { localStorage.setItem(DEST_KEY, JSON.stringify(d)); } catch { /* private mode */ }
@@ -223,6 +231,9 @@ export function Capture() {
 
       setReceipts((prev) => [receipt, ...prev]);
       setDraft({ name: '' });
+      // The warning belongs to the draft that just landed, not to the next one —
+      // leaving it up would claim you already own something you haven't scanned.
+      setDupes([]);
       setPhase('photo');
       toast.success(`${created.name} → ${destination.name}`);
     } catch (err) {
@@ -517,10 +528,13 @@ export function Capture() {
           <ColHead
             action={receipts.length > 1 ? `Queue all ${receipts.length}` : undefined}
             onAction={() => {
-              stageMany(receipts.map((r) => ({
+              // addMany dedupes and returns how many were NEWLY staged. Report
+              // that, not the number asked for — queueing the same receipts
+              // twice stages nothing, and saying "Queued 5" would be a lie.
+              const n = stageMany(receipts.map((r) => ({
                 id: r.id, entityType: 'item' as const, name: r.name, qrCode: r.qrCode, propertyId: r.propertyId,
               })));
-              toast.success(`Queued ${receipts.length} labels`);
+              toast.success(n > 0 ? `${n} labels queued` : 'Already queued');
             }}
           >
             Added this session · {receipts.length}
