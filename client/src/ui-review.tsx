@@ -1,7 +1,6 @@
 /* Local-only visual review harness: runs the REAL app with the API stubbed,
    so every screen can be rendered and eyeballed without the docker stack.
    Route comes from ?route=/container/1 ; theme from ?theme=dark  */
-import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { QueryClientProvider, QueryClient } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';

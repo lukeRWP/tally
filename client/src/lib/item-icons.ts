@@ -1,7 +1,7 @@
 import {
   Blend, Drill, Lightbulb, Shirt, Book, Tv, Headphones, Camera,
   Laptop, Phone, Watch, Gamepad2, Utensils, CookingPot, Wine,
-  Armchair, Lamp, Fan, Wrench, Hammer, Scissors, Package,
+  Armchair, Fan, Wrench, Hammer, Scissors, Package,
   Gift, Sparkles, ShoppingBag, Box,
 } from 'lucide-react';
 

@@ -5,9 +5,6 @@ import type { Property, Area, Container, Item, BreadcrumbItem } from '@/types/in
 
 // Helper: API responses wrap data in named keys like { properties: [...] }
 // These select functions unwrap them for the components.
-function unwrap<T>(key: string) {
-  return (data: Record<string, unknown>) => (data as Record<string, T>)[key];
-}
 
 // ---------------------------------------------------------------------------
 // Properties
