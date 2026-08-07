@@ -34,18 +34,18 @@ export function Scan() {
   }, [navigate]);
 
   return (
-    <div className="flex flex-col gap-3 p-4 pb-28 max-w-lg mx-auto">
-      <TitleBar className="w-fit">Scan a tag</TitleBar>
+    <div className="flex flex-col gap-3 max-w-lg mx-auto h-full">
+      <TitleBar className="w-fit shrink-0">Scan a tag</TitleBar>
 
       <TagScanner onTag={handleCode} onClose={() => navigate(-1)} />
 
-      <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-[var(--color-text-muted)] text-center">
+      <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-[var(--color-text-muted)] text-center shrink-0">
         Takes you to whatever the label is on
       </p>
 
       {/* A damaged or unreadable label still has its code printed on it. */}
       <form
-        className="flex gap-2"
+        className="flex gap-2 shrink-0"
         onSubmit={(e) => { e.preventDefault(); if (typed.trim()) handleCode(typed); }}
       >
         <Input
@@ -55,13 +55,13 @@ export function Scan() {
           autoCapitalize="characters"
           spellCheck={false}
         />
-        <Button size="sm" type="submit" disabled={!typed.trim()}>
+        <Button size="sm" type="submit" className="shrink-0" disabled={!typed.trim()}>
           <ArrowRight className="w-4 h-4" />
           Go
         </Button>
       </form>
 
-      <p className="flex items-start gap-2 font-mono text-[10px] uppercase tracking-[0.06em] text-[var(--color-text-muted)] pt-2">
+      <p className="flex items-start gap-2 font-mono text-[10px] uppercase tracking-[0.06em] text-[var(--color-text-muted)] pt-2 shrink-0">
         <ScanLine className="w-3.5 h-3.5 shrink-0 mt-0.5" />
         <span>Adding an item is the Add button · putting one away is Move</span>
       </p>

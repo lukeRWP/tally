@@ -8,6 +8,7 @@ import { Header } from './header';
 import { BottomNav } from './bottom-nav';
 import { CarryBanner } from '@/components/inventory/carry-banner';
 import { cn } from '@/lib/utils';
+import { useCarryStore } from '@/store/carry-store';
 
 // Mirrors the bottom nav's five destinations in the same order, plus Search at
 // the top — the two surfaces expressed different IAs before (7 items here, 6
@@ -104,6 +105,17 @@ export function RootLayout() {
   const mainRef = useRef<HTMLElement>(null);
   const { pathname } = useLocation();
 
+  // The banner is `fixed`, so it occludes the last row of every page it shows
+  // on. Reserve for it here rather than deleting the banner on the one page
+  // where that hurt most. /move renders the scanner but never the banner, so
+  // it must not pay.
+  const carrying = useCarryStore(
+    (s) => (s.carried.length > 0 || s.lastMove !== null) && pathname !== '/move',
+  );
+  // The three camera flows are sized to the viewport instead of scrolling:
+  // the frame is a flex item that absorbs the leftover height.
+  const fitsViewport = pathname === '/capture' || pathname === '/scan' || pathname === '/move';
+
   // Scroll to top on route change
   useEffect(() => {
     mainRef.current?.scrollTo(0, 0);
@@ -120,7 +132,7 @@ export function RootLayout() {
   }
 
   return (
-    <div className="flex h-screen bg-[var(--color-bg)] overflow-x-hidden">
+    <div className="flex h-[100dvh] bg-[var(--color-bg)] overflow-x-hidden">
       {/* Desktop sidebar */}
       <Sidebar />
 
@@ -130,8 +142,19 @@ export function RootLayout() {
         <div className="xl:hidden pt-[env(safe-area-inset-top)]">
           <Header />
         </div>
-        <main ref={mainRef} className="flex-1 overflow-y-auto overflow-x-hidden pb-[calc(5rem+env(safe-area-inset-bottom))] xl:pb-6 px-4 pt-4">
-          <div className="md:max-w-[720px] lg:max-w-[860px] xl:max-w-[800px] mx-auto">
+        <main
+          ref={mainRef}
+          className={cn(
+            'flex-1 overflow-y-auto overflow-x-hidden px-4 pt-4 xl:pb-6',
+            carrying
+              ? 'pb-[calc(9.5rem+env(safe-area-inset-bottom))]'
+              : 'pb-[calc(5rem+env(safe-area-inset-bottom))]',
+          )}
+        >
+          <div className={cn(
+            'md:max-w-[720px] lg:max-w-[860px] xl:max-w-[800px] mx-auto',
+            fitsViewport && 'h-full',
+          )}>
             <Outlet />
           </div>
         </main>

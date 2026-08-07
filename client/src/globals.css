@@ -221,3 +221,14 @@ html {
     scroll-behavior: auto !important;
   }
 }
+
+/* ── Scanner chrome ──────────────────────────────────────────────────── */
+
+/* html5-qrcode's `#qr-shaded-region` is KEPT: it is the only element on
+   screen guaranteed to agree with what the decoder reads, because the library
+   derives it from the same qrbox it hands to `getShadedRegionBounds`. Only its
+   four corner ticks are hidden — the app draws thermal brackets on the same
+   box. The library sets position/size/backgroundColor inline on those ticks
+   but never `display`, and this rule is unlayered (it follows
+   `@import "tailwindcss"`), so it outranks every layered utility. */
+#qr-shaded-region > div { display: none; }

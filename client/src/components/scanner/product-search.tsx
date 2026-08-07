@@ -1,15 +1,14 @@
 import { useState, useEffect, useRef } from 'react';
-import { Search, Plus, Package, X, Loader2, Globe } from 'lucide-react';
+import { Search, Package, Loader2, Globe } from 'lucide-react';
 import { Input } from '@/components/ui/input';
-import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { api } from '@/lib/api';
 
 interface ProductSearchProps {
+  /** Seed from whatever has already been typed on the step. */
+  initialQuery?: string;
   onProductSelected: (product: Record<string, unknown>) => void;
-  onCreateManually: () => void;
-  onClose: () => void;
 }
 
 interface SearchProduct {
@@ -28,12 +27,8 @@ interface SearchResponse {
   onlineProducts?: SearchProduct[];
 }
 
-export function ProductSearch({
-  onProductSelected,
-  onCreateManually,
-  onClose,
-}: ProductSearchProps) {
-  const [query, setQuery] = useState('');
+export function ProductSearch({ initialQuery = '', onProductSelected }: ProductSearchProps) {
+  const [query, setQuery] = useState(initialQuery);
   const [localResults, setLocalResults] = useState<SearchProduct[]>([]);
   const [onlineResults, setOnlineResults] = useState<SearchProduct[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -79,17 +74,8 @@ export function ProductSearch({
   const hasResults = localResults.length > 0 || onlineResults.length > 0;
 
   return (
-    <div className="flex flex-col gap-4">
-      <div className="flex items-center justify-between">
-        <h2 className="text-base font-semibold text-[var(--color-text)]">
-          Search Products
-        </h2>
-        <Button variant="ghost" size="icon" onClick={onClose}>
-          <X className="w-4 h-4" />
-        </Button>
-      </div>
-
-      <div className="relative">
+    <div className="flex flex-col gap-2 flex-1 min-h-0">
+      <div className="relative shrink-0">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--color-text-muted)]" />
         <Input
           ref={inputRef}
@@ -100,7 +86,7 @@ export function ProductSearch({
         />
       </div>
 
-      <div className="flex flex-col gap-2 max-h-[50vh] overflow-y-auto">
+      <div className="flex flex-col gap-2 flex-1 min-h-[120px] overflow-y-auto">
         {isLoading && (
           <div className="flex items-center justify-center py-8 gap-2">
             <Loader2 className="w-5 h-5 text-[var(--color-primary)] animate-spin" />
@@ -143,15 +129,6 @@ export function ProductSearch({
           </div>
         )}
       </div>
-
-      <button
-        type="button"
-        className="flex items-center justify-center gap-2 w-full py-3 border border-dashed border-[var(--color-border)] rounded-[var(--radius-md)] text-sm text-[var(--color-primary)] hover:bg-[var(--color-primary-bg)] transition-colors cursor-pointer"
-        onClick={onCreateManually}
-      >
-        <Plus className="w-4 h-4" />
-        Create item manually
-      </button>
     </div>
   );
 }
