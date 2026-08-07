@@ -170,7 +170,11 @@ function activityDayLabel(dateStr: string): string {
 }
 
 function activityLabel(entry: AuditEntry): React.ReactNode {
-  const name = typeof entry.changes?.name === 'string' ? entry.changes.name : entry.entityType;
+  // The server's recent-activity query never joins an entity name, so
+  // changes.name is only present when the change payload happened to carry
+  // one. Falling back to the entity TYPE printed it twice — "updated
+  // container container". The id is at least identifying.
+  const name = typeof entry.changes?.name === 'string' ? entry.changes.name : `#${entry.entityId}`;
   return (
     <span>
       {entry.displayName} {entry.action} {entry.entityType} <span className="font-semibold text-[var(--color-text)]">{name}</span>

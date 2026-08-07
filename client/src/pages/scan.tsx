@@ -12,6 +12,7 @@ import {
   MoveRight,
   MapPin,
   Printer,
+  Smartphone,
   X,
 } from 'lucide-react';
 import { CameraScanner } from '@/components/scanner/camera-scanner';
@@ -445,7 +446,20 @@ export function Scan() {
   })();
 
   return (
-    <div className="flex flex-col gap-4 px-4 py-4 max-w-lg mx-auto lg:max-w-md">
+    <div className="flex flex-col gap-4 px-4 py-4 max-w-lg mx-auto xl:max-w-md">
+      {/* Scanning is a phone workflow — you are standing at the shelf with a bin
+          in your hands. Desktops usually have no usable camera, and the tab was
+          removed from the sidebar for that reason, so anyone who still lands
+          here on a big screen gets told where this actually belongs rather than
+          a camera that will not focus on a QR label. */}
+      <div className="hidden xl:flex items-start gap-2 border-2 border-[var(--color-text)] rounded-[var(--radius-sm)] px-3 py-2.5">
+        <Smartphone className="w-4 h-4 shrink-0 mt-0.5" />
+        <p className="font-mono text-[11px] uppercase tracking-[0.06em] leading-relaxed text-[var(--color-text-secondary)]">
+          Scanning is built for your phone — open tally there to use the camera.
+          Manual entry below still works on any device.
+        </p>
+      </div>
+
       {/* Mode tabs + Manual search -- compact top bar */}
       <div className="flex flex-col gap-2 animate-fade-up">
         <div className="flex gap-1 p-1 rounded-[var(--radius-lg)] bg-[var(--color-elevated)]">

@@ -229,7 +229,7 @@ const LabelsService = {
       const chipY = pad + 2 + titleH + 3;
       if (codeY - chipY >= 11) LabelsService._drawChips(doc, e.tags, tx, chipY, tw, 5.5);
       doc.fontSize(P.code).font('Courier').fillColor('#000000')
-        .text(String(e.qrCode).toUpperCase(), tx, codeY, { width: tw, lineBreak: false, ellipsis: true });
+        .text(String(e.qrCode).toUpperCase(), tx, codeY, { width: tw, height: doc.currentLineHeight(), lineBreak: false, ellipsis: true });
     } else { // medium
       const titleH = LabelsService._invertedTitle(doc, e.name, cx + pad, pad, cw - pad * 2, P.title, 'center', 2);
       // Sit the QR below whatever the title actually took, rather than assuming
@@ -242,10 +242,10 @@ const LabelsService = {
       const fy = H - pad - P.code - 3, typeW = 60;
       doc.save().moveTo(cx + pad, fy - 5).lineTo(W - pad, fy - 5).lineWidth(1).strokeColor('#000000').stroke().restore();
       doc.fontSize(P.code).font('Courier').fillColor('#000000')
-        .text(String(e.qrCode).toUpperCase(), cx + pad, fy, { width: cw - pad * 2 - typeW, lineBreak: false, ellipsis: true });
+        .text(String(e.qrCode).toUpperCase(), cx + pad, fy, { width: cw - pad * 2 - typeW, height: doc.currentLineHeight(), lineBreak: false, ellipsis: true });
       if (e.type) {
         doc.fontSize(P.code - 1).font('Courier-Bold').fillColor('#000000')
-          .text(String(e.type).toUpperCase(), W - pad - typeW, fy, { width: typeW, align: 'right', lineBreak: false, ellipsis: true });
+          .text(String(e.type).toUpperCase(), W - pad - typeW, fy, { width: typeW, align: 'right', height: doc.currentLineHeight(), lineBreak: false, ellipsis: true });
       }
     }
   },
@@ -364,16 +364,16 @@ const LabelsService = {
       // into stipple that reads as washed-out at these sizes. Bold + a size up
       // also survives thermal bleed better than a hairline face.
       doc.fontSize(9).font('Helvetica-Bold').fillColor('#000000')
-        .text(header.breadcrumb || '', hx, L.pad + titleH + 3, { width: hw, lineBreak: false, ellipsis: true });
+        .text(header.breadcrumb || '', hx, L.pad + titleH + 3, { width: hw, height: doc.currentLineHeight(), lineBreak: false, ellipsis: true });
       doc.fontSize(8).font('Courier-Bold').fillColor('#000000')
-        .text(String(header.qrCode).toUpperCase(), hx, L.pad + titleH + 15, { width: hw, lineBreak: false });
+        .text(String(header.qrCode).toUpperCase(), hx, L.pad + titleH + 15, { width: hw, height: doc.currentLineHeight(), lineBreak: false });
       LabelsService._drawChips(doc, header.tags, hx, L.pad + titleH + 26, hw, 6.5);
       doc.save().moveTo(cx + L.pad, L.pad + L.headerH).lineTo(W - L.pad, L.pad + L.headerH)
         .lineWidth(1.5).strokeColor('#000000').stroke().restore();
 
       // Column header.
       doc.fontSize(8).font('Courier-Bold').fillColor('#000000')
-        .text('CONTENTS', cx + L.pad, L.pad + L.headerH + 3, { width: 120, lineBreak: false });
+        .text('CONTENTS', cx + L.pad, L.pad + L.headerH + 3, { width: 120, height: doc.currentLineHeight(), lineBreak: false });
       doc.text('QTY', W - L.pad - 34, L.pad + L.headerH + 3, { width: 34, align: 'right' });
 
       // Rows for this page.
@@ -403,13 +403,13 @@ const LabelsService = {
       LabelsService._drawBarcode(doc, header.qrCode, bcX, bcY, L.barcodeH - 12);
       doc.fontSize(7).font('Courier-Bold').fillColor('#000000')
         .text(String(header.qrCode).toUpperCase(), cx, bcY + L.barcodeH - 11,
-          { width: W - cx, align: 'center', lineBreak: false });
+          { width: W - cx, align: 'center', height: doc.currentLineHeight(), lineBreak: false });
 
       // Footer: total count + page x of n.
       const fy = H - L.pad - L.footerH + 5;
       doc.save().moveTo(cx + L.pad, fy - 5).lineTo(W - L.pad, fy - 5).lineWidth(1).strokeColor('#000000').stroke().restore();
       doc.fontSize(8).font('Courier-Bold').fillColor('#000000')
-        .text(`${rows.length} item${rows.length === 1 ? '' : 's'}`, cx + L.pad, fy, { width: 120, lineBreak: false });
+        .text(`${rows.length} item${rows.length === 1 ? '' : 's'}`, cx + L.pad, fy, { width: 120, height: doc.currentLineHeight(), lineBreak: false });
       doc.text(`Page ${pg + 1} of ${pageCount}`, W - L.pad - 100, fy, { width: 100, align: 'right' });
     }
   },
@@ -712,7 +712,7 @@ const LabelsService = {
         // Code — monospace
         doc.fontSize(fs.code).font('Courier').fillColor('#aaaaaa')
           .text(entity.qrCode.toUpperCase(), textX, textCenterY + 4, {
-            width: textW, lineBreak: false, ellipsis: true,
+            width: textW, height: doc.currentLineHeight(), lineBreak: false, ellipsis: true,
           });
 
         // Location — the full path, recombined from breadcrumb + parentZone.
@@ -720,7 +720,7 @@ const LabelsService = {
         if (loc) {
           doc.fontSize(fs.bc).font('Helvetica').fillColor('#888888')
             .text(loc.toUpperCase(), textX, textCenterY + 4 + fs.code * 1.8, {
-              width: textW, lineBreak: false, ellipsis: true,
+              width: textW, height: doc.currentLineHeight(), lineBreak: false, ellipsis: true,
             });
         }
 
