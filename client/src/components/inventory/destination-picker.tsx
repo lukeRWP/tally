@@ -36,6 +36,21 @@ export function DestinationPicker({
   const { data: areas } = useAreas(propertyId);
   const { data: containers } = useContainers(areaId);
 
+  // useState initialisers run once, so a seed arriving AFTER mount would be
+  // ignored and the picker would sit blank. Adopting it must be a ONE-SHOT
+  // event, not a condition: `if (seed && !areaId)` re-fires the moment the
+  // user picks a different property (which resets the area to 0), restoring
+  // the previous property's area and listing its bins — and it makes the
+  // "Area…" placeholder impossible to choose, since selecting it snaps back.
+  const seeded = React.useRef(false);
+  React.useEffect(() => {
+    if (seeded.current) return;
+    if (!seedAreaId && !seedPropertyId) return;
+    if (seedAreaId) setAreaId(seedAreaId);
+    if (seedPropertyId) setPropertyId(seedPropertyId);
+    seeded.current = true;
+  }, [seedAreaId, seedPropertyId]);
+
   // One property is the common case; pre-select it so the picker opens on areas.
   React.useEffect(() => {
     if (!propertyId && properties?.length === 1) setPropertyId(properties[0].id);
@@ -69,7 +84,11 @@ export function DestinationPicker({
       {(properties?.length ?? 0) > 1 && (
         <select
           value={propertyId}
-          onChange={(e) => { setPropertyId(Number(e.target.value)); setAreaId(0); }}
+          onChange={(e) => {
+            seeded.current = true; // a deliberate choice outranks any seed
+            setPropertyId(Number(e.target.value));
+            setAreaId(0);
+          }}
           className="w-full min-h-[40px] px-2 rounded-[var(--radius-sm)] border border-[var(--color-rule)] bg-[var(--color-bg)] text-sm"
         >
           <option value={0}>Property…</option>
@@ -79,7 +98,7 @@ export function DestinationPicker({
 
       <select
         value={areaId}
-        onChange={(e) => setAreaId(Number(e.target.value))}
+        onChange={(e) => { seeded.current = true; setAreaId(Number(e.target.value)); }}
         disabled={!propertyId}
         className="w-full min-h-[40px] px-2 rounded-[var(--radius-sm)] border border-[var(--color-rule)] bg-[var(--color-bg)] text-sm disabled:opacity-50"
       >

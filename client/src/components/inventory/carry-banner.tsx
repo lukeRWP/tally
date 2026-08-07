@@ -66,6 +66,11 @@ export function CarryBanner() {
     }
   }
 
+  // /move asks "where does this go?" and owns both the carrying state and the
+  // undo for what it just did. The guard has to come BEFORE the lastMove
+  // branch or that banner still renders there, giving one move two Undos.
+  if (pathname === '/move') return null;
+
   if (lastMove) {
     return (
       <div className="fixed bottom-[calc(4.6rem+env(safe-area-inset-bottom))] xl:bottom-6 left-3 right-3 xl:left-auto xl:right-6 xl:w-[26rem] z-40
@@ -102,11 +107,6 @@ export function CarryBanner() {
   }
 
   if (carried.length === 0) return null;
-
-  // The banner exists to follow you around until you answer "where does this
-  // go?". On the screen that asks that question it is just an echo — and its
-  // button would navigate to the page you are already on.
-  if (pathname === '/move') return null;
 
   return (
     <div className="fixed bottom-[calc(4.6rem+env(safe-area-inset-bottom))] xl:bottom-6 left-3 right-3 xl:left-auto xl:right-6 xl:w-[26rem] z-40

@@ -125,7 +125,12 @@ export function PutDown() {
             : moveItem.mutateAsync({ id: i.id, containerId: i.fromContainerId as number }),
         ),
       );
-      toast('Put back');
+      const skipped = lastMove.items.length - reversible.length;
+      toast(
+        skipped > 0
+          ? `Put ${reversible.length} back — ${skipped} had no previous home`
+          : 'Put back',
+      );
       clearLastMove();
     } catch (err) {
       toast(err instanceof Error ? err.message : 'Could not undo the move');

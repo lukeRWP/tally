@@ -474,8 +474,13 @@ export function Capture() {
       {/* ── the keyboard path to a destination ──────────────────────────── */}
       {picking && (
         <DestinationPicker
-          seedAreaId={ctxArea || dest?.areaId}
-          seedPropertyId={ctxProperty}
+          {...(ctxArea
+            // Both from the same URL, so they always agree.
+            ? { seedAreaId: ctxArea, seedPropertyId: ctxProperty }
+            // Otherwise seed from the pinned bin ALONE and let the picker
+            // backfill its property: pairing a remembered area with a
+            // property from elsewhere can list another property's bins.
+            : { seedAreaId: dest?.areaId })}
           onPick={(bin) => {
             pinDestination({ id: bin.id, name: bin.name, areaId: bin.areaId });
             setPicking(false);

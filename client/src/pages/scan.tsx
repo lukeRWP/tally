@@ -32,10 +32,6 @@ import {
 import { usePrintQueueStore } from '@/store/print-queue-store';
 import { useCreatePrintJob, usePrinters } from '@/hooks/use-print';
 
-// -- Tab mode ----------------------------------------------------------------
-
-
-// -- Add-mode state machine --------------------------------------------------
 
 type ScanState =
   | 'idle'
@@ -79,8 +75,6 @@ function tidyProductName(raw: string): string {
 export function Scan() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-
-  // -- Tab ------------------------------------------------------------------
 
   // -- Add mode state -------------------------------------------------------
   const [state, setState] = useState<ScanState>('idle');
@@ -128,22 +122,11 @@ export function Scan() {
     { id: number; name: string; qrCode: string; propertyId: number }[]
   >([]);
 
-  // -- Move mode state ------------------------------------------------------
-
   // Data hooks
   const { data: properties } = useProperties();
   const { data: areas } = useAreas(propertyId);
   const { data: containers } = useContainers(areaId);
   const createItem = useCreateItem();
-  // named ...Mutation because `moveItem` is the held-item state below
-  // handleBarcodeScanned is memoised and handed to the camera, so it would
-  // close over a stale `carried`. A ref keeps the scanner honest.
-
-  /**
-   * Put the carried load down on the scanned label. A bin and an area are both
-   * valid destinations — usePutDown owns what each one means for each kind of
-   * load, so this only has to reject labels that are neither.
-   */
 
   const stageLabel = usePrintQueueStore((st) => st.add);
   const stageMany = usePrintQueueStore((st) => st.addMany);
@@ -189,8 +172,6 @@ export function Scan() {
       } catch { /* context resolution failed, dropdowns stay empty */ }
     })();
   }, [searchParams, contextLoaded]);
-
-  // -- Add mode handlers ----------------------------------------------------
 
   // resetFlow restores the current propertyId/areaId/containerId (which may have been resolved from URL params)
   const resetFlow = useCallback(() => {
@@ -335,14 +316,7 @@ export function Scan() {
     [navigate]
   );
 
-  // -- Move mode handlers ---------------------------------------------------
 
-
-
-  // -- Tab switch -----------------------------------------------------------
-
-
-  // -- Move mode status message ---------------------------------------------
 
 
   return (
@@ -377,8 +351,7 @@ export function Scan() {
       </div>
 
       {/* -- ADD MODE -------------------------------------------------------- */}
-      {(
-        <>
+      <>
           {/* Session receipts — a LIST, so the next scan cannot wipe the Print
               affordance out from under your hand. Newest first. */}
           {receipts.length > 0 && (
@@ -747,8 +720,7 @@ export function Scan() {
               </div>
             </Card>
           )}
-        </>
-      )}
+      </>
 
       {/* -- MOVE MODE ------------------------------------------------------- */}
 

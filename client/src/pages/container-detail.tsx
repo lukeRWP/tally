@@ -221,6 +221,7 @@ export function ContainerDetail() {
         kind: 'item' as const,
         fromContainerId: id,
         fromContainerName: container?.name,
+        fromAreaId: container?.areaId,
       })),
     ]);
     exitSelectMode();

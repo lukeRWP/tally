@@ -523,6 +523,9 @@ export function ItemDetail() {
               kind: 'item',
               fromContainerId: containerId,
               fromContainerName: breadcrumb?.filter((b) => b.type === 'container').at(-1)?.name ?? undefined,
+              // Where it lives now, so the bin picker on /move opens on this
+              // area instead of making you drill the whole cascade again.
+              fromAreaId: breadcrumb?.find((b) => b.type === 'area')?.id,
             }]);
             toast(`Carrying ${item.name} — scan where it goes`);
             navigate('/move');
