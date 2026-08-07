@@ -38,7 +38,7 @@ export function Scan() {
     <div className="flex flex-col gap-3 p-4 pb-28 max-w-lg mx-auto">
       <TitleBar className="w-fit">Scan a tag</TitleBar>
 
-      <ColHead>Point at an area or bin label</ColHead>
+      <ColHead>Scan tote/area tag</ColHead>
 
       <TagScanner onTag={handleCode} onClose={() => navigate(-1)} />
 
