@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { Outlet, Navigate, useLocation, useNavigate } from 'react-router-dom';
-import { Home, Search, ScanLine, Bell, Settings, Printer } from 'lucide-react';
+import { Home, Search, Bell, Settings, Printer } from 'lucide-react';
 import { useAuth } from '@/hooks/use-auth';
 import { useAuthStore } from '@/store/auth-store';
 import { useUnreadCount } from '@/hooks/use-notifications';
@@ -15,8 +15,7 @@ const navItems = [
   { path: '/search', icon: Search, label: 'Search' },
   { path: '/', icon: Home, label: 'Home' },
   { path: '/print', icon: Printer, label: 'Print' },
-  { path: '/scan', icon: ScanLine, label: 'Scan' },
-  { path: '/notifications', icon: Bell, label: 'Notifications' },
+  { path: '/notifications', icon: Bell, label: 'Alerts' },
   { path: '/settings', icon: Settings, label: 'Settings' },
 ];
 
@@ -28,10 +27,13 @@ function Sidebar() {
   const unread = typeof unreadCount === 'number' ? unreadCount : 0;
 
   return (
-    <aside className="hidden lg:flex lg:flex-col lg:w-56 lg:fixed lg:inset-y-0 bg-[var(--color-card)] border-r border-[var(--color-border)] z-50">
+    <aside className="hidden lg:flex lg:flex-col lg:w-56 lg:fixed lg:inset-y-0 bg-[var(--color-bg)] border-r-2 border-[var(--color-text)] z-50">
       {/* Logo */}
-      <div className="px-5 py-4 border-b border-[var(--color-border)]">
-        <h1 className="text-xl font-extrabold tracking-tighter text-[var(--color-text)]">Tally</h1>
+      <div className="px-5 py-4 border-b-2 border-[var(--color-text)] flex items-center gap-2">
+        {/* Same ink chip + mono wordmark as the mobile header — the desktop
+            sidebar was missed in the chrome pass and still read as a normal app. */}
+        <span className="w-4 h-4 rounded-[2px] bg-[var(--color-primary)] shrink-0" aria-hidden="true" />
+        <h1 className="font-mono text-sm font-extrabold uppercase tracking-[0.22em] text-[var(--color-text)]">Tally</h1>
       </div>
 
       {/* Nav items */}
@@ -39,33 +41,19 @@ function Sidebar() {
         {navItems.map((item) => {
           const isActive = location.pathname === item.path;
           const Icon = item.icon;
-          const isScan = item.path === '/scan';
-
-          if (isScan) {
-            return (
-              <button
-                key={item.path}
-                onClick={() => navigate(item.path)}
-                className="flex items-center gap-3 w-full px-3 py-2.5 rounded-[var(--radius-lg)] text-sm font-semibold bg-[var(--color-primary)] text-white shadow-md hover:opacity-90 transition-all duration-200 mt-2 mb-2"
-              >
-                <Icon className="w-5 h-5" />
-                {item.label}
-              </button>
-            );
-          }
 
           return (
             <button
               key={item.path}
               onClick={() => navigate(item.path)}
               className={cn(
-                'flex items-center gap-3 w-full px-3 py-2.5 rounded-[var(--radius-md)] text-sm font-medium transition-all duration-200',
+                'flex items-center gap-3 w-full px-3 py-2.5 rounded-[var(--radius-sm)] font-mono text-xs font-bold uppercase tracking-[0.08em] transition-colors duration-150',
                 isActive
-                  ? 'bg-[var(--color-primary-bg)] text-[var(--color-primary)] border-l-2 border-[var(--color-primary)]'
+                  ? 'bg-[var(--color-text)] text-[var(--color-bg)]'
                   : 'text-[var(--color-text-secondary)] hover:bg-[var(--color-elevated)] hover:text-[var(--color-text)]',
               )}
             >
-              <Icon className={cn('w-5 h-5 shrink-0', isActive ? 'text-[var(--color-primary)]' : '')} />
+              <Icon className="w-5 h-5 shrink-0" />
               <span className="flex-1 text-left">{item.label}</span>
               {item.path === '/notifications' && unread > 0 && (
                 <span className="min-w-[18px] h-[18px] px-1 rounded-full bg-[var(--color-red)] text-white text-[10px] font-bold flex items-center justify-center leading-none">
@@ -79,21 +67,21 @@ function Sidebar() {
 
       {/* User info */}
       {user && (
-        <div className="px-4 py-3 border-t border-[var(--color-border)] flex items-center gap-3">
+        <div className="px-4 py-3 border-t border-[var(--color-rule)] flex items-center gap-3">
           {user.avatarUrl ? (
             <img
               src={user.avatarUrl}
               alt={user.displayName}
-              className="w-8 h-8 rounded-full object-cover ring-1 ring-[var(--color-border)]"
+              className="w-8 h-8 rounded-[var(--radius-sm)] object-cover border border-[var(--color-rule)]"
             />
           ) : (
-            <div className="w-8 h-8 rounded-full bg-[var(--color-primary-bg)] flex items-center justify-center text-xs font-bold text-[var(--color-primary)]">
+            <div className="w-8 h-8 rounded-[var(--radius-sm)] border border-[var(--color-text)] flex items-center justify-center font-mono text-xs font-bold text-[var(--color-text)]">
               {user.displayName.charAt(0).toUpperCase()}
             </div>
           )}
           <div className="min-w-0 flex-1">
-            <p className="text-sm font-medium text-[var(--color-text)] truncate">{user.displayName}</p>
-            <p className="text-xs text-[var(--color-text-muted)] truncate">{user.email}</p>
+            <p className="text-sm font-semibold text-[var(--color-text)] truncate">{user.displayName}</p>
+            <p className="font-mono text-[10px] text-[var(--color-text-muted)] truncate">{user.email}</p>
           </div>
         </div>
       )}
