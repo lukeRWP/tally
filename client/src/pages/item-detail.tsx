@@ -2,12 +2,13 @@ import * as React from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   Pencil, ArrowRightLeft, Trash2, Plus, Printer, Link, CalendarPlus, HandCoins, Share2,
-  ChevronRight, ChevronDown, MoreHorizontal, Upload,
+  ChevronRight, ChevronDown, MoreHorizontal, Upload, Camera, X,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { LabelPrintDialog } from '@/components/labels/label-print-dialog';
 import { Card } from '@/components/ui/card';
 import { TitleBar } from '@/components/ui/title-bar';
+import { ColHead } from '@/components/ui/col-head';
 import { Badge } from '@/components/ui/badge';
 // (Badge import removed — it was dead; item-detail renders no <Badge>.)
 import { Skeleton } from '@/components/ui/skeleton';
@@ -31,7 +32,8 @@ import { AccessoryPicker } from '@/components/accessories/accessory-picker';
 import { LendingList } from '@/components/lending/lending-list';
 import { LendForm } from '@/components/lending/lend-form';
 import { useItemDates } from '@/hooks/use-dates';
-import { useItemFiles } from '@/hooks/use-files';
+import { useEntityHistory } from '@/hooks/use-notifications';
+import { useItemFiles, useUploadFile, useConditionHistory } from '@/hooks/use-files';
 import { useAccessories } from '@/hooks/use-accessories';
 import { useLendingHistory } from '@/hooks/use-lending';
 import { ShareDialog } from '@/components/sharing/share-dialog';
@@ -166,6 +168,61 @@ function OverflowMenu({
   );
 }
 
+/**
+ * What has happened to this item. Every create / move / lend / delete already
+ * writes to the change log, so this is a read of truth the app was recording
+ * and never showing.
+ */
+function ItemHistory({ itemId }: { itemId: number }) {
+  const { data: entries } = useEntityHistory('item', itemId);
+  const [all, setAll] = React.useState(false);
+  const list = entries ?? [];
+  const shown = all ? list : list.slice(0, 4);
+
+  return (
+    <div className="flex flex-col animate-fade-up" style={{ animationDelay: '110ms' }}>
+      <ColHead
+        action={list.length > shown.length ? `All ${list.length}` : undefined}
+        onAction={() => setAll(true)}
+      >
+        History
+      </ColHead>
+      {shown.length === 0 ? (
+        <p className="font-mono text-[10px] uppercase tracking-[0.06em] text-[var(--color-text-muted)] py-3">
+          Nothing else recorded yet
+        </p>
+      ) : (
+        shown.map((e) => (
+          <div key={e.id} className="flex items-baseline gap-3 py-2 border-b border-[var(--color-rule)] last:border-b-0">
+            <span className="font-mono text-[10px] text-[var(--color-text-muted)] shrink-0 w-16">
+              {new Date(e.createdAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+            </span>
+            <span className="text-sm flex-1 min-w-0">
+              <span className="capitalize">{e.action}</span>
+              {e.displayName ? (
+                <span className="text-[var(--color-text-muted)]"> · {e.displayName}</span>
+              ) : null}
+            </span>
+          </div>
+        ))
+      )}
+    </div>
+  );
+}
+
+/** A dashed invitation to add one missing fact. */
+function AddChip({ label, onClick }: { label: string; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="font-mono text-[10px] uppercase tracking-[0.06em] border border-dashed border-[var(--color-text-muted)] text-[var(--color-text-muted)] rounded-full px-3 min-h-[28px] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)]"
+    >
+      + {label}
+    </button>
+  );
+}
+
 export function ItemDetail() {
   const { itemId } = useParams<{ itemId: string }>();
   const id = Number(itemId);
@@ -206,14 +263,37 @@ export function ItemDetail() {
   const [accessoryPickerOpen, setAccessoryPickerOpen] = React.useState(false);
   const [lendFormOpen, setLendFormOpen] = React.useState(false);
   const [shareOpen, setShareOpen] = React.useState(false);
+  const [photoOpen, setPhotoOpen] = React.useState(false);
+  const photoInput = React.useRef<HTMLInputElement>(null);
+  const uploadPhoto = useUploadFile();
+
+  // Photographing an item you are already looking at should cost one tap and
+  // no dialog — the file lands as a photo and the page shows it immediately.
+  async function onPickPhoto(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    try {
+      await uploadPhoto.mutateAsync({ itemId: id, file, fileType: 'photo' });
+      toast.success('Photo added');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not add the photo');
+    }
+  }
 
   // Fetch item dates for depreciation calculation
   const { data: itemDates } = useItemDates(id);
   // Fetch files & accessories & lending to determine if sections have data
   const { data: itemFiles } = useItemFiles(id);
+  const { data: conditions } = useConditionHistory(id);
   const { data: accessories } = useAccessories(id);
   const { data: lendingHistory } = useLendingHistory(id);
 
+  // Your photograph outranks the catalogue's stock image: one is this object,
+  // the other is a picture of something like it.
+  const photo = item?.photoUrl || item?.productImageUrl || null;
+
+  const hasConditions = (conditions?.length ?? 0) > 0;
   const hasFiles = (itemFiles?.length ?? 0) > 0;
   const hasDates = (itemDates?.length ?? 0) > 0;
   const hasAccessories = (accessories?.length ?? 0) > 0;
@@ -269,67 +349,65 @@ export function ItemDetail() {
       {/* Breadcrumbs */}
       <Breadcrumbs items={breadcrumbItems} />
 
-      {/* Hero Section — inverted title bar */}
+      {/* Identity — the photo you took, the facts on one line, the code.
+          Capture leads with a photograph, so the item's own page has to show
+          it; it used to appear only as a filename buried in Files, while the
+          top of the page showed nothing at all. */}
       <div className="animate-fade-up flex flex-col gap-2">
         <TitleBar className="w-fit max-w-full">{item.name}</TitleBar>
 
-        {/* Facts on ONE line. Most items are "a thing in a bin" — quantity,
-            condition and value said once, in order, beat four labelled cards. */}
-        <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-sm font-semibold text-[var(--color-text)]">
-            {[
-              item.quantity > 1 ? `${item.quantity}` : null,
-              item.condition ? item.condition.charAt(0).toUpperCase() + item.condition.slice(1) : null,
-              item.purchasePrice != null ? `$${item.purchasePrice.toFixed(2)}` : null,
-            ].filter(Boolean).join(' · ')}
-          </span>
-          {item.status !== 'active' && <Badge variant="info">{item.status}</Badge>}
-          <span className="font-mono text-[11px] text-[var(--color-text-muted)]">{item.qrCode}</span>
+        <div className="flex items-start gap-3">
+          {photo ? (
+            <button
+              type="button"
+              onClick={() => setPhotoOpen(true)}
+              className="shrink-0 w-16 h-16 rounded-[var(--radius-sm)] overflow-hidden border border-[var(--color-rule)]"
+            >
+              <img src={photo} alt={item.name} className="w-full h-full object-cover" />
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => photoInput.current?.click()}
+              aria-label="Add a photo"
+              className="shrink-0 w-16 h-16 rounded-[var(--radius-sm)] border border-dashed border-[var(--color-text-muted)] flex items-center justify-center text-[var(--color-text-muted)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)]"
+            >
+              <Camera className="w-5 h-5" />
+            </button>
+          )}
+
+          <div className="min-w-0 flex-1 flex flex-col gap-1">
+            {/* Facts on ONE line. Most items are "a thing in a bin" — quantity,
+                condition and value said once, in order, beat four labelled cards. */}
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-sm font-semibold text-[var(--color-text)]">
+                {[
+                  item.quantity > 1 ? `${item.quantity}` : null,
+                  item.condition ? item.condition.charAt(0).toUpperCase() + item.condition.slice(1) : null,
+                  item.purchasePrice != null ? `$${item.purchasePrice.toFixed(2)}` : null,
+                ].filter(Boolean).join(' · ')}
+              </span>
+              {item.status !== 'active' && <Badge variant="info">{item.status}</Badge>}
+              <span className="font-mono text-[11px] text-[var(--color-text-muted)]">{item.qrCode}</span>
+            </div>
+
+            {item.description && (
+              <p className="text-sm text-[var(--color-text-secondary)]">{item.description}</p>
+            )}
+
+            {propertyId > 0 && (
+              <TagPicker entityType="item" entityId={item.id} propertyId={propertyId} />
+            )}
+          </div>
         </div>
-
-        {item.description && (
-          <p className="text-sm text-[var(--color-text-secondary)] mt-2">{item.description}</p>
-        )}
-
-        {/* Inline Tags */}
-        {propertyId > 0 && (
-          <div className="mt-3">
-            <TagPicker entityType="item" entityId={item.id} propertyId={propertyId} />
-          </div>
-        )}
-
-        {/* What this item could still tell us. Creation now captures almost
-            nothing on purpose, so the gaps have to look like invitations
-            rather than emptiness — each chip opens the thing that fills it. */}
-        {(item.purchasePrice == null || !item.description) && (
-          <div className="flex flex-wrap gap-1.5 mt-2">
-            {item.purchasePrice == null && (
-              <button
-                type="button"
-                onClick={() => setEditOpen(true)}
-                className="font-mono text-[10px] uppercase tracking-[0.06em] border border-dashed border-[var(--color-text-muted)] text-[var(--color-text-muted)] rounded-full px-3 min-h-[28px] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)]"
-              >
-                + value
-              </button>
-            )}
-            {!item.description && (
-              <button
-                type="button"
-                onClick={() => setEditOpen(true)}
-                className="font-mono text-[10px] uppercase tracking-[0.06em] border border-dashed border-[var(--color-text-muted)] text-[var(--color-text-muted)] rounded-full px-3 min-h-[28px] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)]"
-              >
-                + description
-              </button>
-            )}
-          </div>
-        )}
       </div>
 
-      {/* Primary Action Row */}
+      {/* Actions. Lend leads: it is the one thing you do TO an item that the
+          app can't infer, and it used to be buried inside a collapsed card. */}
       <div className="flex gap-2 animate-fade-up" style={{ animationDelay: '50ms' }}>
-        <Button variant="outline" size="sm" className="flex-1 text-xs" onClick={() => setEditOpen(true)}>
-          <Pencil className="w-3.5 h-3.5" />
-          Edit
+        <Button size="sm" className="flex-1 text-xs" onClick={() => setLendFormOpen(true)}>
+          <HandCoins className="w-3.5 h-3.5" />
+          {item.status === 'lent' ? 'Return' : 'Lend'}
         </Button>
         <Button
           variant="outline"
@@ -337,12 +415,11 @@ export function ItemDetail() {
           className="flex-1 text-xs"
           onClick={() => {
             // Flow A: Move picks the item UP. The carry banner then follows you
-            // anywhere, and any container label you scan puts it down. The
-            // cascade picker is still reachable from the banner for the case
-            // where nothing is labelled.
+            // anywhere, and any container label you scan puts it down.
             pickUp([{
               id: item.id,
               name: item.name,
+              kind: 'item',
               fromContainerId: containerId,
               fromContainerName: breadcrumb?.filter((b) => b.type === 'container').at(-1)?.name ?? undefined,
             }]);
@@ -353,12 +430,36 @@ export function ItemDetail() {
           <ArrowRightLeft className="w-3.5 h-3.5" />
           Move
         </Button>
+        <Button variant="outline" size="sm" className="flex-1 text-xs" onClick={() => setEditOpen(true)}>
+          <Pencil className="w-3.5 h-3.5" />
+          Edit
+        </Button>
         <OverflowMenu
           onShare={() => setShareOpen(true)}
           onPrint={() => setPrintOpen(true)}
           onDelete={() => setDeleteOpen(true)}
         />
       </div>
+
+      {/* What this item could still tell us. Creation captures almost nothing
+          on purpose, so the gaps must read as invitations rather than
+          emptiness — each chip opens the thing that fills it, and a chip
+          disappears once its fact exists. */}
+      {(!photo || item.purchasePrice == null || !item.description || !hasDates || !hasFiles || !hasConditions) && (
+        <div className="flex flex-col gap-1.5 animate-fade-up" style={{ animationDelay: '80ms' }}>
+          <ColHead>Add what you know</ColHead>
+          <div className="flex flex-wrap gap-1.5">
+            {!photo && <AddChip label="photo" onClick={() => photoInput.current?.click()} />}
+            {item.purchasePrice == null && <AddChip label="value" onClick={() => setEditOpen(true)} />}
+            {!item.description && <AddChip label="description" onClick={() => setEditOpen(true)} />}
+            {!hasDates && <AddChip label="warranty" onClick={() => setDateFormOpen(true)} />}
+            {!hasFiles && <AddChip label="receipt" onClick={() => photoInput.current?.click()} />}
+            {!hasConditions && <AddChip label="condition" onClick={() => setConditionFormOpen(true)} />}
+          </div>
+        </div>
+      )}
+
+      <ItemHistory itemId={id} />
 
       {/* Desktop: 2-column layout / Mobile: single column */}
       <div className="lg:grid lg:grid-cols-3 lg:gap-6">
@@ -452,6 +553,7 @@ export function ItemDetail() {
           )}
 
           {/* Dates -- collapsible, default open if has data */}
+          {hasDates && (
           <CollapsibleSection
             title="Dates"
             defaultOpen={hasDates}
@@ -470,8 +572,10 @@ export function ItemDetail() {
               onOpenChange={setDateFormOpen}
             />
           </CollapsibleSection>
+          )}
 
           {/* Accessories -- collapsible, default open if has data */}
+          {hasAccessories && (
           <CollapsibleSection
             title="Accessories"
             defaultOpen={hasAccessories}
@@ -490,8 +594,10 @@ export function ItemDetail() {
               onOpenChange={setAccessoryPickerOpen}
             />
           </CollapsibleSection>
+          )}
 
           {/* Lending -- collapsible, default open if has data */}
+          {hasLending && (
           <CollapsibleSection
             title="Lending"
             defaultOpen={hasLending}
@@ -512,11 +618,14 @@ export function ItemDetail() {
               onOpenChange={setLendFormOpen}
             />
           </CollapsibleSection>
+          )}
         </div>
 
         {/* Right column (sidebar) */}
         <div className="lg:col-span-1 flex flex-col gap-4 mt-4 lg:mt-0">
-          {/* Value */}
+          {/* Value — only once there IS one. Absent value is the "+ value"
+              chip above, not a card announcing that nothing is recorded. */}
+          {item.purchasePrice != null && (
           <Card animationDelay="100ms">
             <h2 className="text-sm font-semibold text-[var(--color-text)] mb-3">Value</h2>
             {item.purchasePrice != null ? (
@@ -552,8 +661,11 @@ export function ItemDetail() {
               </div>
             )}
           </Card>
+          )}
 
-          {/* Files -- dashed dropzone when empty */}
+          {/* Files — the empty dropzone duplicated the + receipt chip, so the
+              card appears only when files exist. */}
+          {hasFiles && (
           <Card animationDelay="350ms">
             <h2 className="text-sm font-semibold text-[var(--color-text)] mb-3">Files</h2>
             {hasFiles ? (
@@ -573,8 +685,11 @@ export function ItemDetail() {
               </div>
             )}
           </Card>
+          )}
 
-          {/* Condition History */}
+          {/* Condition History — only once something has been recorded. The
+              "+ condition" chip above is how you record the first one. */}
+          {hasConditions && (
           <Card animationDelay="400ms">
             <div className="flex items-center justify-between mb-3">
               <h2 className="text-sm font-semibold text-[var(--color-text)]">Condition History</h2>
@@ -591,6 +706,7 @@ export function ItemDetail() {
               onComplete={() => {}}
             />
           </Card>
+          )}
         </div>
       </div>
 
@@ -658,6 +774,36 @@ export function ItemDetail() {
         isOpen={shareOpen}
         onOpenChange={setShareOpen}
       />
+
+      {/* Photo capture from the page itself: the chip and the empty thumbnail
+          both open this, so "add a photo" is one tap wherever you notice it. */}
+      <input
+        ref={photoInput}
+        type="file"
+        accept="image/*"
+        capture="environment"
+        className="hidden"
+        onChange={onPickPhoto}
+      />
+
+      {photoOpen && photo && (
+        <div
+          role="dialog"
+          aria-label="Photo"
+          onClick={() => setPhotoOpen(false)}
+          className="fixed inset-0 z-50 bg-black/90 flex items-center justify-center p-4"
+        >
+          <img src={photo} alt={item.name} className="max-w-full max-h-full object-contain" />
+          <button
+            type="button"
+            aria-label="Close"
+            onClick={() => setPhotoOpen(false)}
+            className="absolute top-4 right-4 min-w-[44px] min-h-[44px] flex items-center justify-center text-white"
+          >
+            <X className="w-6 h-6" />
+          </button>
+        </div>
+      )}
 
       <ConfirmDialog
         open={deleteOpen}
