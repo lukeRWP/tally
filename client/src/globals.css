@@ -142,6 +142,24 @@ html {
  * flashes in before its turn), but releases the element afterwards, leaving
  * transform genuinely none. Same picture, no trapped stacking context.
  */
+/* The step change in a multi-step flow. More travel and a touch more time
+ * than fade-up: the point is that you FELT the flow advance, not that
+ * something politely appeared. `backwards` for the same reason as the others —
+ * `both` leaves a filled transform behind, which is a permanent stacking
+ * context that traps any dropdown inside. */
+@keyframes step-in {
+  from { opacity: 0; transform: translateX(14px); }
+  to   { opacity: 1; transform: none; }
+}
+
+.animate-step-in {
+  animation: step-in 0.26s cubic-bezier(0.2, 0.8, 0.2, 1) backwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-step-in { animation: none; }
+}
+
 .animate-fade-up {
   animation: fade-up 0.3s ease-out backwards;
 }

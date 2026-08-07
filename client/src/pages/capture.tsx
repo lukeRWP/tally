@@ -46,6 +46,24 @@ import { cn } from '@/lib/utils';
 
 const TLY_CODE_REGEX = /^TLY-[PACI]-[0-9A-Fa-f]{4,8}$/;
 const DEST_KEY = 'tally-last-container';
+/** How many recent bins to offer at step 3. Three fits one row at 390px. */
+const RECENTS = 3;
+
+/**
+ * The remembered destinations, newest first.
+ *
+ * The key used to hold a single object; a value written by an older build is
+ * read as a one-entry list rather than thrown away, so nobody loses the bin
+ * they were working out of when this ships.
+ */
+function readRecents(): Destination[] {
+  try {
+    const raw = localStorage.getItem(DEST_KEY);
+    const parsed = raw ? JSON.parse(raw) : null;
+    const list = Array.isArray(parsed) ? parsed : parsed ? [parsed] : [];
+    return list.filter((d) => d && typeof d.id === 'number' && d.id > 0).slice(0, RECENTS);
+  } catch { return []; }
+}
 
 interface Destination {
   id: number;
@@ -108,13 +126,8 @@ export function Capture() {
   const [params] = useSearchParams();
   const photoInput = React.useRef<HTMLInputElement>(null);
 
-  const [dest, setDest] = React.useState<Destination | null>(() => {
-    try {
-      const raw = localStorage.getItem(DEST_KEY);
-      const p = raw ? JSON.parse(raw) : null;
-      return p && typeof p.id === 'number' && p.id > 0 ? p : null;
-    } catch { return null; }
-  });
+  const [recents, setRecents] = React.useState<Destination[]>(readRecents);
+  const [dest, setDest] = React.useState<Destination | null>(() => readRecents()[0] ?? null);
   /**
    * Whether the destination was chosen IN THIS SESSION (scanned, picked, or
    * carried in from the page you tapped Add on) rather than merely remembered
@@ -193,7 +206,12 @@ export function Capture() {
   function pinDestination(d: Destination) {
     setDest(d);
     setDestConfirmed(true);
-    try { localStorage.setItem(DEST_KEY, JSON.stringify(d)); } catch { /* private mode */ }
+    // Newest first, no duplicates, capped — a most-recently-used list.
+    setRecents((prev) => {
+      const next = [d, ...prev.filter((r) => r.id !== d.id)].slice(0, RECENTS);
+      try { localStorage.setItem(DEST_KEY, JSON.stringify(next)); } catch { /* private mode */ }
+      return next;
+    });
   }
 
   async function commit(d: Draft, destination: Destination) {
@@ -343,47 +361,15 @@ export function Capture() {
       {/* progress + destination */}
       <div className="flex items-center gap-2">
         {[1, 2, 3].map((n) => (
-          <span key={n} className={cn('h-[3px] w-5 rounded-full',
-            n < step ? 'bg-[var(--color-text)]' : n === step ? 'bg-[var(--color-primary)]' : 'bg-[var(--color-border)]')} />
+          <span key={n} className={cn('h-[3px] rounded-full transition-all duration-300 ease-out',
+            n === step ? 'w-8 bg-[var(--color-primary)]' : 'w-5',
+            n < step ? 'bg-[var(--color-text)]' : n > step ? 'bg-[var(--color-border)]' : '')} />
         ))}
         <span className="flex-1" />
-        <span className="font-mono text-[10px] uppercase tracking-[0.1em] text-[var(--color-text-muted)]">
-          step {step} of 3
+        <span key={phase} className="animate-step-in font-mono text-[10px] uppercase tracking-[0.1em] text-[var(--color-text-muted)]">
+          <b className="text-[var(--color-text)]">{step}/3</b>{' '}
+          {phase === 'photo' ? 'picture' : phase === 'identify' ? 'identify' : 'place'}
         </span>
-      </div>
-
-      {/* Where it goes. A destination confirmed in this session is a statement;
-          one merely remembered from last time is an offer, and must look like
-          one — the difference is the whole bug this drawing fixes. */}
-      <div className={cn('flex items-center gap-2 rounded-[var(--radius-sm)] border-2 px-3 py-2',
-        dest && destConfirmed ? 'border-[var(--color-text)]' : 'border-dashed border-[var(--color-primary)]')}
-      >
-        <MapPin className="w-4 h-4 shrink-0" />
-        <button type="button" onClick={() => setPhase('place')} className="min-w-0 flex-1 text-left">
-          <span className="block font-mono text-[10px] uppercase tracking-[0.1em] text-[var(--color-text-muted)]">
-            {!dest ? 'no bin chosen' : destConfirmed ? 'adding to' : 'last used'}
-          </span>
-          <span className="block text-sm font-semibold truncate">
-            {dest ? dest.name : 'Scan a bin or area label'}
-          </span>
-        </button>
-        {dest && !destConfirmed ? (
-          <button
-            type="button"
-            onClick={() => setDestConfirmed(true)}
-            className="shrink-0 bg-[var(--color-primary)] text-white rounded-[var(--radius-sm)] px-2.5 min-h-[32px] font-mono text-[10px] font-bold uppercase tracking-[0.06em]"
-          >
-            Still here
-          </button>
-        ) : (
-          <button
-            type="button"
-            onClick={() => setPhase('place')}
-            className="shrink-0 font-mono text-[10px] uppercase text-[var(--color-primary)] px-1 min-h-[32px]"
-          >
-            change
-          </button>
-        )}
       </div>
 
       {/* the draft being built */}
@@ -439,6 +425,9 @@ export function Capture() {
         <p className="font-mono text-[11px] uppercase tracking-[0.08em] text-[var(--color-primary)] text-center">{busy}</p>
       )}
 
+      {/* Each step enters as its own move, so advancing reads as progress
+          rather than the same page quietly rearranging itself. */}
+      <div key={phase} className="animate-step-in flex flex-col gap-3">
       {/* ── step 1: the picture ─────────────────────────────────────────── */}
       {phase === 'photo' && (
         <div className="flex flex-col gap-2">
@@ -470,6 +459,52 @@ export function Capture() {
             <ProductScanner onBarcode={handleCode} onClose={() => navigate(-1)} />
           ) : (
             <TagScanner isActive={!picking} onTag={handleCode} onClose={() => navigate(-1)} />
+          )}
+
+          {/* Destination lives ONLY on the step that asks for one. Carried
+              through steps 1 and 2 it was a banner answering a question
+              nobody had reached yet. Under the frame, because you look here
+              after the camera has failed to find a tag. */}
+          {phase === 'place' && (
+            <div className="flex flex-col gap-1.5">
+              {dest && (
+                <div className="flex items-center gap-2">
+                  <MapPin className="w-3.5 h-3.5 shrink-0 text-[var(--color-text-muted)]" />
+                  <span className="font-mono text-[10px] uppercase tracking-[0.1em] text-[var(--color-text-muted)]">
+                    {destConfirmed ? 'adding to' : 'last used'}
+                  </span>
+                  <span className="text-sm font-semibold truncate">{dest.name}</span>
+                </div>
+              )}
+
+              {recents.length > 0 && (
+                <div className="flex flex-wrap gap-1.5">
+                  {recents.map((r) => {
+                    const current = dest?.id === r.id && destConfirmed;
+                    return (
+                      <button
+                        key={r.id}
+                        type="button"
+                        onClick={() => {
+                          pinDestination(r);
+                          const d = stateRef.current.draft;
+                          if (d.name || d.photo || d.barcode) void commit(d, r);
+                          else setPhase('photo');
+                        }}
+                        className={cn(
+                          'font-mono text-[10px] uppercase tracking-[0.06em] rounded-full px-3 min-h-[32px] border',
+                          current
+                            ? 'border-[var(--color-primary)] text-[var(--color-primary)] font-bold'
+                            : 'border-[var(--color-rule)] text-[var(--color-text)]',
+                        )}
+                      >
+                        {r.name}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
           )}
 
           {/* Not everything has a scannable barcode. These answer the same
@@ -504,10 +539,14 @@ export function Capture() {
             )
           )}
 
-          {phase === 'identify' && !dest && (
+          {/* Reachable whenever the destination is not SETTLED, not merely
+              when it is absent: with the chip gone from this step, a
+              remembered-but-unconfirmed bin would otherwise leave no way
+              forward except scanning a product barcode. */}
+          {phase === 'identify' && !destConfirmed && (
             <Button variant="ghost" size="sm" onClick={() => setPhase('place')}>
               <MapPin className="w-3.5 h-3.5" />
-              Choose the bin first
+              {dest ? `Still ${dest.name}?` : 'Choose the bin first'}
             </Button>
           )}
 
@@ -531,6 +570,8 @@ export function Capture() {
           )}
         </div>
       )}
+
+      </div>
 
       {/* ── the keyboard path to a destination ──────────────────────────── */}
       {picking && (
