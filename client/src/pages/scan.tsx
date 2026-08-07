@@ -22,6 +22,7 @@ import { ProductSearch } from '@/components/scanner/product-search';
 import { DuplicateCheck } from '@/components/scanner/duplicate-check';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
+import { ColHead } from '@/components/ui/col-head';
 import { Input } from '@/components/ui/input';
 import { toast } from '@/components/ui/toast';
 import { api } from '@/lib/api';
@@ -88,6 +89,21 @@ interface CompletedMove {
 
 const TLY_CODE_REGEX = /^TLY-[PACI]-[0-9A-Fa-f]{4,8}$/;
 
+
+/**
+ * Product titles from the catalogues run long ("… 1 Liter Pump Bottle, Pack of
+ * 2"). The label renderer will ellipsize anything, but a 70-character name is
+ * unreadable on a 2x1 and useless in a list, so trim to the first sensible
+ * clause when auto-filling. The user can always type something longer.
+ */
+function tidyProductName(raw: string): string {
+  const name = raw.trim();
+  if (name.length <= 60) return name;
+  const cut = name.slice(0, 60);
+  const at = Math.max(cut.lastIndexOf(','), cut.lastIndexOf(' - '), cut.lastIndexOf(' '));
+  return (at > 24 ? cut.slice(0, at) : cut).trim();
+}
+
 export function Scan() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -134,11 +150,12 @@ export function Scan() {
   // zeroes containerId) would offer to revert the choice they just made.
   const [cascadeTouched, setCascadeTouched] = useState(false);
 
-  // The item just created — fuels the "Print label / Queue" success row so a
-  // fresh label goes on the thing while it is still in your hand.
-  const [lastAdded, setLastAdded] = useState<
-    { id: number; name: string; qrCode: string; propertyId: number } | null
-  >(null);
+  // A LIST, not a slot. The camera is live the moment an item is created, so
+  // the next barcode entering frame — often the one still in your hand — used
+  // to wipe the Print affordance mid-reach. Receipts accumulate for the session.
+  const [receipts, setReceipts] = useState<
+    { id: number; name: string; qrCode: string; propertyId: number }[]
+  >([]);
 
   // -- Move mode state ------------------------------------------------------
   const [moveState, setMoveState] = useState<MoveState>('move_idle');
@@ -206,8 +223,11 @@ export function Scan() {
     }
   }, [moveItemMutation, recordMove]);
   const stageLabel = usePrintQueueStore((st) => st.add);
+  const stageMany = usePrintQueueStore((st) => st.addMany);
   const createPrintJob = useCreatePrintJob();
-  const { data: scanPrinters } = usePrinters(lastAdded ? lastAdded.propertyId || undefined : undefined);
+  // Poll for a printer only while a receipt is on screen (that is the only
+  // place a Print button exists), and key it to the ADDED item's property.
+  const { data: scanPrinters } = usePrinters(receipts[0]?.propertyId || undefined);
   const hasPrinter = !!scanPrinters?.length;
 
   // -- Context-aware pre-fill from URL params
@@ -266,7 +286,6 @@ export function Scan() {
   const handleBarcodeScanned = useCallback(async (code: string) => {
     // A new add cycle starts — the previous item's success row has done its
     // job; letting it stack above the form pushes Add Item below the fold.
-    setLastAdded(null);
     // A tally QR is not a product barcode. Scanning the label on one of our
     // own bins used to fall through to the product lookup and dead-end at
     // "No product found" — the only working path was leaving the app for the
@@ -315,7 +334,7 @@ export function Scan() {
 
   const handleAddToInventory = useCallback((product: Record<string, unknown>) => {
     setSelectedProduct(product);
-    setItemName((product.name as string) || '');
+    setItemName(tidyProductName((product.name as string) || ''));
     setState('adding');
     setShowDuplicates(false);
   }, []);
@@ -326,12 +345,11 @@ export function Scan() {
 
   const handleProductSelected = useCallback((product: Record<string, unknown>) => {
     setSelectedProduct(product);
-    setItemName((product.name as string) || '');
+    setItemName(tidyProductName((product.name as string) || ''));
     setState('adding');
   }, []);
 
   const handleCreateManually = useCallback(() => {
-    setLastAdded(null);
     setSelectedProduct(null);
     setItemName('');
     setState('adding');
@@ -371,10 +389,11 @@ export function Scan() {
       }
 
       if (created) {
-        setLastAdded({
+        const receipt = {
           id: created.id, name: created.name, qrCode: created.qrCode,
           propertyId: propCrumb?.id ?? propertyId,
-        });
+        };
+        setReceipts((prev) => [receipt, ...prev]);
       }
 
       toast.success('Item added!');
@@ -574,61 +593,64 @@ export function Scan() {
       {/* -- ADD MODE -------------------------------------------------------- */}
       {tab === 'add' && (
         <>
-          {/* Just-added success row — label the thing while it's in your hand */}
-          {lastAdded && (
-            <Card className="flex items-center gap-2 p-3 border-[var(--color-green)] animate-fade-up">
-              <CheckCircle2 className="w-4 h-4 text-[var(--color-green)] shrink-0" />
-              <div className="min-w-0 flex-1">
-                <p className="text-sm font-medium text-[var(--color-text)] truncate">{lastAdded.name}</p>
-                <p className="text-[10px] font-mono text-[var(--color-text-muted)]">{lastAdded.qrCode}</p>
-              </div>
-              {hasPrinter && (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  disabled={createPrintJob.isPending}
-                  onClick={() =>
-                    createPrintJob.mutate(
-                      { entityType: 'item', entityIds: [lastAdded.id], preset: 'small',
-                        propertyId: lastAdded.propertyId || undefined },
-                      {
-                        onSuccess: (res) => {
-                          toast.success(res.status === 'held'
-                            ? 'Queued — waiting for the 2×1 roll'
-                            : 'Printing label');
-                          setLastAdded(null);
-                        },
-                        onError: (e) =>
-                          toast.error(e instanceof Error ? e.message : 'Could not queue the print'),
-                      },
-                    )
-                  }
-                >
-                  <Printer className="w-3.5 h-3.5" />
-                  Print
-                </Button>
-              )}
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => {
-                  stageLabel({ id: lastAdded.id, entityType: 'item', name: lastAdded.name,
-                    qrCode: lastAdded.qrCode, propertyId: lastAdded.propertyId || undefined });
-                  toast.success('Queued — print from the Print tab');
-                  setLastAdded(null);
-                }}
+          {/* Session receipts — a LIST, so the next scan cannot wipe the Print
+              affordance out from under your hand. Newest first. */}
+          {receipts.length > 0 && (
+            <div className="flex flex-col animate-fade-up">
+              <ColHead
+                action={receipts.length > 1 ? `Queue all ${receipts.length}` : undefined}
+                onAction={receipts.length > 1 ? () => {
+                  const n = stageMany(receipts.map((r) => ({
+                    id: r.id, entityType: 'item' as const, name: r.name,
+                    qrCode: r.qrCode, propertyId: r.propertyId || undefined,
+                  })));
+                  toast.success(n > 0 ? `${n} labels queued` : 'Already queued');
+                } : undefined}
               >
-                Queue
-              </Button>
-              <button
-                type="button"
-                aria-label="Dismiss"
-                onClick={() => setLastAdded(null)}
-                className="min-w-[44px] min-h-[44px] -my-2 -mr-2 flex items-center justify-center text-[var(--color-text-muted)] hover:text-[var(--color-text)] shrink-0"
-              >
-                <X className="w-3.5 h-3.5" />
-              </button>
-            </Card>
+                Added this session · {receipts.length}
+              </ColHead>
+              {receipts.map((r) => (
+                <div key={r.id} className="flex items-center gap-2 py-2.5 border-b border-[var(--color-rule)] last:border-b-0">
+                  <CheckCircle2 className="w-4 h-4 text-[var(--color-green)] shrink-0" />
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-semibold truncate">{r.name}</p>
+                    <p className="font-mono text-[10px] text-[var(--color-text-muted)]">{r.qrCode}</p>
+                  </div>
+                  {hasPrinter && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={createPrintJob.isPending}
+                      onClick={() =>
+                        createPrintJob.mutate(
+                          { entityType: 'item', entityIds: [r.id], preset: 'small',
+                            propertyId: r.propertyId || undefined },
+                          {
+                            onSuccess: (res) => toast.success(res.status === 'held'
+                              ? 'Queued — waiting for the 2×1 roll'
+                              : 'Printing label'),
+                            onError: (e) => toast.error(e instanceof Error ? e.message : 'Could not queue the print'),
+                          },
+                        )
+                      }
+                    >
+                      <Printer className="w-3.5 h-3.5" />
+                    </Button>
+                  )}
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => {
+                      stageLabel({ id: r.id, entityType: 'item', name: r.name,
+                        qrCode: r.qrCode, propertyId: r.propertyId || undefined });
+                      toast.success('Queued — print from the Print tab');
+                    }}
+                  >
+                    Queue
+                  </Button>
+                </div>
+              ))}
+            </div>
           )}
           {/* Camera -- active when idle or looking_up */}
           {(state === 'idle' || state === 'looking_up') && (
@@ -752,7 +774,7 @@ export function Scan() {
               {!selectedProduct && (
                 <UrlExtractor onProductExtracted={(product) => {
                   setSelectedProduct(product);
-                  setItemName((product.name as string) || '');
+                  setItemName(tidyProductName((product.name as string) || ''));
                 }} />
               )}
 
