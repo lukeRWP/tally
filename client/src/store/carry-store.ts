@@ -17,9 +17,20 @@ import { create } from 'zustand';
 export interface CarriedItem {
   id: number;
   name: string;
+  /**
+   * Items move between containers; containers move between areas or nest
+   * inside another container. Both are "carried", and the destination decides
+   * which operation runs — so the kind must travel with the load.
+   */
+  kind?: 'item' | 'container';
   /** Where it was picked up from, so the receipt can say "Bin 4 → Tote". */
   fromContainerId?: number;
   fromContainerName?: string;
+  /**
+   * A container sitting at an area's top level has no parent container, so its
+   * origin — and therefore its undo — is an area.
+   */
+  fromAreaId?: number;
 }
 
 /** A completed move, kept so the banner can offer a one-tap undo. */

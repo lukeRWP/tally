@@ -36,6 +36,7 @@ import {
 import { cn } from '@/lib/utils';
 import { usePrintQueueStore } from '@/store/print-queue-store';
 import { useCarryStore } from '@/store/carry-store';
+import { usePutDown } from '@/hooks/use-put-down';
 import { useCreatePrintJob, usePrinters } from '@/hooks/use-print';
 
 // -- Tab mode ----------------------------------------------------------------
@@ -171,15 +172,17 @@ export function Scan() {
   // named ...Mutation because `moveItem` is the held-item state below
   const moveItemMutation = useMoveItem();
   const carried = useCarryStore((s) => s.carried);
-  const recordMove = useCarryStore((s) => s.recordMove);
   // handleBarcodeScanned is memoised and handed to the camera, so it would
   // close over a stale `carried`. A ref keeps the scanner honest.
   const carriedRef = useRef(carried);
   useEffect(() => { carriedRef.current = carried; }, [carried]);
 
+  const putDown = usePutDown();
+
   /**
-   * Put the carried items down in the scanned container. Areas resolve to the
-   * area's "Loose in <name>" container so a shelf label is never a dead end.
+   * Put the carried load down on the scanned label. A bin and an area are both
+   * valid destinations — usePutDown owns what each one means for each kind of
+   * load, so this only has to reject labels that are neither.
    */
   const completeCarryMove = useCallback(async (code: string) => {
     const load = carriedRef.current;
@@ -193,35 +196,24 @@ export function Scan() {
         toast.error(`Code ${code} is not in your inventory`);
         return;
       }
-      if (entity.type === 'area') {
-        // Areas can't hold items directly; a "Loose in <area>" container is the
-        // agreed answer but does not exist yet, so say so rather than fail mute.
-        toast.error(`${entity.name} is an area — scan a bin inside it`);
+      if (entity.type !== 'container' && entity.type !== 'area') {
+        toast.error('That label is not a bin or an area');
         return;
       }
-      if (entity.type !== 'container') {
-        toast.error('That label is not a bin');
-        return;
-      }
-      // Everything already there is a no-op, not a failure.
-      const toMove = load.filter((i) => i.fromContainerId !== entity.id);
-      if (toMove.length === 0) {
+      const result = await putDown(load, entity);
+      if (!result) {
         toast(`Already in ${entity.name}`);
         return;
       }
-      for (const it of toMove) {
-        await moveItemMutation.mutateAsync({ id: it.id, containerId: entity.id });
-      }
-      recordMove({ items: toMove, toContainerId: entity.id, toContainerName: entity.name });
       toast.success(
-        toMove.length === 1
-          ? `${toMove[0].name} → ${entity.name}`
-          : `${toMove.length} items → ${entity.name}`,
+        result.moved.length === 1
+          ? `${result.moved[0].name} → ${entity.name}`
+          : `${result.moved.length} moved → ${entity.name}`,
       );
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Could not move it there');
     }
-  }, [moveItemMutation, recordMove]);
+  }, [putDown]);
   const stageLabel = usePrintQueueStore((st) => st.add);
   const stageMany = usePrintQueueStore((st) => st.addMany);
   const createPrintJob = useCreatePrintJob();
@@ -292,7 +284,7 @@ export function Scan() {
     // OS camera. Route TLY codes through the existing resolver instead, which
     // lands on the entity (a container opens straight onto its contents).
     if (TLY_CODE_REGEX.test(code)) {
-      // Carrying something? Then a bin label is an ANSWER, not a navigation:
+      // Carrying something? Then a bin or area label is an ANSWER, not a navigation:
       // resolve it and put the load down. Navigating away here used to destroy
       // the in-flight capture (and would destroy a carry), which made the very
       // gesture the move flow depends on the destructive one.

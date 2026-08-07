@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ScanLine, Printer, Share2, Plus, Package, Box, CheckSquare, Camera } from 'lucide-react';
+import { ScanLine, Printer, Share2, Plus, Package, Box, CheckSquare, Camera, MoveRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { TitleBar } from '@/components/ui/title-bar';
@@ -191,23 +191,54 @@ export function ContainerDetail() {
     exitSelectMode();
   }
 
-  // Flow C: hand the selected items to the carry banner, then send the user to
-  // scan a destination. Only items move this way — moving a nested container is
-  // a different operation (it re-parents a subtree) and is not part of this.
+  // Flow C: hand the selection to the carry banner, then send the user off to
+  // scan a destination. A selection can mix loose items and nested bins; the
+  // carried load records what each one is so the destination scan knows
+  // whether to move an item or re-parent a subtree.
   function handleMoveSelected() {
-    const picked = (items ?? []).filter((i) => selected.has(`item:${i.id}`));
-    if (picked.length === 0) {
-      toast('Select items to move — containers move from their own page');
+    const pickedItems = (items ?? []).filter((i) => selected.has(`item:${i.id}`));
+    const pickedBins = (children ?? []).filter((c) => selected.has(`container:${c.id}`));
+    if (pickedItems.length + pickedBins.length === 0) {
+      toast('Select something to move first');
       return;
     }
-    pickUp(picked.map((i) => ({
-      id: i.id,
-      name: i.name,
-      fromContainerId: id,
-      fromContainerName: container?.name,
-    })));
+    pickUp([
+      ...pickedBins.map((c) => ({
+        id: c.id,
+        name: c.name,
+        kind: 'container' as const,
+        fromContainerId: id,
+        fromContainerName: container?.name,
+        fromAreaId: c.areaId,
+      })),
+      ...pickedItems.map((i) => ({
+        id: i.id,
+        name: i.name,
+        kind: 'item' as const,
+        fromContainerId: id,
+        fromContainerName: container?.name,
+      })),
+    ]);
     exitSelectMode();
-    toast(`Carrying ${picked.length} item${picked.length === 1 ? '' : 's'} — scan where they go`);
+    const n = pickedItems.length + pickedBins.length;
+    toast(`Carrying ${n} thing${n === 1 ? '' : 's'} — scan where they go`);
+    navigate('/scan?mode=move');
+  }
+
+  /**
+   * Move THIS bin. Its origin is its parent container if it is nested, or its
+   * area if it sits at the top level — undo needs to know which.
+   */
+  function handleMoveThis() {
+    if (!container) return;
+    pickUp([{
+      id: container.id,
+      name: container.name,
+      kind: 'container',
+      ...(container.parentContainerId ? { fromContainerId: container.parentContainerId } : {}),
+      fromAreaId: container.areaId,
+    }]);
+    toast(`Carrying ${container.name} — scan an area or a bin to put it in`);
     navigate('/scan?mode=move');
   }
 
@@ -256,6 +287,10 @@ export function ContainerDetail() {
         <Button variant="outline" size="sm" onClick={() => setPrintOpen(true)}>
           <Printer className="w-4 h-4" />
           Label
+        </Button>
+        <Button variant="outline" size="sm" onClick={handleMoveThis}>
+          <MoveRight className="w-4 h-4" />
+          Move
         </Button>
         <Button variant="outline" size="sm" onClick={() => setShareOpen(true)}>
           <Share2 className="w-4 h-4" />

@@ -197,6 +197,30 @@ export function useUpdateItem() {
   });
 }
 
+/**
+ * Move a container: nest it under another container (parentContainerId), or
+ * re-home it to an area's top level (parentContainerId null + areaId). The
+ * server owns the cycle guard — a container cannot land inside its own subtree.
+ */
+export function useMoveContainer() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, parentContainerId, areaId }: {
+      id: number; parentContainerId: number | null; areaId?: number;
+    }) =>
+      api.patch<{ container: Container }>(`/api/containers/_p_/${id}/move`, {
+        parentContainerId,
+        ...(areaId ? { areaId } : {}),
+      }),
+    onSuccess: () => {
+      // Re-parenting moves a whole subtree, so item lists shift too.
+      qc.invalidateQueries({ queryKey: queryKeys.containers.all });
+      qc.invalidateQueries({ queryKey: queryKeys.areas.all });
+      qc.invalidateQueries({ queryKey: queryKeys.items.all });
+    },
+  });
+}
+
 export function useMoveItem() {
   const qc = useQueryClient();
   return useMutation({

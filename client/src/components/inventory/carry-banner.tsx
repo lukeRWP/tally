@@ -1,7 +1,7 @@
 import { useNavigate } from 'react-router-dom';
 import { X, ScanLine, Undo2 } from 'lucide-react';
-import { useCarryStore } from '@/store/carry-store';
-import { useMoveItem } from '@/hooks/use-inventory';
+import { useCarryStore, type CarriedItem } from '@/store/carry-store';
+import { useMoveItem, useMoveContainer } from '@/hooks/use-inventory';
 import { toast } from '@/components/ui/toast';
 
 /**
@@ -12,6 +12,17 @@ import { toast } from '@/components/ui/toast';
  * It also owns the undo for the last completed move, because the place you end
  * up after moving something is wherever you happened to be standing.
  */
+/**
+ * "3 items", "2 bins", or "3 things" for a mixed load — the banner should never
+ * call a container an item.
+ */
+function describeLoad(load: CarriedItem[]): string {
+  const bins = load.filter((c) => c.kind === 'container').length;
+  if (bins === 0) return `${load.length} items`;
+  if (bins === load.length) return `${bins} ${bins === 1 ? 'bin' : 'bins'}`;
+  return `${load.length} things`;
+}
+
 export function CarryBanner() {
   const navigate = useNavigate();
   const carried = useCarryStore((s) => s.carried);
@@ -19,23 +30,31 @@ export function CarryBanner() {
   const clear = useCarryStore((s) => s.clear);
   const clearLastMove = useCarryStore((s) => s.clearLastMove);
   const moveItem = useMoveItem();
+  const moveContainer = useMoveContainer();
 
   async function undo() {
     if (!lastMove) return;
-    // Each item goes back to the container it came from. Items picked up
-    // without a known origin can't be reversed, so they're reported, not
-    // silently skipped.
-    const reversible = lastMove.items.filter((i) => i.fromContainerId);
+    // Everything goes back where it came from. A container's origin may be an
+    // area (it sat at the top level) rather than a parent container. Anything
+    // picked up without a known origin can't be reversed, so it is reported
+    // rather than silently skipped.
+    const reversible = lastMove.items.filter((i) => i.fromContainerId || i.fromAreaId);
     try {
       await Promise.all(
         reversible.map((i) =>
-          moveItem.mutateAsync({ id: i.id, containerId: i.fromContainerId as number }),
+          i.kind === 'container'
+            ? moveContainer.mutateAsync(
+                i.fromContainerId
+                  ? { id: i.id, parentContainerId: i.fromContainerId }
+                  : { id: i.id, parentContainerId: null, areaId: i.fromAreaId as number },
+              )
+            : moveItem.mutateAsync({ id: i.id, containerId: i.fromContainerId as number }),
         ),
       );
       const skipped = lastMove.items.length - reversible.length;
       toast(
         skipped > 0
-          ? `Put ${reversible.length} back — ${skipped} had no previous bin`
+          ? `Put ${reversible.length} back — ${skipped} had no previous home`
           : reversible.length === 1
             ? `${reversible[0].name} put back`
             : `${reversible.length} items put back`,
@@ -57,13 +76,13 @@ export function CarryBanner() {
           <span className="block text-sm font-semibold truncate">
             {lastMove.items.length === 1
               ? lastMove.items[0].name
-              : `${lastMove.items.length} items`}
+              : describeLoad(lastMove.items)}
           </span>
         </span>
         <button
           type="button"
           onClick={undo}
-          disabled={moveItem.isPending}
+          disabled={moveItem.isPending || moveContainer.isPending}
           className="shrink-0 inline-flex items-center gap-1 border border-[var(--color-primary)] text-[var(--color-primary)] rounded-[var(--radius-sm)] px-2 min-h-[32px] font-mono text-[10px] font-bold uppercase tracking-[0.06em] disabled:opacity-50"
         >
           <Undo2 className="w-3.5 h-3.5" />
@@ -91,7 +110,7 @@ export function CarryBanner() {
           carrying {carried.length > 1 ? `· ${carried.length}` : ''}
         </span>
         <span className="block text-sm font-semibold truncate">
-          {carried.length === 1 ? carried[0].name : `${carried.length} items`}
+          {carried.length === 1 ? carried[0].name : describeLoad(carried)}
         </span>
         {carried.length === 1 && carried[0].fromContainerName && (
           <span className="block font-mono text-[10px] text-[var(--color-text-muted)] truncate">
@@ -105,7 +124,7 @@ export function CarryBanner() {
         className="shrink-0 inline-flex items-center gap-1 bg-[var(--color-primary)] text-white rounded-[var(--radius-sm)] px-2.5 min-h-[34px] font-mono text-[10px] font-bold uppercase tracking-[0.06em]"
       >
         <ScanLine className="w-3.5 h-3.5" />
-        Scan bin
+        {carried.some((c) => c.kind === 'container') ? 'Scan dest' : 'Scan bin'}
       </button>
       <button
         type="button"

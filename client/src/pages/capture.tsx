@@ -7,6 +7,7 @@ import { Input } from '@/components/ui/input';
 import { ColHead } from '@/components/ui/col-head';
 import { toast } from '@/components/ui/toast';
 import { api } from '@/lib/api';
+import { findOrCreateLooseContainer } from '@/hooks/use-put-down';
 import { useCreateItem } from '@/hooks/use-inventory';
 import { useUploadFile } from '@/hooks/use-files';
 import { usePrinters, useCreatePrintJob } from '@/hooks/use-print';
@@ -173,16 +174,22 @@ export function Capture() {
           `/api/labels/_x_/resolve/${encodeURIComponent(code)}`,
         );
         if (!entity?.exists) { toast.error('That label is not in your inventory'); return; }
-        if (entity.type === 'area') {
-          toast(`${entity.name} is an area — scan a bin inside it`);
+        if (entity.type !== 'container' && entity.type !== 'area') {
+          toast.error('That is not a bin or area label');
           return;
         }
-        if (entity.type !== 'container') { toast.error('That is not a bin label'); return; }
-        pinDestination({ id: entity.id, name: entity.name });
-        toast.success(`Adding to ${entity.name}`);
+        // An area label is a valid answer to "where does this go" — items just
+        // can't live in an area directly, so it resolves to the area's
+        // catch-all bin (created on first use).
+        const target = entity.type === 'area'
+          ? await findOrCreateLooseContainer(entity.id, entity.name).then(
+              (c) => ({ id: c.id, name: c.name }))
+          : { id: entity.id, name: entity.name };
+        pinDestination(target);
+        toast.success(`Adding to ${target.name}`);
         // If a draft is already waiting on a home, this completes it.
         if (curDraft.name || curDraft.photo || curDraft.barcode) {
-          void commit(curDraft, { id: entity.id, name: entity.name });
+          void commit(curDraft, target);
         } else {
           setPhase('photo');
         }
@@ -259,7 +266,7 @@ export function Capture() {
             {dest ? 'adding to' : 'no bin chosen'}
           </span>
           <span className="block text-sm font-semibold truncate">
-            {dest ? dest.name : 'Scan a bin label, or pick one'}
+            {dest ? dest.name : 'Scan a bin or area label'}
           </span>
         </span>
         <span className="font-mono text-[10px] uppercase text-[var(--color-primary)]">change</span>
@@ -314,7 +321,7 @@ export function Capture() {
         <div className="flex flex-col gap-2">
           <CameraScanner isActive onBarcodeScanned={handleCode} onClose={() => navigate(-1)} />
           <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-[var(--color-text-muted)] text-center">
-            {phase === 'identify' ? 'Find the product barcode' : 'Scan the bin label'}
+            {phase === 'identify' ? 'Find the product barcode' : 'Scan the bin or area label'}
             {' · '}either works
           </p>
 
