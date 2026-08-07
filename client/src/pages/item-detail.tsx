@@ -36,7 +36,7 @@ import { useItemFiles, useUploadFile, useConditionHistory } from '@/hooks/use-fi
 import { useAccessories } from '@/hooks/use-accessories';
 import { useLendingHistory } from '@/hooks/use-lending';
 import { ShareDialog } from '@/components/sharing/share-dialog';
-import { safeExternalUrl } from '@/lib/utils';
+import { safeExternalUrl, cn } from '@/lib/utils';
 
 function computeDepreciation(
   purchasePrice: number,
@@ -215,18 +215,23 @@ function LedgerRow({
   value,
   onAdd,
   onEdit,
+  wrap,
 }: {
   label: string;
   value?: React.ReactNode;
   onAdd?: () => void;
   onEdit?: () => void;
+  /** Let the value wrap instead of ellipsing — for prose like a description. */
+  wrap?: boolean;
 }) {
   const filled = value !== null && value !== undefined && value !== '';
   // min-h on the ROW, not on the button — otherwise an empty row stands taller
   // than a filled one and the rule stops being even.
   return (
     <div className="flex items-center gap-3 min-h-[44px] border-b border-[var(--color-rule)] last:border-b-0">
-      <span className="font-mono text-[10px] uppercase tracking-[0.1em] text-[var(--color-text-muted)] shrink-0">
+      {/* The label is user-controlled for dates, so it must be able to give way
+          — otherwise a long type name pushes the fact itself off the row. */}
+      <span className="font-mono text-[10px] uppercase tracking-[0.1em] text-[var(--color-text-muted)] shrink-0 max-w-[45%] truncate">
         {label}
       </span>
       <span className="flex-1" />
@@ -235,15 +240,21 @@ function LedgerRow({
           type="button"
           onClick={onEdit}
           disabled={!onEdit}
-          className="text-sm font-semibold text-right min-w-0 truncate disabled:cursor-default"
+          aria-label={onEdit ? `Edit ${label}` : undefined}
+          className={cn(
+            'text-sm font-semibold text-right min-w-0 disabled:cursor-default',
+            wrap ? 'whitespace-normal py-2' : 'truncate',
+          )}
         >
           {value}
         </button>
       ) : (
+        // Full-height hit area without changing the row's height.
         <button
           type="button"
           onClick={onAdd}
-          className="font-mono text-[10px] uppercase tracking-[0.06em] text-[var(--color-primary)] px-1"
+          aria-label={`Add ${label}`}
+          className="self-stretch flex items-center font-mono text-[10px] uppercase tracking-[0.06em] text-[var(--color-primary)] px-1"
         >
           + add
         </button>
@@ -327,7 +338,9 @@ export function ItemDetail() {
   const openLoan = (lendingHistory ?? []).find((l) => !l.returnedAt);
 
   const hasConditions = (conditions?.length ?? 0) > 0;
-  const hasNonPhotoFiles = (itemFiles ?? []).some((f) => f.fileType !== 'photo');
+  // Any file at all: FileList carries the ONLY open/delete controls for files,
+  // photos included, so gating it on non-photo files stranded them.
+  const hasFilesAny = (itemFiles ?? []).length > 0;
   const hasAccessories = (accessories?.length ?? 0) > 0;
   const hasLending = (lendingHistory?.length ?? 0) > 0;
 
@@ -390,7 +403,11 @@ export function ItemDetail() {
           {item.condition && (
             <Badge>{item.condition.charAt(0).toUpperCase() + item.condition.slice(1)}</Badge>
           )}
-          <Badge variant={item.status === 'lent' ? 'warning' : 'success'}>{item.status}</Badge>
+          {/* 'active' is the unremarkable case, so it gets the plain ink stamp;
+              only the states worth noticing take a colour. */}
+          <Badge variant={item.status === 'lent' ? 'warning' : item.status === 'active' ? 'default' : 'danger'}>
+            {item.status}
+          </Badge>
         </div>
       </div>
 
@@ -438,8 +455,9 @@ export function ItemDetail() {
       <div className="flex flex-col animate-fade-up" style={{ animationDelay: '80ms' }}>
         <ColHead action="Edit" onAction={() => setEditOpen(true)}>Details</ColHead>
 
-        <LedgerRow label="Quantity" value={item.quantity > 0 ? item.quantity : null}
-          onEdit={() => setEditOpen(true)} onAdd={() => setEditOpen(true)} />
+        {/* 0 is a real answer ("none left"), not a missing one — and QUANTITY
+            is NOT NULL in the schema, so this row is never an invitation. */}
+        <LedgerRow label="Quantity" value={item.quantity} onEdit={() => setEditOpen(true)} />
 
         <LedgerRow
           label="Condition"
@@ -465,7 +483,7 @@ export function ItemDetail() {
           />
         )}
 
-        <LedgerRow label="Description" value={item.description || null}
+        <LedgerRow label="Description" value={item.description || null} wrap
           onEdit={() => setEditOpen(true)} onAdd={() => setEditOpen(true)} />
 
         {/* Dates are user-named, so the row shows the soonest one and the
@@ -473,7 +491,6 @@ export function ItemDetail() {
         <LedgerRow
           label={itemDates?.[0]?.dateType || 'Warranty'}
           value={itemDates?.[0] ? new Date(itemDates[0].dateValue).toLocaleDateString() : null}
-          onEdit={() => setDateFormOpen(true)}
           onAdd={() => setDateFormOpen(true)}
         />
 
@@ -496,18 +513,16 @@ export function ItemDetail() {
           onAdd={() => setLendFormOpen(true)}
         />
 
-        {/* Tags are their own control rather than a value, so the row gives
-            the picker the right-hand slot. */}
-        {propertyId > 0 && (
-          <div className="flex items-center gap-3 py-2.5 border-b border-[var(--color-rule)] last:border-b-0">
-            <span className="font-mono text-[10px] uppercase tracking-[0.1em] text-[var(--color-text-muted)] shrink-0">
-              Tags
-            </span>
-            <span className="flex-1" />
+      </div>
+
+      {propertyId > 0 && (
+        <div className="flex flex-col">
+          <ColHead>Tags</ColHead>
+          <div className="py-2">
             <TagPicker entityType="item" entityId={item.id} propertyId={propertyId} />
           </div>
-        )}
-      </div>
+        </div>
+      )}
 
       <ItemHistory
         itemId={id}
@@ -563,7 +578,7 @@ export function ItemDetail() {
       )}
 
       {/* The soonest date is a ledger row; this is the rest of them. */}
-      {(itemDates?.length ?? 0) > 1 && (
+      {(itemDates?.length ?? 0) > 0 && (
         <div className="flex flex-col">
           <ColHead action="Add date" onAction={() => setDateFormOpen(true)}>Dates</ColHead>
           <DateList itemId={id} />
@@ -593,7 +608,7 @@ export function ItemDetail() {
       )}
 
       {/* Photos live in the ledger row, so this is receipts, manuals, warranties. */}
-      {hasNonPhotoFiles && (
+      {hasFilesAny && (
         <div className="flex flex-col">
           <ColHead>Files</ColHead>
           <FileList itemId={id} />
