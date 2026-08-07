@@ -9,6 +9,12 @@ interface CameraScannerProps {
   onClose: () => void;
   isActive: boolean;
   /**
+   * The action, drawn INSIDE the frame between the corner marks. The
+   * instruction belongs where the eye already is — on the viewfinder you are
+   * aiming — not on a line above or below it that you read too late.
+   */
+  label?: string;
+  /**
    * Which symbologies to decode. Constraining this is not just an
    * optimisation — a scanner that can only read one kind of code cannot
    * mistake one job for another, and each frame is cheaper to decode.
@@ -27,7 +33,7 @@ const SUPPORTED_FORMATS = [
   Html5QrcodeSupportedFormats.CODE_39,
 ];
 
-export function CameraScanner({ onBarcodeScanned, onClose, isActive, formats }: CameraScannerProps) {
+export function CameraScanner({ onBarcodeScanned, onClose, isActive, formats, label }: CameraScannerProps) {
   const reactId = useId();
   const scannerId = useRef(`scanner-${reactId.replace(/:/g, '')}`).current;
   const scannerRef = useRef<Html5Qrcode | null>(null);
@@ -136,6 +142,14 @@ export function CameraScanner({ onBarcodeScanned, onClose, isActive, formats }: 
         <div className="absolute top-3 right-3 w-6 h-6 border-t-[3px] border-r-[3px] border-[var(--color-primary)] rounded-tr-sm pointer-events-none z-10" />
         <div className="absolute bottom-3 left-3 w-6 h-6 border-b-[3px] border-l-[3px] border-[var(--color-primary)] rounded-bl-sm pointer-events-none z-10" />
         <div className="absolute bottom-3 right-3 w-6 h-6 border-b-[3px] border-r-[3px] border-[var(--color-primary)] rounded-br-sm pointer-events-none z-10" />
+
+        {label && (
+          <div className="absolute top-3 left-12 right-12 flex justify-center pointer-events-none z-10">
+            <span className="font-mono text-[11px] font-bold uppercase tracking-[0.1em] text-white text-center leading-6 px-2 rounded-[var(--radius-sm)] bg-black/55 [text-shadow:0_1px_2px_rgba(0,0,0,0.9)]">
+              {label}
+            </span>
+          </div>
+        )}
 
         {!isScanning && !error && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-[var(--color-card)]">

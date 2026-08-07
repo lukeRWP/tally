@@ -24,15 +24,18 @@ export function ProductScanner({
   onBarcode,
   onClose,
   isActive = true,
+  label = 'Scan product barcode',
 }: {
   onBarcode: (code: string) => void;
   onClose: () => void;
   isActive?: boolean;
+  label?: string;
 }) {
   return (
     <CameraScanner
       isActive={isActive}
       formats={PRODUCT_FORMATS}
+      label={label}
       onBarcodeScanned={(code) => onBarcode(code.trim())}
       onClose={onClose}
     />
