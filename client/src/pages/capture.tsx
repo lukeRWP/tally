@@ -21,22 +21,26 @@ import { cn } from '@/lib/utils';
 /**
  * The capture flow: PICTURE → SCAN → SCAN → DONE.
  *
- * One continuous camera session. The photo captures the thing, the product
- * barcode names it, the bin label files it — and the bin then stays pinned so
- * the second item is only picture + scan.
+ * The photo captures the thing, the product barcode names it, the tag files
+ * it — and the tote then stays in recents, so the second item can be picture,
+ * name, tap.
  *
- * Two rules make it a loop instead of a wizard:
- *  1. Steps are TARGETS, not gates. Any code is accepted at any time and routed
- *     by its shape (TLY → destination, UPC/EAN → product), so you can point the
- *     camera at whatever is nearest.
- *  2. Nothing is mandatory. No barcode → type it or leave it unnamed. No label
- *     on the bin → pick from recents. The commit needs a container and a name,
- *     and the flow synthesises a name rather than blocking.
+ * Each step uses the scanner that matches its question: step 2 decodes UPC/EAN
+ * only, step 3 QR only. A scanner that cannot read the other kind cannot
+ * mistake one job for the other. (This replaced an earlier rule where one
+ * scanner read everything and the page routed by the code's shape — it made
+ * both steps able to swallow the other's input.)
+ *
+ * Nothing is mandatory. No photo → skip it. No barcode → type a name, search
+ * the catalogue, or paste a link. No tag on the tote → tap a recent one or
+ * pick from the list. The commit needs a container and a name, and the flow
+ * synthesises a name rather than blocking.
  *
  * The photo is held as a Blob and uploaded AFTER the item exists — item_files
  * has an FK to the item and the upload route 404s without one. So "picture
  * first" is a gesture ordering, not a durability guarantee: this is stated in
- * the UI rather than pretended away.
+ * the UI rather than pretended away. A photo can also be added later from the
+ * item page, which is why this step no longer claims otherwise.
  *
  * This is the app's primary create surface (the centre nav button), so it has
  * to carry what that implies: a keyboard-only path to a destination, duplicate
@@ -436,8 +440,7 @@ export function Capture() {
           <button type="button" onClick={() => photoInput.current?.click()}
             className="flex flex-col items-center justify-center gap-2 border-2 border-[var(--color-text)] rounded-[var(--radius-sm)] py-10">
             <Camera className="w-8 h-8" />
-            <span className="font-mono text-xs uppercase tracking-[0.1em] font-bold">Take the picture</span>
-            <span className="font-mono text-[10px] text-[var(--color-text-muted)]">the only step you can't do later</span>
+            <span className="font-mono text-xs uppercase tracking-[0.1em] font-bold">Take a photo of the item</span>
           </button>
           <Button variant="ghost" size="sm" onClick={() => setPhase('identify')}>
             <SkipForward className="w-3.5 h-3.5" />
