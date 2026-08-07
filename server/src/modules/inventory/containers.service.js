@@ -1,6 +1,7 @@
 const { generateCode } = require('../../utils/qr');
 const ClosureTableService = require('./closure-table.service');
 const AuditService = require('../audit/audit.service');
+const RecycleService = require('../recycle/recycle.service');
 
 let _db = null;
 let _logger = null;
@@ -10,6 +11,9 @@ const ContainersService = {
   // ── Initialization ─────────────────────────────────────────────────────────
 
   init({ db, logger }) {
+    // Init here rather than relying on recycle.routes running first — a delete
+    // must be able to open a batch regardless of module registration order.
+    RecycleService.init({ db, logger });
     _db = db;
     _logger = logger;
     _closureTable = new ClosureTableService(db);
@@ -300,28 +304,51 @@ const ContainersService = {
 
   async softDelete(id, userId) {
     const propertyId = await ContainersService.getPropertyIdForContainer(id);
+    const nameRows = await _db.query('SELECT NAME FROM TALLY.containers WHERE ID = ?', [id]);
+    const rootName = nameRows[0]?.NAME || 'Container';
+
     await _db.withTransaction(async (tx) => {
-      // Cascade the soft-delete to the ENTIRE subtree (this container + every
-      // descendant container) and the items inside them, using the closure
-      // table. Previously this soft-deleted only the target row and then called
-      // removeNode() to DESTROY the subtree's closure paths — which left
-      // descendant containers/items with DELETED_AT NULL (phantom value still
-      // summed in reports/search), unreachable via navigation, and unrestorable
-      // (closure gone). We keep the closure intact so the subtree stays
-      // restorable; closure destruction is reserved for a permanent delete.
+      // Open the batch FIRST so every row this cascade stamps carries its id.
+      // Without it, a later restore could not tell the rows this operation
+      // deleted from rows that were already in the bin — the two UPDATEs below
+      // guard on DELETED_AT IS NULL precisely so they don't disturb the latter.
+      const batchId = await RecycleService.openBatch(tx, {
+        propertyId, rootType: 'container', rootId: id, rootName, userId,
+      });
+
+      // Return open loans before the items go. The area cascade has always done
+      // this; this path did not, which left an open loan pointing at a recycled
+      // item — and purgeExpired then refuses to purge it, forever.
       await tx.query(
-        `UPDATE TALLY.containers SET DELETED_AT = NOW()
-         WHERE DELETED_AT IS NULL AND ID IN (
-           SELECT DESCENDANT_ID FROM TALLY.container_paths WHERE ANCESTOR_ID = ?
+        `UPDATE TALLY.item_lending SET RETURNED_AT = NOW()
+         WHERE RETURNED_AT IS NULL AND ITEM_ID IN (
+           SELECT i.ID FROM TALLY.items i
+           WHERE i.DELETED_AT IS NULL AND i.CONTAINER_ID IN (
+             SELECT DESCENDANT_ID FROM TALLY.container_paths WHERE ANCESTOR_ID = ?
+           )
          )`,
         [id]
       );
+
+      // Cascade the soft-delete to the ENTIRE subtree (this container + every
+      // descendant container) and the items inside them, using the closure
+      // table. Closure paths are LEFT INTACT so the subtree stays restorable;
+      // destroying them belongs to a permanent delete only.
       await tx.query(
-        `UPDATE TALLY.items SET DELETED_AT = NOW()
+        `UPDATE TALLY.containers SET DELETED_AT = NOW(), DELETE_BATCH_ID = ?
+         WHERE DELETED_AT IS NULL AND ID IN (
+           SELECT DESCENDANT_ID FROM TALLY.container_paths WHERE ANCESTOR_ID = ?
+         )`,
+        [batchId, id]
+      );
+      // STATUS = 'removed' matches the area cascade and the single-item delete;
+      // this path used to leave recycled items reading 'active'.
+      await tx.query(
+        `UPDATE TALLY.items SET DELETED_AT = NOW(), STATUS = 'removed', DELETE_BATCH_ID = ?
          WHERE DELETED_AT IS NULL AND CONTAINER_ID IN (
            SELECT DESCENDANT_ID FROM TALLY.container_paths WHERE ANCESTOR_ID = ?
          )`,
-        [id]
+        [batchId, id]
       );
     });
     AuditService.logChange(userId, 'container', id, 'deleted', {}, propertyId);

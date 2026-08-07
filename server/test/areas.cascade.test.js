@@ -28,15 +28,26 @@ test('area cascadeDelete preserves closure paths and cascades set-based', async 
   );
   assert.match(
     joined,
-    /UPDATE TALLY\.containers SET DELETED_AT = NOW\(\) WHERE DELETED_AT IS NULL AND AREA_ID = \?/i,
-    'containers soft-deleted set-based by AREA_ID',
+    /UPDATE TALLY\.containers SET DELETED_AT = NOW\(\), DELETE_BATCH_ID = \? WHERE DELETED_AT IS NULL AND AREA_ID = \?/i,
+    'containers soft-deleted set-based by AREA_ID, stamped with the delete batch',
   );
   assert.match(
     joined,
-    /UPDATE TALLY\.items SET DELETED_AT = NOW\(\), STATUS = 'removed' WHERE DELETED_AT IS NULL AND CONTAINER_ID IN/i,
-    'items soft-deleted set-based',
+    /UPDATE TALLY\.items SET DELETED_AT = NOW\(\), STATUS = 'removed', DELETE_BATCH_ID = \? WHERE DELETED_AT IS NULL AND CONTAINER_ID IN/i,
+    'items soft-deleted set-based, stamped with the delete batch',
   );
-  assert.match(joined, /UPDATE TALLY\.areas SET DELETED_AT = NOW\(\) WHERE ID = \?/i, 'area soft-deleted');
+  assert.match(
+    joined,
+    /UPDATE TALLY\.areas SET DELETED_AT = NOW\(\), DELETE_BATCH_ID = \? WHERE ID = \?/i,
+    'area soft-deleted and stamped',
+  );
+
+  // The batch header must be opened BEFORE anything is stamped, or the stamps
+  // would reference an id that does not exist yet.
+  const batchInsert = sqls.findIndex((s) => /INSERT INTO TALLY\.delete_batches/i.test(s));
+  const firstStamp = sqls.findIndex((s) => /DELETE_BATCH_ID = \?/i.test(s));
+  assert.ok(batchInsert >= 0, 'a delete batch is opened');
+  assert.ok(batchInsert < firstStamp, 'the batch is opened before any row is stamped');
 
   // No per-item loop: exactly one item UPDATE, not one per item.
   const itemUpdates = sqls.filter((s) => /UPDATE TALLY\.items SET DELETED_AT/i.test(s));
