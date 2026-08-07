@@ -202,7 +202,14 @@ export function useMoveItem() {
   return useMutation({
     mutationFn: ({ id, containerId }: { id: number; containerId: number }) =>
       api.patch<{ item: Item }>(`/api/items/_p_/${id}/move`, { containerId }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.items.all }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.items.all });
+      // A move changes TWO containers, and container/area rows carry itemCount
+      // and nestedContainerCount — invalidating only items.all left those
+      // counts stale, so a moved item appeared to be in both places at once.
+      qc.invalidateQueries({ queryKey: queryKeys.containers.all });
+      qc.invalidateQueries({ queryKey: queryKeys.areas.all });
+    },
   });
 }
 

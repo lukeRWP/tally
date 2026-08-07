@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Loader2,
@@ -30,9 +30,11 @@ import {
   useAreas,
   useContainers,
   useCreateItem,
+  useMoveItem,
 } from '@/hooks/use-inventory';
 import { cn } from '@/lib/utils';
 import { usePrintQueueStore } from '@/store/print-queue-store';
+import { useCarryStore } from '@/store/carry-store';
 import { useCreatePrintJob, usePrinters } from '@/hooks/use-print';
 
 // -- Tab mode ----------------------------------------------------------------
@@ -149,6 +151,60 @@ export function Scan() {
   const { data: areas } = useAreas(propertyId);
   const { data: containers } = useContainers(areaId);
   const createItem = useCreateItem();
+  // named ...Mutation because `moveItem` is the held-item state below
+  const moveItemMutation = useMoveItem();
+  const carried = useCarryStore((s) => s.carried);
+  const recordMove = useCarryStore((s) => s.recordMove);
+  // handleBarcodeScanned is memoised and handed to the camera, so it would
+  // close over a stale `carried`. A ref keeps the scanner honest.
+  const carriedRef = useRef(carried);
+  useEffect(() => { carriedRef.current = carried; }, [carried]);
+
+  /**
+   * Put the carried items down in the scanned container. Areas resolve to the
+   * area's "Loose in <name>" container so a shelf label is never a dead end.
+   */
+  const completeCarryMove = useCallback(async (code: string) => {
+    const load = carriedRef.current;
+    try {
+      // resolve returns the entity fields at the TOP level of `data`
+      // ({ type, id, name, exists }) — not wrapped in { entity }.
+      const entity = await api.get<ResolvedEntity>(
+        `/api/labels/_x_/resolve/${encodeURIComponent(code)}`,
+      );
+      if (!entity?.exists) {
+        toast.error(`Code ${code} is not in your inventory`);
+        return;
+      }
+      if (entity.type === 'area') {
+        // Areas can't hold items directly; a "Loose in <area>" container is the
+        // agreed answer but does not exist yet, so say so rather than fail mute.
+        toast.error(`${entity.name} is an area — scan a bin inside it`);
+        return;
+      }
+      if (entity.type !== 'container') {
+        toast.error('That label is not a bin');
+        return;
+      }
+      // Everything already there is a no-op, not a failure.
+      const toMove = load.filter((i) => i.fromContainerId !== entity.id);
+      if (toMove.length === 0) {
+        toast(`Already in ${entity.name}`);
+        return;
+      }
+      for (const it of toMove) {
+        await moveItemMutation.mutateAsync({ id: it.id, containerId: entity.id });
+      }
+      recordMove({ items: toMove, toContainerId: entity.id, toContainerName: entity.name });
+      toast.success(
+        toMove.length === 1
+          ? `${toMove[0].name} → ${entity.name}`
+          : `${toMove.length} items → ${entity.name}`,
+      );
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not move it there');
+    }
+  }, [moveItemMutation, recordMove]);
   const stageLabel = usePrintQueueStore((st) => st.add);
   const createPrintJob = useCreatePrintJob();
   const { data: scanPrinters } = usePrinters(lastAdded ? lastAdded.propertyId || undefined : undefined);
@@ -217,6 +273,14 @@ export function Scan() {
     // OS camera. Route TLY codes through the existing resolver instead, which
     // lands on the entity (a container opens straight onto its contents).
     if (TLY_CODE_REGEX.test(code)) {
+      // Carrying something? Then a bin label is an ANSWER, not a navigation:
+      // resolve it and put the load down. Navigating away here used to destroy
+      // the in-flight capture (and would destroy a carry), which made the very
+      // gesture the move flow depends on the destructive one.
+      if (carriedRef.current.length > 0) {
+        void completeCarryMove(code);
+        return;
+      }
       navigate(`/s/${code}`);
       return;
     }
@@ -360,7 +424,10 @@ export function Scan() {
           // Batch mode: move item into current container immediately
           setMoveState('move_completing');
           try {
-            await api.patch(`/api/items/_p_/${entity.id}/move`, { containerId: moveContainer.id });
+            // Via the mutation, not raw api.patch: the hook invalidates the
+            // item/container/area caches. Calling the endpoint directly left
+            // the moved item visible in its old container.
+            await moveItemMutation.mutateAsync({ id: entity.id, containerId: moveContainer.id });
             const newMove: CompletedMove = {
               itemId: entity.id,
               itemName: entity.name,
@@ -384,7 +451,7 @@ export function Scan() {
           // Item already scanned -- complete the single move
           setMoveState('move_completing');
           try {
-            await api.patch(`/api/items/_p_/${moveItem.id}/move`, { containerId: entity.id });
+            await moveItemMutation.mutateAsync({ id: moveItem.id, containerId: entity.id });
             const newMove: CompletedMove = {
               itemId: moveItem.id,
               itemName: moveItem.name,

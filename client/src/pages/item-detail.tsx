@@ -14,6 +14,7 @@ import { useItem, useDeleteItem, useUpdateItem } from '@/hooks/use-inventory';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { EntityForm } from '@/components/inventory/entity-form';
 import { MoveItemDialog } from '@/components/inventory/move-item-dialog';
+import { useCarryStore } from '@/store/carry-store';
 import { ErrorState } from '@/components/ui/error-state';
 import { toast } from '@/components/ui/toast';
 import { Breadcrumbs } from '@/components/layout/breadcrumbs';
@@ -181,7 +182,9 @@ export function ItemDetail() {
   const [deleteOpen, setDeleteOpen] = React.useState(false);
 
   // Derive property/container from breadcrumb returned by the item detail API
-  const breadcrumb = (item as unknown as { breadcrumb?: { id: number; type: string }[] })?.breadcrumb;
+  // the server sends { id, name, type } (items.service.js _mapItem); `name` was
+  // simply missing from this local cast
+  const breadcrumb = (item as unknown as { breadcrumb?: { id: number; name: string | null; type: string }[] })?.breadcrumb;
   const propertyId = breadcrumb?.find((b) => b.type === 'property')?.id ?? 0;
   // Last container crumb, not the first: breadcrumbs run root→leaf, so for an
   // item inside a nested container .find() would return the OUTERMOST box —
@@ -202,6 +205,7 @@ export function ItemDetail() {
   const updateItem = useUpdateItem();
   const [editOpen, setEditOpen] = React.useState(false);
   const [moveOpen, setMoveOpen] = React.useState(false);
+  const pickUp = useCarryStore((s) => s.pickUp);
   const [conditionFormOpen, setConditionFormOpen] = React.useState(false);
   const [printOpen, setPrintOpen] = React.useState(false);
   const [dateFormOpen, setDateFormOpen] = React.useState(false);
@@ -307,7 +311,25 @@ export function ItemDetail() {
           <Pencil className="w-3.5 h-3.5" />
           Edit
         </Button>
-        <Button variant="outline" size="sm" className="flex-1 text-xs" onClick={() => setMoveOpen(true)}>
+        <Button
+          variant="outline"
+          size="sm"
+          className="flex-1 text-xs"
+          onClick={() => {
+            // Flow A: Move picks the item UP. The carry banner then follows you
+            // anywhere, and any container label you scan puts it down. The
+            // cascade picker is still reachable from the banner for the case
+            // where nothing is labelled.
+            pickUp([{
+              id: item.id,
+              name: item.name,
+              fromContainerId: containerId,
+              fromContainerName: breadcrumb?.filter((b) => b.type === 'container').at(-1)?.name ?? undefined,
+            }]);
+            toast(`Carrying ${item.name} — scan where it goes`);
+            navigate('/scan?mode=move');
+          }}
+        >
           <ArrowRightLeft className="w-3.5 h-3.5" />
           Move
         </Button>

@@ -117,6 +117,21 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
   return ok({});
 };
 
+// ?carry=1 seeds the carry banner so the move flow can be eyeballed
+if (P.get('carry')) {
+  const n = Number(P.get('carry')) || 1;
+  import('@/store/carry-store').then(({ useCarryStore }) => {
+    useCarryStore.getState().pickUp(
+      Array.from({ length: n }, (_, i) => ({
+        id: i + 1,
+        name: i === 0 ? 'Cordless Drill' : `Item ${i + 1}`,
+        fromContainerId: 99,
+        fromContainerName: 'Bin 4',
+      })),
+    );
+  });
+}
+
 const qc = new QueryClient({ defaultOptions: { queries: { retry: false, refetchOnWindowFocus: false } } });
 
 async function boot() {

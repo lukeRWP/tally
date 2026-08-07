@@ -23,6 +23,7 @@ import { TagPicker } from '@/components/tags/tag-picker';
 import { LabelPrintDialog } from '@/components/labels/label-print-dialog';
 import { ShareDialog } from '@/components/sharing/share-dialog';
 import { usePrintQueueStore } from '@/store/print-queue-store';
+import { useCarryStore } from '@/store/carry-store';
 
 export function ContainerDetail() {
   const { containerId } = useParams<{ containerId: string }>();
@@ -51,6 +52,8 @@ export function ContainerDetail() {
   const createContainer = useCreateContainer();
   const createItem = useCreateItem();
   const stageMany = usePrintQueueStore((s) => s.addMany);
+  const pickUp = useCarryStore((s) => s.pickUp);
+  const carried = useCarryStore((s) => s.carried);
 
   // A background refetch (30s staleTime + refetch-on-focus) can remove rows
   // out from under an open selection — prune ghosts so the "N selected"
@@ -188,6 +191,26 @@ export function ContainerDetail() {
     exitSelectMode();
   }
 
+  // Flow C: hand the selected items to the carry banner, then send the user to
+  // scan a destination. Only items move this way — moving a nested container is
+  // a different operation (it re-parents a subtree) and is not part of this.
+  function handleMoveSelected() {
+    const picked = (items ?? []).filter((i) => selected.has(`item:${i.id}`));
+    if (picked.length === 0) {
+      toast('Select items to move — containers move from their own page');
+      return;
+    }
+    pickUp(picked.map((i) => ({
+      id: i.id,
+      name: i.name,
+      fromContainerId: id,
+      fromContainerName: container?.name,
+    })));
+    exitSelectMode();
+    toast(`Carrying ${picked.length} item${picked.length === 1 ? '' : 's'} — scan where they go`);
+    navigate('/scan?mode=move');
+  }
+
   function handleSelectAll() {
     setSelected(
       new Set([
@@ -321,14 +344,18 @@ export function ContainerDetail() {
           <Button variant="outline" size="sm" onClick={exitSelectMode}>
             Cancel
           </Button>
+          <Button size="sm" variant="outline" disabled={selected.size === 0} onClick={handleMoveSelected}>
+            Move
+          </Button>
           <Button size="sm" disabled={selected.size === 0} onClick={handleAddSelected}>
-            Add to queue
+            Queue
           </Button>
         </div>
       )}
 
-      {/* FAB */}
-      {!selecting && (
+      {/* FAB — hidden while carrying: the carry banner occupies that corner, and
+          finishing the move is the active job. It returns when you put down. */}
+      {!selecting && carried.length === 0 && (
       <div className="fixed bottom-[calc(6rem+env(safe-area-inset-bottom))] lg:bottom-8 right-4 lg:right-8 flex flex-col items-end gap-2 z-30">
         {fabOpen && (
           <>
