@@ -6,6 +6,7 @@ import { useAuthStore } from '@/store/auth-store';
 import { useUnreadCount } from '@/hooks/use-notifications';
 import { Header } from './header';
 import { BottomNav } from './bottom-nav';
+import { CarryBanner } from '@/components/inventory/carry-banner';
 import { cn } from '@/lib/utils';
 
 // Mirrors the bottom nav's five destinations in the same order, plus Search at
@@ -134,6 +135,9 @@ export function RootLayout() {
             <Outlet />
           </div>
         </main>
+        {/* Carrying something? The banner follows you across every screen, so
+            you can browse to a destination instead of scanning if you prefer. */}
+        <CarryBanner />
         {/* Bottom nav - mobile/tablet only */}
         <div className="xl:hidden">
           <BottomNav />

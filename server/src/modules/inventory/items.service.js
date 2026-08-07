@@ -36,6 +36,9 @@ const ItemsService = {
       productName: row.PRODUCT_NAME !== undefined ? (row.PRODUCT_NAME || null) : undefined,
       productBrand: row.PRODUCT_BRAND !== undefined ? (row.PRODUCT_BRAND || null) : undefined,
       productImageUrl: row.PRODUCT_IMAGE_URL !== undefined ? (row.PRODUCT_IMAGE_URL || null) : undefined,
+      // Newest uploaded photo (the capture flow's step 1). Presigned by the
+      // caller — _mapItem is sync and presigning is not.
+      photoKey: row.PHOTO_KEY !== undefined ? (row.PHOTO_KEY || null) : undefined,
     };
   },
 
@@ -47,13 +50,34 @@ const ItemsService = {
          i.*,
          p.NAME AS PRODUCT_NAME,
          p.BRAND AS PRODUCT_BRAND,
-         p.IMAGE_URL AS PRODUCT_IMAGE_URL
+         p.IMAGE_URL AS PRODUCT_IMAGE_URL,
+         (SELECT f.FILE_KEY FROM TALLY.item_files f
+           WHERE f.ITEM_ID = i.ID AND f.FILE_TYPE = 'photo'
+           ORDER BY f.ID DESC LIMIT 1) AS PHOTO_KEY,
+         NULL AS _PHOTO_SENTINEL
        FROM TALLY.items i
        LEFT JOIN TALLY.products p ON i.PRODUCT_ID = p.ID
        WHERE i.CONTAINER_ID = ? AND i.DELETED_AT IS NULL`,
       [containerId]
     );
-    return rows.map(ItemsService._mapItem);
+    return ItemsService._withPhotoUrls(rows.map(ItemsService._mapItem));
+  },
+
+  /**
+   * Turn photoKey into a usable photoUrl. Presigned links are what the client
+   * can actually render (the bucket is not public), and this is the only thing
+   * that makes a captured photo visible anywhere other than the file list.
+   */
+  async _withPhotoUrls(items) {
+    return Promise.all(items.map(async (item) => {
+      if (!item.photoKey) return item;
+      try {
+        const photoUrl = await storage.getPresignedUrl(item.photoKey, { inline: true });
+        return { ...item, photoUrl };
+      } catch {
+        return item; // a missing object must not break the whole list
+      }
+    }));
   },
 
   async getById(id) {

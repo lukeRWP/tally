@@ -111,16 +111,20 @@ export function EntityForm({
                 id={field.name}
                 type={field.type || 'text'}
                 step={field.type === 'number' ? 'any' : undefined}
-                // Names end up on printed labels (title bars and the rotated
-                // zone banner) — 40 chars is the practical ceiling before even
-                // the auto-fit renderer has to ellipsize.
-                maxLength={field.name === 'name' ? 40 : undefined}
+                // The label renderer now auto-fits and ellipsizes (it tightens
+                // tracking, then shrinks, then truncates), so a long name no
+                // longer breaks a label — it just prints shorter. A HARD 40
+                // limit here meant an item auto-named from a product lookup
+                // (often ~70 chars) could never be edited again: changing its
+                // quantity failed validation on a name the user never typed.
+                // The server's own limit is 255.
+                maxLength={field.name === 'name' ? 255 : undefined}
                 aria-invalid={errors[field.name] ? true : undefined}
                 className={errors[field.name] ? 'border-[var(--color-red)]' : undefined}
                 {...register(field.name, {
                   required: field.required && `${field.label} is required`,
                   ...(field.name === 'name'
-                    ? { maxLength: { value: 40, message: 'Keep names to 40 characters — they have to fit on a printed label' } }
+                    ? { maxLength: { value: 255, message: 'Names are limited to 255 characters' } }
                     : {}),
                 })}
               />
