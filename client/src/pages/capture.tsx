@@ -466,7 +466,6 @@ export function Capture() {
               different questions, two different scanners, and the product one
               cannot decode a QR, so a bin label can no longer be swallowed
               while you are naming something (or the reverse). */}
-          <ColHead>{phase === 'identify' ? 'Scan product barcode' : 'Scan tote/area tag'}</ColHead>
           {phase === 'identify' ? (
             <ProductScanner onBarcode={handleCode} onClose={() => navigate(-1)} />
           ) : (

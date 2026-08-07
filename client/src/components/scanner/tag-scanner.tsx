@@ -21,10 +21,12 @@ export function TagScanner({
   onTag,
   onClose,
   isActive = true,
+  label = 'Scan tote/area tag',
 }: {
   onTag: (code: string) => void;
   onClose: () => void;
   isActive?: boolean;
+  label?: string;
 }) {
   const handle = React.useCallback((raw: string) => {
     const code = raw.trim().toUpperCase();
@@ -36,5 +38,13 @@ export function TagScanner({
     onTag(code);
   }, [onTag]);
 
-  return <CameraScanner isActive={isActive} formats={TAG_FORMATS} onBarcodeScanned={handle} onClose={onClose} />;
+  return (
+    <CameraScanner
+      isActive={isActive}
+      formats={TAG_FORMATS}
+      label={label}
+      onBarcodeScanned={handle}
+      onClose={onClose}
+    />
+  );
 }

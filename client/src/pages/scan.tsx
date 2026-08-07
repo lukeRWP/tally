@@ -4,7 +4,6 @@ import { ScanLine, ArrowRight } from 'lucide-react';
 import { TagScanner } from '@/components/scanner/tag-scanner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { ColHead } from '@/components/ui/col-head';
 import { TitleBar } from '@/components/ui/title-bar';
 
 /**
@@ -37,8 +36,6 @@ export function Scan() {
   return (
     <div className="flex flex-col gap-3 p-4 pb-28 max-w-lg mx-auto">
       <TitleBar className="w-fit">Scan a tag</TitleBar>
-
-      <ColHead>Scan tote/area tag</ColHead>
 
       <TagScanner onTag={handleCode} onClose={() => navigate(-1)} />
 

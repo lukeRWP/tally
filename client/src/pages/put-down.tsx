@@ -4,7 +4,6 @@ import { PackageOpen, List, Undo2, X } from 'lucide-react';
 import { TagScanner } from '@/components/scanner/tag-scanner';
 import { DestinationPicker } from '@/components/inventory/destination-picker';
 import { Button } from '@/components/ui/button';
-import { ColHead } from '@/components/ui/col-head';
 import { TitleBar } from '@/components/ui/title-bar';
 import { toast } from '@/components/ui/toast';
 import { api } from '@/lib/api';
@@ -181,11 +180,15 @@ export function PutDown() {
         </button>
       </div>
 
-      {/* The banner above already says what you are holding, so the line over
-          the frame is the ACTION, in the same words the create flow uses. */}
-      <ColHead>{busy ? 'Moving…' : 'Scan tote/area tag'}</ColHead>
-
-      <TagScanner isActive={!picking} onTag={handleCode} onClose={() => navigate(-1)} />
+      {/* The action is drawn inside the frame, so it is read while aiming
+          rather than before or after. It doubles as the progress indicator
+          while the move is in flight. */}
+      <TagScanner
+        isActive={!picking}
+        label={busy ? 'Moving…' : 'Scan tote/area tag'}
+        onTag={handleCode}
+        onClose={() => navigate(-1)}
+      />
 
       {picking ? (
         <DestinationPicker
