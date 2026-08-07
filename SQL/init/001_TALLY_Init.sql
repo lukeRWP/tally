@@ -7,10 +7,18 @@ CREATE DATABASE IF NOT EXISTS TALLY
 
 USE TALLY;
 
--- Create application user (CHANGE PASSWORD for production deployments)
-CREATE USER IF NOT EXISTS 'tally_api'@'%' IDENTIFIED BY 'tally_dev_password';
-GRANT SELECT, INSERT, UPDATE, DELETE ON TALLY.* TO 'tally_api'@'%';
-FLUSH PRIVILEGES;
+-- NO application user is created here on purpose.
+--
+-- This file is tarballed into build artifacts and applied to production, so
+-- any password written here is a published password (it was 'tally_dev_password'
+-- for every environment, in git history and in CI artifacts).
+--
+-- Local dev: docker-compose passes MYSQL_USER / MYSQL_PASSWORD to the mysql
+--   image, which creates the user and grants it TALLY on first init.
+-- Production: the operator provisions the account out of band from the
+--   deployment secret, granting only SELECT, INSERT, UPDATE, DELETE on TALLY.*
+--   e.g.  CREATE USER 'tally_api'@'%' IDENTIFIED BY '<secret>';
+--         GRANT SELECT, INSERT, UPDATE, DELETE ON TALLY.* TO 'tally_api'@'%';
 
 -- ============================================================
 -- 1. users

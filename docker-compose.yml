@@ -6,6 +6,12 @@ services:
     environment:
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
       MYSQL_DATABASE: TALLY
+      # The official image creates this user and grants it the database on
+      # first init. Doing it here instead of in SQL/init keeps the credential
+      # out of git — SQL/init is tarballed into build artifacts and applied to
+      # prod, so a password written there is a published password.
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
     volumes:
       - ./SQL/init/:/docker-entrypoint-initdb.d/
       # Applied by SQL/init/002_apply_migrations.sh after the base schema.
