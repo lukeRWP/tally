@@ -6,9 +6,97 @@ import { Package, Box, Building2, MapPin, AlertTriangle, Loader2 } from 'lucide-
 // Types
 // ---------------------------------------------------------------------------
 
-interface ShareViewData {
-  entityType: 'property' | 'container' | 'item';
-  entity: Record<string, unknown>;
+type Rec = Record<string, unknown>;
+
+/**
+ * What the server actually sends (sharing.service.js): a discriminated envelope
+ * whose payload is NESTED and FLAT-listed —
+ *   property  { type, property, areas[], containers[], items[] }
+ *   area      { type, area,     containers[], items[] }
+ *   container { type, container, nestedContainers[], items[] }
+ *   item      { type, item, files[], dates[], conditionSnapshots[] }
+ *
+ * The renderers below want the opposite: one flat entity with its children
+ * already nested (entity.areas[].containers[].items[]). This page used to read
+ * `data.entityType` — a key the server has never sent — so every branch was
+ * false and EVERY share link rendered a blank page. Normalising here keeps the
+ * renderers untouched and makes the shape mismatch explicit in one place.
+ */
+interface ShareEnvelope extends Rec {
+  type: 'property' | 'area' | 'container' | 'item';
+}
+
+const arr = (v: unknown): Rec[] => (Array.isArray(v) ? (v as Rec[]) : []);
+
+/** Nest containers by parentContainerId and hang items off their container. */
+function stitchContainers(containers: Rec[], items: Rec[], areaId?: unknown): Rec[] {
+  const scoped = areaId == null ? containers : containers.filter((c) => c.areaId === areaId);
+  const byId = new Map<unknown, Rec>();
+  for (const c of scoped) byId.set(c.id, { ...c, children: [], items: [] });
+  for (const it of items) {
+    const parent = byId.get(it.containerId);
+    if (parent) (parent.items as Rec[]).push(it);
+  }
+  const roots: Rec[] = [];
+  for (const c of byId.values()) {
+    const parent = c.parentContainerId != null ? byId.get(c.parentContainerId) : undefined;
+    if (parent) (parent.children as Rec[]).push(c);
+    else roots.push(c);
+  }
+  return roots;
+}
+
+/** The item payload carries product fields flat; ItemView wants them grouped. */
+function productOf(item: Rec): Rec | null {
+  if (!item.productName && !item.productBrand && !item.productImageUrl) return null;
+  return {
+    name: item.productName,
+    brand: item.productBrand,
+    imageUrl: item.productImageUrl,
+    description: item.productDescription,
+    category: (item as { productCategory?: unknown }).productCategory,
+  };
+}
+
+function normalize(p: ShareEnvelope): { kind: ShareEnvelope['type']; entity: Rec } | null {
+  switch (p.type) {
+    case 'property':
+      return {
+        kind: 'property',
+        entity: {
+          ...(p.property as Rec),
+          areas: arr(p.areas).map((a) => ({
+            ...a,
+            containers: stitchContainers(arr(p.containers), arr(p.items), a.id),
+          })),
+        },
+      };
+    case 'area':
+      return {
+        kind: 'area',
+        entity: { ...(p.area as Rec), containers: stitchContainers(arr(p.containers), arr(p.items)) },
+      };
+    case 'container':
+      return {
+        kind: 'container',
+        entity: { ...(p.container as Rec), children: arr(p.nestedContainers), items: arr(p.items) },
+      };
+    case 'item': {
+      const item = (p.item as Rec) ?? {};
+      return {
+        kind: 'item',
+        entity: {
+          ...item,
+          product: productOf(item),
+          files: arr(p.files),
+          dates: arr(p.dates),
+          conditionSnapshots: arr(p.conditionSnapshots),
+        },
+      };
+    }
+    default:
+      return null;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -123,6 +211,36 @@ function ContainerRow({ container }: { container: Record<string, unknown> }) {
         <div className="ml-3 flex flex-col gap-1 mt-2">
           {children.map((child) => (
             <ContainerRow key={str(child.id)} container={child} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AreaView({ entity }: { entity: Record<string, unknown> }) {
+  const containers = (entity.containers as Record<string, unknown>[] | undefined) ?? [];
+  return (
+    <div className="flex flex-col gap-4">
+      <div>
+        <div className="flex items-center gap-2">
+          <Building2 className="w-4 h-4" style={{ color: 'var(--color-primary)' }} />
+          <h2 className="text-xl font-bold" style={{ color: 'var(--color-text)' }}>
+            {str(entity.name)}
+          </h2>
+        </div>
+        {!!entity.description && (
+          <p className="text-sm mt-1" style={{ color: 'var(--color-text-secondary)' }}>
+            {str(entity.description)}
+          </p>
+        )}
+      </div>
+      {containers.length === 0 ? (
+        <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>No containers.</p>
+      ) : (
+        <div className="flex flex-col gap-2">
+          {containers.map((c) => (
+            <ContainerRow key={str(c.id)} container={c} />
           ))}
         </div>
       )}
@@ -418,7 +536,8 @@ function ItemView({ entity }: { entity: Record<string, unknown> }) {
 
 export function ShareView() {
   const { token } = useParams<{ token: string }>();
-  const [data, setData] = React.useState<ShareViewData | null>(null);
+  const [data, setData] = React.useState<ShareEnvelope | null>(null);
+  const view = React.useMemo(() => (data ? normalize(data) : null), [data]);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
 
@@ -436,7 +555,8 @@ export function ShareView() {
           throw new Error((json as { message?: string }).message || 'This link has expired or is invalid.');
         }
         const json = await res.json();
-        setData((json.data ?? json) as ShareViewData);
+        // the envelope lives under `data`; older/raw responses may be flat
+        setData(((json.data?.entity ?? json.data ?? json) as ShareEnvelope));
       })
       .catch((err: unknown) => {
         setError(err instanceof Error ? err.message : 'This link has expired or is invalid.');
@@ -502,12 +622,18 @@ export function ShareView() {
           </div>
         )}
 
-        {!loading && !error && !!data && (
+        {!loading && !error && !!view && (
           <>
-            {data.entityType === 'property' && <PropertyView entity={data.entity} />}
-            {data.entityType === 'container' && <ContainerView entity={data.entity} />}
-            {data.entityType === 'item' && <ItemView entity={data.entity} />}
+            {view.kind === 'property' && <PropertyView entity={view.entity} />}
+            {view.kind === 'area' && <AreaView entity={view.entity} />}
+            {view.kind === 'container' && <ContainerView entity={view.entity} />}
+            {view.kind === 'item' && <ItemView entity={view.entity} />}
           </>
+        )}
+        {!loading && !error && !!data && !view && (
+          <p className="text-sm text-center" style={{ color: 'var(--color-text-muted)' }}>
+            This share link points at something this page can't display yet.
+          </p>
         )}
       </div>
     </div>

@@ -44,7 +44,43 @@ const jobs = [
 
 const ok = (data: unknown) => new Response(JSON.stringify({ success: true, data }), { status: 200, headers: { 'Content-Type': 'application/json' } });
 
+// Exactly the envelope sharing.service.js builds (nested + flat child arrays).
+const shareEnvelopes: Record<string, unknown> = {
+  prop: { type: 'property',
+    property: { id: 1, name: "Luke's Apartment", address: '123 Example St', description: 'Main residence' },
+    areas: [{ id: 1, name: 'Coat Closet' }, { id: 2, name: 'Garage' }],
+    containers: [
+      { id: 1, areaId: 1, parentContainerId: null, name: 'Tote', type: 'Drawer' },
+      { id: 2, areaId: 1, parentContainerId: 1, name: 'Small Parts Box', type: 'Box' },
+      { id: 3, areaId: 2, parentContainerId: null, name: 'Bin 4', type: 'Bin' },
+    ],
+    items: [
+      { id: 1, containerId: 1, name: 'Exam Gloves', quantity: 100, condition: 'good' },
+      { id: 2, containerId: 2, name: 'M3 Screws', quantity: 200, condition: 'new' },
+      { id: 3, containerId: 3, name: 'Cordless Drill', quantity: 1, condition: 'new' },
+    ] },
+  area: { type: 'area',
+    area: { id: 1, name: 'Coat Closet', description: 'By the front door' },
+    containers: [
+      { id: 1, areaId: 1, parentContainerId: null, name: 'Tote', type: 'Drawer' },
+      { id: 2, areaId: 1, parentContainerId: 1, name: 'Small Parts Box', type: 'Box' },
+    ],
+    items: [{ id: 1, containerId: 1, name: 'Exam Gloves', quantity: 100, condition: 'good' }] },
+  cont: { type: 'container',
+    container: { id: 1, name: 'Tote', type: 'Drawer', description: 'Linen closet tote',
+      breadcrumb: [{ id: 1, name: "Luke's Apartment", type: 'property' }, { id: 1, name: 'Coat Closet', type: 'area' }] },
+    nestedContainers: [{ id: 2, name: 'Small Parts Box', type: 'Box' }],
+    items: [{ id: 1, name: 'Exam Gloves', quantity: 100, condition: 'good', status: 'active' }] },
+  item: { type: 'item',
+    item: { id: 1, name: 'SCHNEIDER Clear Vinyl Exam Gloves, 100ct', quantity: 100, condition: 'good',
+      status: 'active', purchasePrice: 12.99, qrCode: 'TLY-I-59C8985A',
+      productName: 'Clear Vinyl Exam Gloves', productBrand: 'SCHNEIDER', productImageUrl: '',
+      breadcrumb: [{ id: 1, name: "Luke's Apartment", type: 'property' }, { id: 1, name: 'Coat Closet', type: 'area' }, { id: 1, name: 'Tote', type: 'container' }] },
+    files: [], dates: [{ id: 1, dateType: 'Expiry', dateValue: '2027-03-01', notes: null }], conditionSnapshots: [] },
+};
+
 const routes: [RegExp, () => unknown][] = [
+  [/\/api\/sharing\/_x_\/view\//, () => ({ entity: shareEnvelopes[new URLSearchParams(location.search).get('share') || 'cont'] })],
   [/\/api\/auth\/_x_\/session/, () => ({ user })],
   [/\/api\/properties\/_x_\/list/, () => ({ properties: [property] })],
   [/\/api\/properties\/_x_\/\d+/, () => ({ property })],
