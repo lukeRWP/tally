@@ -2,7 +2,7 @@ import * as React from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   Pencil, ArrowRightLeft, Trash2, Printer, HandCoins, Share2,
-  MoreHorizontal, X, ChevronRight,
+  MoreHorizontal, X, ChevronRight, Camera,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { LabelPrintDialog } from '@/components/labels/label-print-dialog';
@@ -60,10 +60,14 @@ function computeDepreciation(
 // -- Overflow menu --------------------------------------------------------------
 
 function OverflowMenu({
+  onLend,
+  lendLabel,
   onShare,
   onPrint,
   onDelete,
 }: {
+  onLend: () => void;
+  lendLabel: string;
   onShare: () => void;
   onPrint: () => void;
   onDelete: () => void;
@@ -94,6 +98,17 @@ function OverflowMenu({
       </Button>
       {open && (
         <div className="absolute right-0 top-full mt-1 z-50 min-w-[140px] bg-[var(--color-card)] border border-[var(--color-border)] rounded-[var(--radius-lg)] shadow-[0_4px_16px_rgba(0,0,0,0.08)] p-1 flex flex-col gap-0.5 animate-scale-in">
+          {/* Lending leads the menu: it is the most consequential thing here,
+              and it came out of the action row to make room. */}
+          <button
+            type="button"
+            onClick={() => { onLend(); setOpen(false); }}
+            className="flex items-center gap-2 px-3 py-2 text-xs text-[var(--color-text)] hover:bg-[var(--color-elevated)] rounded-[var(--radius-md)] transition-colors w-full text-left"
+          >
+            <HandCoins className="w-3.5 h-3.5" />
+            {lendLabel}
+          </button>
+          <div className="border-t border-[var(--color-border)] my-0.5" />
           <button
             type="button"
             onClick={() => { onShare(); setOpen(false); }}
@@ -388,8 +403,6 @@ export function ItemDetail() {
   // Your photograph outranks the catalogue's stock image: one is this object,
   // the other is a picture of something like it.
   const photo = item?.photoUrl || item?.productImageUrl || null;
-
-  const photoCount = (itemFiles ?? []).filter((f) => f.fileType === 'photo').length;
   // The loan the "Lent to" row names — there is at most one open at a time.
   const openLoan = (lendingHistory ?? []).find((l) => !l.returnedAt);
 
@@ -450,9 +463,32 @@ export function ItemDetail() {
       {/* Breadcrumbs */}
       <Breadcrumbs items={breadcrumbItems} />
 
-      {/* Identity: name, then the three stamps that identify it — code,
-          condition, state. The ledger below carries everything else. */}
-      <div className="animate-fade-up flex flex-col gap-2">
+      {/* Identity: the photograph, then the name and the three stamps that
+          identify it — code, condition, state. The picture leads because it is
+          the fastest way to know you are looking at the right object; the
+          ledger below carries everything else. */}
+      <div className="animate-fade-up flex items-start gap-3">
+        {photo ? (
+          <button
+            type="button"
+            onClick={() => setPhotoOpen(true)}
+            aria-label="View photo"
+            className="shrink-0 w-16 h-16 rounded-[var(--radius-sm)] overflow-hidden border border-[var(--color-rule)]"
+          >
+            <img src={photo} alt={item.name} className="w-full h-full object-cover" />
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={() => photoInput.current?.click()}
+            aria-label="Add a photo"
+            className="shrink-0 w-16 h-16 rounded-[var(--radius-sm)] border border-dashed border-[var(--color-text-muted)] flex items-center justify-center text-[var(--color-text-muted)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)]"
+          >
+            <Camera className="w-5 h-5" />
+          </button>
+        )}
+
+        <div className="min-w-0 flex-1 flex flex-col gap-2">
         <TitleBar className="w-fit max-w-full">{item.name}</TitleBar>
         <div className="flex items-center gap-2 flex-wrap">
           <span className="font-mono text-[11px] text-[var(--color-text-muted)]">{item.qrCode}</span>
@@ -464,6 +500,7 @@ export function ItemDetail() {
           <Badge variant={item.status === 'lent' ? 'warning' : item.status === 'active' ? 'default' : 'danger'}>
             {item.status}
           </Badge>
+        </div>
         </div>
       </div>
 
@@ -494,11 +531,9 @@ export function ItemDetail() {
           <ArrowRightLeft className="w-3.5 h-3.5" />
           Move
         </Button>
-        <Button variant="outline" size="sm" className="flex-1 text-xs" onClick={() => setLendFormOpen(true)}>
-          <HandCoins className="w-3.5 h-3.5" />
-          {item.status === 'lent' ? 'Return' : 'Lend'}
-        </Button>
         <OverflowMenu
+          onLend={() => setLendFormOpen(true)}
+          lendLabel={item.status === 'lent' ? 'Return' : 'Lend'}
           onShare={() => setShareOpen(true)}
           onPrint={() => setPrintOpen(true)}
           onDelete={() => setDeleteOpen(true)}
@@ -548,18 +583,6 @@ export function ItemDetail() {
           label={itemDates?.[0]?.dateType || 'Warranty'}
           value={itemDates?.[0] ? new Date(itemDates[0].dateValue).toLocaleDateString() : null}
           onAdd={() => setDateFormOpen(true)}
-        />
-
-        <LedgerRow
-          label="Photos"
-          value={photo ? (
-            <span className="inline-flex items-center gap-2">
-              <img src={photo} alt="" className="w-8 h-8 rounded-[var(--radius-sm)] object-cover" />
-              {photoCount > 1 ? `${photoCount}` : ''}
-            </span>
-          ) : null}
-          onEdit={() => setPhotoOpen(true)}
-          onAdd={() => photoInput.current?.click()}
         />
 
         <LedgerRow
