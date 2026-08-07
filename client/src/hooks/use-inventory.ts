@@ -10,6 +10,21 @@ import type { Property, Area, Container, Item, BreadcrumbItem } from '@/types/in
 // Properties
 // ---------------------------------------------------------------------------
 
+/**
+ * Anything that changes WHERE something lives, or whether it exists, moves a
+ * count that is denormalised onto its ancestors: containers and areas carry
+ * itemCount, areas and properties carry containerCount. Invalidating only the
+ * entity's own key family leaves those ancestor rows rendering stale numbers
+ * for the whole staleTime window, so every create / delete / move invalidates
+ * the tree rather than one level of it.
+ */
+function invalidateTree(qc: ReturnType<typeof useQueryClient>) {
+  qc.invalidateQueries({ queryKey: queryKeys.items.all });
+  qc.invalidateQueries({ queryKey: queryKeys.containers.all });
+  qc.invalidateQueries({ queryKey: queryKeys.areas.all });
+  qc.invalidateQueries({ queryKey: queryKeys.properties.all });
+}
+
 export function useProperties() {
   return useQuery({
     queryKey: queryKeys.properties.list(),
@@ -49,7 +64,9 @@ export function useDeleteProperty() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: number) => api.del(`/api/properties/_d_/${id}`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.properties.all }),
+    // Deleting a property cascades to its areas, containers and items server
+    // side, so every level below it is stale, not just the property list.
+    onSuccess: () => invalidateTree(qc),
   });
 }
 
@@ -81,10 +98,9 @@ export function useDeleteArea() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: number) => api.del(`/api/areas/_d_/${id}`),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: queryKeys.areas.all });
-      qc.invalidateQueries({ queryKey: queryKeys.properties.all });
-    },
+    // Cascades to the area's containers and their items server side, so those
+    // caches would otherwise keep rendering rows that are now in the bin.
+    onSuccess: () => invalidateTree(qc),
   });
 }
 
@@ -143,7 +159,9 @@ export function useCreateContainer() {
       areaId: number;
       parentContainerId?: number;
     }) => api.post<{ container: Container }>('/api/containers/_y_/create', data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.containers.all }),
+    // Area and property rows carry containerCount, and a nested bin also moves
+    // its parent's count — so the whole tree, not just the container family.
+    onSuccess: () => invalidateTree(qc),
   });
 }
 
@@ -181,7 +199,9 @@ export function useCreateItem() {
       purchasePrice?: number;
       condition?: string;
     }) => api.post<{ item: Item }>('/api/items/_y_/create', data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.items.all }),
+    // Same reason as useMoveItem: container and area rows carry itemCount, so
+    // adding an item without invalidating them leaves those counts stale.
+    onSuccess: () => invalidateTree(qc),
   });
 }
 
@@ -227,12 +247,10 @@ export function useMoveItem() {
     mutationFn: ({ id, containerId }: { id: number; containerId: number }) =>
       api.patch<{ item: Item }>(`/api/items/_p_/${id}/move`, { containerId }),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: queryKeys.items.all });
       // A move changes TWO containers, and container/area rows carry itemCount
-      // and nestedContainerCount — invalidating only items.all left those
-      // counts stale, so a moved item appeared to be in both places at once.
-      qc.invalidateQueries({ queryKey: queryKeys.containers.all });
-      qc.invalidateQueries({ queryKey: queryKeys.areas.all });
+      // and containerCount — invalidating only items.all left those counts
+      // stale, so a moved item appeared to be in both places at once.
+      invalidateTree(qc);
     },
   });
 }
@@ -241,7 +259,7 @@ export function useDeleteItem() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: number) => api.del(`/api/items/_d_/${id}`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.items.all }),
+    onSuccess: () => invalidateTree(qc),
   });
 }
 
