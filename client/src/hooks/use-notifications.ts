@@ -93,3 +93,18 @@ export function useRecentActivity() {
     select: (data) => data.entries,
   });
 }
+
+/**
+ * The change log for one entity — what the item page's History section shows.
+ * Every CRUD path already writes here, so this is a read of existing truth
+ * rather than a new record to maintain.
+ */
+export function useEntityHistory(entityType: string, entityId: number) {
+  return useQuery({
+    queryKey: [...queryKeys.audit.all, 'entity', entityType, entityId],
+    queryFn: () =>
+      api.get<{ entries: AuditEntry[] }>(`/api/audit/_x_/entity/${entityType}/${entityId}`),
+    select: (data) => data.entries,
+    enabled: !!entityId,
+  });
+}

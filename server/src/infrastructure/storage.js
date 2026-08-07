@@ -4,6 +4,9 @@ const config = require('../config');
 const logger = require('../utils/logger');
 
 let s3Client = null;
+// A second client that differs ONLY in endpoint, used for signing links the
+// browser will follow. Signing is local, so this costs nothing at runtime.
+let presignClient = null;
 
 function init() {
   s3Client = new S3Client({
@@ -15,6 +18,18 @@ function init() {
     },
     forcePathStyle: true, // Required for MinIO
   });
+
+  presignClient = config.storage.publicEndpoint === config.storage.endpoint
+    ? s3Client
+    : new S3Client({
+        endpoint: config.storage.publicEndpoint,
+        region: config.storage.region,
+        credentials: {
+          accessKeyId: config.storage.accessKeyId,
+          secretAccessKey: config.storage.secretAccessKey,
+        },
+        forcePathStyle: true,
+      });
 }
 
 async function ensureBucket() {
@@ -56,7 +71,7 @@ async function getPresignedUrl(key, opts = {}) {
   const isInline = inline === true || (typeof contentType === 'string' && contentType.startsWith('image/'));
   const safeFileName = String(fileName || 'download').replace(/[^a-zA-Z0-9._-]/g, '_');
 
-  return getSignedUrl(s3Client, new GetObjectCommand({
+  return getSignedUrl(presignClient || s3Client, new GetObjectCommand({
     Bucket: config.storage.bucket,
     Key: key,
     ...(contentType ? { ResponseContentType: contentType } : {}),

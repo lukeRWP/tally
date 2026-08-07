@@ -77,6 +77,11 @@ const config = Object.freeze({
 
   storage: {
     endpoint: process.env.S3_ENDPOINT,
+    // The endpoint a BROWSER can reach. Presigned URLs are signed against a
+    // host, so signing them with the internal service name produces links the
+    // client cannot load — which is why uploaded photos never rendered. Falls
+    // back to the internal endpoint for setups where they are the same host.
+    publicEndpoint: process.env.S3_PUBLIC_ENDPOINT || process.env.S3_ENDPOINT,
     bucket: process.env.S3_BUCKET,
     accessKeyId: process.env.S3_ACCESS_KEY,
     secretAccessKey: process.env.S3_SECRET_KEY,

@@ -96,6 +96,9 @@ const ItemsService = {
          p.RETAIL_LINKS AS PRODUCT_RETAIL_LINKS,
          p.SPECS AS PRODUCT_SPECS,
          p.DATA_SOURCE AS PRODUCT_DATA_SOURCE,
+         (SELECT f.FILE_KEY FROM TALLY.item_files f
+           WHERE f.ITEM_ID = i.ID AND f.FILE_TYPE = 'photo'
+           ORDER BY f.ID DESC LIMIT 1) AS PHOTO_KEY,
          c.NAME AS CONTAINER_NAME,
          a.ID AS AREA_ID,
          a.NAME AS AREA_NAME,
@@ -148,7 +151,11 @@ const ItemsService = {
       { id: row.CONTAINER_ID, name: row.CONTAINER_NAME || null, type: 'container' },
     ];
 
-    return item;
+    // Presign the photo the same way the container listing does — the detail
+    // page is where the picture you took most deserves to be shown, and it was
+    // the one query that never carried it.
+    const [withPhoto] = await ItemsService._withPhotoUrls([item]);
+    return withPhoto;
   },
 
   async create(data, userId) {
