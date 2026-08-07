@@ -181,12 +181,11 @@ export function PutDown() {
         </button>
       </div>
 
-      <ColHead>Where does it go?</ColHead>
+      {/* The banner above already says what you are holding, so the line over
+          the frame is the ACTION, in the same words the create flow uses. */}
+      <ColHead>{busy ? 'Moving…' : 'Scan tote/area tag'}</ColHead>
 
       <TagScanner isActive={!picking} onTag={handleCode} onClose={() => navigate(-1)} />
-      <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-[var(--color-text-muted)] text-center">
-        {busy ? 'Moving…' : 'Scan a bin or an area label'}
-      </p>
 
       {picking ? (
         <DestinationPicker

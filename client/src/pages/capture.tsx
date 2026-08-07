@@ -460,18 +460,18 @@ export function Capture() {
       {/* ── step 2/3: the camera hunts codes ────────────────────────────── */}
       {(phase === 'identify' || phase === 'place') && (
         <div className="flex flex-col gap-2">
-          {/* Step 2 reads the maker's barcode, step 3 reads tally's tag. Two
-              different questions, so two different scanners — the product one
+          {/* The instruction goes ABOVE the frame — you read it before you
+              raise the phone, not after you have already pointed it somewhere.
+              Step 2 reads the maker's barcode, step 3 reads tally's tag: two
+              different questions, two different scanners, and the product one
               cannot decode a QR, so a bin label can no longer be swallowed
-              while you are naming something, and vice versa. */}
+              while you are naming something (or the reverse). */}
+          <ColHead>{phase === 'identify' ? 'Scan product barcode' : 'Scan tote/area tag'}</ColHead>
           {phase === 'identify' ? (
             <ProductScanner onBarcode={handleCode} onClose={() => navigate(-1)} />
           ) : (
             <TagScanner isActive={!picking} onTag={handleCode} onClose={() => navigate(-1)} />
           )}
-          <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-[var(--color-text-muted)] text-center">
-            {phase === 'identify' ? 'Find the product barcode' : 'Scan the bin or area tag'}
-          </p>
 
           {/* Not everything has a scannable barcode. These answer the same
               question as step 2 — "what is this?" — so they live here rather
