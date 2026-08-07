@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Loader2,
@@ -6,10 +6,7 @@ import {
   Search,
   Plus,
   Package,
-  Box,
-  ArrowRight,
   CheckCircle2,
-  MoveRight,
   MapPin,
   Printer,
   Smartphone,
@@ -31,17 +28,12 @@ import {
   useAreas,
   useContainers,
   useCreateItem,
-  useMoveItem,
 } from '@/hooks/use-inventory';
-import { cn } from '@/lib/utils';
 import { usePrintQueueStore } from '@/store/print-queue-store';
-import { useCarryStore } from '@/store/carry-store';
-import { usePutDown } from '@/hooks/use-put-down';
 import { useCreatePrintJob, usePrinters } from '@/hooks/use-print';
 
 // -- Tab mode ----------------------------------------------------------------
 
-type TabMode = 'add' | 'move';
 
 // -- Add-mode state machine --------------------------------------------------
 
@@ -66,27 +58,6 @@ interface DuplicateItem {
   propertyName: string;
 }
 
-// -- Move-mode state machine -------------------------------------------------
-
-type MoveState =
-  | 'move_idle'
-  | 'move_item_scanned'
-  | 'move_container_scanned'
-  | 'move_completing';
-
-interface ResolvedEntity {
-  type: string;
-  id: number;
-  name: string;
-  exists: boolean;
-}
-
-interface CompletedMove {
-  itemId: number;
-  itemName: string;
-  containerId: number;
-  containerName: string;
-}
 
 const TLY_CODE_REGEX = /^TLY-[PACI]-[0-9A-Fa-f]{4,8}$/;
 
@@ -110,7 +81,6 @@ export function Scan() {
   const [searchParams] = useSearchParams();
 
   // -- Tab ------------------------------------------------------------------
-  const [tab, setTab] = useState<TabMode>('add');
 
   // -- Add mode state -------------------------------------------------------
   const [state, setState] = useState<ScanState>('idle');
@@ -159,10 +129,6 @@ export function Scan() {
   >([]);
 
   // -- Move mode state ------------------------------------------------------
-  const [moveState, setMoveState] = useState<MoveState>('move_idle');
-  const [moveItem, setMoveItem] = useState<ResolvedEntity | null>(null);
-  const [moveContainer, setMoveContainer] = useState<ResolvedEntity | null>(null);
-  const [completedMoves, setCompletedMoves] = useState<CompletedMove[]>([]);
 
   // Data hooks
   const { data: properties } = useProperties();
@@ -170,50 +136,15 @@ export function Scan() {
   const { data: containers } = useContainers(areaId);
   const createItem = useCreateItem();
   // named ...Mutation because `moveItem` is the held-item state below
-  const moveItemMutation = useMoveItem();
-  const carried = useCarryStore((s) => s.carried);
   // handleBarcodeScanned is memoised and handed to the camera, so it would
   // close over a stale `carried`. A ref keeps the scanner honest.
-  const carriedRef = useRef(carried);
-  useEffect(() => { carriedRef.current = carried; }, [carried]);
-
-  const putDown = usePutDown();
 
   /**
    * Put the carried load down on the scanned label. A bin and an area are both
    * valid destinations — usePutDown owns what each one means for each kind of
    * load, so this only has to reject labels that are neither.
    */
-  const completeCarryMove = useCallback(async (code: string) => {
-    const load = carriedRef.current;
-    try {
-      // resolve returns the entity fields at the TOP level of `data`
-      // ({ type, id, name, exists }) — not wrapped in { entity }.
-      const entity = await api.get<ResolvedEntity>(
-        `/api/labels/_x_/resolve/${encodeURIComponent(code)}`,
-      );
-      if (!entity?.exists) {
-        toast.error(`Code ${code} is not in your inventory`);
-        return;
-      }
-      if (entity.type !== 'container' && entity.type !== 'area') {
-        toast.error('That label is not a bin or an area');
-        return;
-      }
-      const result = await putDown(load, entity);
-      if (!result) {
-        toast(`Already in ${entity.name}`);
-        return;
-      }
-      toast.success(
-        result.moved.length === 1
-          ? `${result.moved[0].name} → ${entity.name}`
-          : `${result.moved.length} moved → ${entity.name}`,
-      );
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Could not move it there');
-    }
-  }, [putDown]);
+
   const stageLabel = usePrintQueueStore((st) => st.add);
   const stageMany = usePrintQueueStore((st) => st.addMany);
   const createPrintJob = useCreatePrintJob();
@@ -284,14 +215,9 @@ export function Scan() {
     // OS camera. Route TLY codes through the existing resolver instead, which
     // lands on the entity (a container opens straight onto its contents).
     if (TLY_CODE_REGEX.test(code)) {
-      // Carrying something? Then a bin or area label is an ANSWER, not a navigation:
-      // resolve it and put the load down. Navigating away here used to destroy
-      // the in-flight capture (and would destroy a carry), which made the very
-      // gesture the move flow depends on the destructive one.
-      if (carriedRef.current.length > 0) {
-        void completeCarryMove(code);
-        return;
-      }
+      // This screen looks things up, so a TLY label always means "take me
+      // there". Putting a carried load DOWN is /move's question, and having
+      // both screens answer it was how one scanner ended up meaning two things.
       navigate(`/s/${code}`);
       return;
     }
@@ -411,117 +337,13 @@ export function Scan() {
 
   // -- Move mode handlers ---------------------------------------------------
 
-  const resetMoveFlow = useCallback(() => {
-    setMoveState('move_idle');
-    setMoveItem(null);
-    setMoveContainer(null);
-    setCompletedMoves([]);
-  }, []);
 
-  const handleMoveCodeScanned = useCallback(async (code: string) => {
-    // Only handle TLY codes in move mode
-    if (!TLY_CODE_REGEX.test(code)) return;
-
-    try {
-      const entity = await api.get<ResolvedEntity>(`/api/labels/_x_/resolve/${code}`);
-
-      if (!entity.exists) {
-        toast.error(`Code ${code} not found in inventory`);
-        return;
-      }
-
-      if (entity.type === 'item') {
-        if (moveState === 'move_container_scanned' && moveContainer) {
-          // Batch mode: move item into current container immediately
-          setMoveState('move_completing');
-          try {
-            // Via the mutation, not raw api.patch: the hook invalidates the
-            // item/container/area caches. Calling the endpoint directly left
-            // the moved item visible in its old container.
-            await moveItemMutation.mutateAsync({ id: entity.id, containerId: moveContainer.id });
-            const newMove: CompletedMove = {
-              itemId: entity.id,
-              itemName: entity.name,
-              containerId: moveContainer.id,
-              containerName: moveContainer.name,
-            };
-            setCompletedMoves((prev) => [newMove, ...prev]);
-            toast.success(`${entity.name} -> ${moveContainer.name}`);
-            setMoveState('move_container_scanned');
-          } catch (err) {
-            toast.error(err instanceof Error ? err.message : 'Failed to move item');
-            setMoveState('move_container_scanned');
-          }
-        } else {
-          // Item-first flow: hold item, wait for container
-          setMoveItem(entity);
-          setMoveState('move_item_scanned');
-        }
-      } else if (entity.type === 'container') {
-        if (moveState === 'move_item_scanned' && moveItem) {
-          // Item already scanned -- complete the single move
-          setMoveState('move_completing');
-          try {
-            await moveItemMutation.mutateAsync({ id: moveItem.id, containerId: entity.id });
-            const newMove: CompletedMove = {
-              itemId: moveItem.id,
-              itemName: moveItem.name,
-              containerId: entity.id,
-              containerName: entity.name,
-            };
-            setCompletedMoves((prev) => [newMove, ...prev]);
-            toast.success(`${moveItem.name} -> ${entity.name}`);
-            setMoveItem(null);
-            setMoveContainer(null);
-            setMoveState('move_idle');
-          } catch (err) {
-            toast.error(err instanceof Error ? err.message : 'Failed to move item');
-            setMoveState('move_item_scanned');
-          }
-        } else {
-          // Container-first flow: enter batch mode
-          setMoveContainer(entity);
-          setMoveItem(null);
-          setMoveState('move_container_scanned');
-        }
-      }
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to resolve code');
-    }
-  }, [moveState, moveItem, moveContainer]);
-
-  const isMoveActive =
-    moveState === 'move_idle' ||
-    moveState === 'move_item_scanned' ||
-    moveState === 'move_container_scanned';
 
   // -- Tab switch -----------------------------------------------------------
 
-  const handleTabChange = useCallback((newTab: TabMode) => {
-    setTab(newTab);
-    if (newTab === 'add') {
-      resetMoveFlow();
-    } else {
-      resetFlow();
-    }
-  }, [resetFlow, resetMoveFlow]);
 
   // -- Move mode status message ---------------------------------------------
 
-  const moveStatusMessage = (() => {
-    switch (moveState) {
-      case 'move_idle':
-        return 'Scan an item or container to start';
-      case 'move_item_scanned':
-        return 'Now scan the destination container';
-      case 'move_container_scanned':
-        return moveContainer
-          ? `Now scan items to move into ${moveContainer.name}`
-          : 'Now scan items to move';
-      case 'move_completing':
-        return 'Moving...';
-    }
-  })();
 
   return (
     <div className="flex flex-col gap-4 px-4 py-4 max-w-lg mx-auto xl:max-w-md">
@@ -538,39 +360,11 @@ export function Scan() {
         </p>
       </div>
 
-      {/* Mode tabs + Manual search -- compact top bar */}
+      {/* One purpose: find or add by barcode. Putting things away is its own
+          screen (/move), reached by carrying something. */}
       <div className="flex flex-col gap-2 animate-fade-up">
-        <div className="flex gap-1 p-1 rounded-[var(--radius-lg)] bg-[var(--color-elevated)]">
-          <button
-            type="button"
-            onClick={() => handleTabChange('add')}
-            className={cn(
-              'flex-1 flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-[var(--radius-md)] text-sm font-semibold transition-all duration-200 cursor-pointer',
-              tab === 'add'
-                ? 'bg-[var(--color-card)] text-[var(--color-primary)] shadow-sm'
-                : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]'
-            )}
-          >
-            <Plus className="w-4 h-4" />
-            Add Item
-          </button>
-          <button
-            type="button"
-            onClick={() => handleTabChange('move')}
-            className={cn(
-              'flex-1 flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-[var(--radius-md)] text-sm font-semibold transition-all duration-200 cursor-pointer',
-              tab === 'move'
-                ? 'bg-[var(--color-card)] text-[var(--color-amber)] shadow-sm'
-                : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]'
-            )}
-          >
-            <MoveRight className="w-4 h-4" />
-            Move Item
-          </button>
-        </div>
-
         {/* Manual search alternative -- above camera for add mode */}
-        {tab === 'add' && state === 'idle' && (
+        {state === 'idle' && (
           <button
             type="button"
             className="flex items-center justify-center gap-2 w-full py-2.5 rounded-[var(--radius-lg)] text-sm font-medium text-[var(--color-primary)] bg-[var(--color-primary-bg)] hover:bg-[var(--color-primary-bg)]/80 transition-all duration-200 cursor-pointer"
@@ -583,7 +377,7 @@ export function Scan() {
       </div>
 
       {/* -- ADD MODE -------------------------------------------------------- */}
-      {tab === 'add' && (
+      {(
         <>
           {/* Session receipts — a LIST, so the next scan cannot wipe the Print
               affordance out from under your hand. Newest first. */}
@@ -957,149 +751,7 @@ export function Scan() {
       )}
 
       {/* -- MOVE MODE ------------------------------------------------------- */}
-      {tab === 'move' && (
-        <>
-          {/* Camera -- active whenever in move mode (except while completing) */}
-          <div className="relative rounded-2xl overflow-hidden animate-fade-up" style={{ animationDelay: '50ms' }}>
-            <CameraScanner
-              isActive={isMoveActive}
-              onBarcodeScanned={handleMoveCodeScanned}
-              onClose={() => navigate(-1)}
-            />
-            {/* Corner bracket overlays */}
-            <div className="absolute top-3 left-3 w-6 h-6 border-t-[3px] border-l-[3px] border-[var(--color-amber)] rounded-tl-sm pointer-events-none" />
-            <div className="absolute top-3 right-3 w-6 h-6 border-t-[3px] border-r-[3px] border-[var(--color-amber)] rounded-tr-sm pointer-events-none" />
-            <div className="absolute bottom-3 left-3 w-6 h-6 border-b-[3px] border-l-[3px] border-[var(--color-amber)] rounded-bl-sm pointer-events-none" />
-            <div className="absolute bottom-3 right-3 w-6 h-6 border-b-[3px] border-r-[3px] border-[var(--color-amber)] rounded-br-sm pointer-events-none" />
-          </div>
 
-          {/* Status banner below camera */}
-          <div className="flex items-center justify-center gap-2 mt-1 mb-1">
-            <span className="relative flex h-2.5 w-2.5">
-              <span className={cn(
-                'animate-ping absolute inline-flex h-full w-full rounded-full opacity-75',
-                moveState === 'move_idle' ? 'bg-[var(--color-text-muted)]' : 'bg-[var(--color-amber)]'
-              )} />
-              <span className={cn(
-                'relative inline-flex rounded-full h-2.5 w-2.5',
-                moveState === 'move_idle' ? 'bg-[var(--color-text-muted)]' : 'bg-[var(--color-amber)]'
-              )} />
-            </span>
-            <p className="text-sm font-medium text-[var(--color-text-secondary)]">
-              {moveStatusMessage}
-            </p>
-          </div>
-
-          {/* Context panel -- shown when something is in buffer */}
-          {(moveState === 'move_item_scanned' || moveState === 'move_container_scanned') && (
-            <Card className="flex flex-col gap-3">
-              <div className="flex items-center justify-between">
-                <p className="text-xs font-semibold text-[var(--color-text-secondary)] uppercase tracking-wide">
-                  Current context
-                </p>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setMoveItem(null);
-                    setMoveContainer(null);
-                    setMoveState('move_idle');
-                  }}
-                  className="text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] cursor-pointer transition-colors duration-150"
-                >
-                  Clear
-                </button>
-              </div>
-
-              {moveState === 'move_item_scanned' && moveItem && (
-                <div className="flex items-center gap-2 px-3 py-2 rounded-[var(--radius-md)] bg-[var(--color-amber-bg)] border border-[var(--color-amber)]">
-                  <Box className="w-4 h-4 text-[var(--color-amber)] shrink-0" />
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm font-medium text-[var(--color-text)] truncate">
-                      {moveItem.name}
-                    </p>
-                    <p className="text-xs text-[var(--color-text-muted)]">
-                      item -- scan a container to move it
-                    </p>
-                  </div>
-                  <ArrowRight className="w-4 h-4 text-[var(--color-amber)] shrink-0" />
-                  <span className="text-xs text-[var(--color-text-muted)]">?</span>
-                </div>
-              )}
-
-              {moveState === 'move_container_scanned' && moveContainer && (
-                <div className="flex items-center gap-2 px-3 py-2 rounded-[var(--radius-md)] bg-[var(--color-amber-bg)] border border-[var(--color-amber)]">
-                  <Package className="w-4 h-4 text-[var(--color-amber)] shrink-0" />
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm font-medium text-[var(--color-text)] truncate">
-                      Moving to: {moveContainer.name}
-                    </p>
-                    <p className="text-xs text-[var(--color-text-muted)]">
-                      container -- scan items to move in
-                    </p>
-                  </div>
-                </div>
-              )}
-
-              {moveState === 'move_container_scanned' && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => {
-                    setMoveContainer(null);
-                    setMoveState('move_idle');
-                  }}
-                  className="border-[var(--color-amber)] text-[var(--color-amber)] hover:bg-[var(--color-amber-bg)]"
-                >
-                  Done -- exit batch mode
-                </Button>
-              )}
-            </Card>
-          )}
-
-          {/* Completed moves list */}
-          {completedMoves.length > 0 && (
-            <Card className="flex flex-col gap-3">
-              <div className="flex items-center justify-between">
-                <p className="text-xs font-semibold text-[var(--color-text-secondary)] uppercase tracking-wide">
-                  Completed moves ({completedMoves.length})
-                </p>
-                <button
-                  type="button"
-                  onClick={() => setCompletedMoves([])}
-                  className="text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] cursor-pointer transition-colors duration-150"
-                >
-                  Clear
-                </button>
-              </div>
-              <ul className="flex flex-col gap-2">
-                {completedMoves.map((move, i) => (
-                  <li
-                    key={`${move.itemId}-${move.containerId}-${i}`}
-                    className="flex items-center gap-2 text-sm animate-fade-up"
-                    style={{ animationDelay: `${i * 30}ms` }}
-                  >
-                    <CheckCircle2 className="w-4 h-4 text-[var(--color-green)] shrink-0" />
-                    <span className="text-[var(--color-text)] truncate flex-1 min-w-0">
-                      {move.itemName}
-                    </span>
-                    <ArrowRight className="w-3.5 h-3.5 text-[var(--color-text-muted)] shrink-0" />
-                    <span className="text-[var(--color-text-muted)] truncate max-w-[120px]">
-                      {move.containerName}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            </Card>
-          )}
-
-          {/* Reset button when idle with no history */}
-          {moveState === 'move_idle' && completedMoves.length === 0 && (
-            <p className="text-center text-sm text-[var(--color-text-muted)] py-2">
-              Point the camera at a TLY QR code to start
-            </p>
-          )}
-        </>
-      )}
     </div>
   );
 }

@@ -525,7 +525,7 @@ export function ItemDetail() {
               fromContainerName: breadcrumb?.filter((b) => b.type === 'container').at(-1)?.name ?? undefined,
             }]);
             toast(`Carrying ${item.name} — scan where it goes`);
-            navigate('/scan?mode=move');
+            navigate('/move');
           }}
         >
           <ArrowRightLeft className="w-3.5 h-3.5" />
