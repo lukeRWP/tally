@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { LabelPrintDialog } from '@/components/labels/label-print-dialog';
 import { Card } from '@/components/ui/card';
 import { TitleBar } from '@/components/ui/title-bar';
+import { Badge } from '@/components/ui/badge';
 // (Badge import removed — it was dead; item-detail renders no <Badge>.)
 import { Skeleton } from '@/components/ui/skeleton';
 import { useItem, useDeleteItem, useUpdateItem } from '@/hooks/use-inventory';
@@ -34,14 +35,7 @@ import { useItemFiles } from '@/hooks/use-files';
 import { useAccessories } from '@/hooks/use-accessories';
 import { useLendingHistory } from '@/hooks/use-lending';
 import { ShareDialog } from '@/components/sharing/share-dialog';
-import { cn, safeExternalUrl } from '@/lib/utils';
-
-const conditionColor: Record<string, string> = {
-  new: 'bg-[var(--color-green)]',
-  good: 'bg-[var(--color-primary)]',
-  fair: 'bg-[var(--color-amber)]',
-  poor: 'bg-[var(--color-red)]',
-};
+import { safeExternalUrl } from '@/lib/utils';
 
 function computeDepreciation(
   purchasePrice: number,
@@ -279,18 +273,18 @@ export function ItemDetail() {
       <div className="animate-fade-up flex flex-col gap-2">
         <TitleBar className="w-fit max-w-full">{item.name}</TitleBar>
 
-        {/* Condition indicator strip */}
+        {/* Facts on ONE line. Most items are "a thing in a bin" — quantity,
+            condition and value said once, in order, beat four labelled cards. */}
         <div className="flex items-center gap-2 flex-wrap">
-          <div className="flex items-center gap-1.5">
-            <span className={cn('w-3 h-3 rounded-full shrink-0', conditionColor[item.condition] ?? 'bg-[var(--color-text-muted)]')} />
-            <span className="text-xs font-medium text-[var(--color-text-secondary)] capitalize">{item.condition}</span>
-          </div>
-          <span className="text-[var(--color-border)] hidden sm:inline">|</span>
-          <span className="text-xs font-medium text-[var(--color-text-secondary)] capitalize">{item.status}</span>
-          {item.quantity > 1 && (
-            <span className="text-xs font-medium text-[var(--color-text-secondary)]">Qty: {item.quantity}</span>
-          )}
-          <span className="text-[11px] font-mono text-[var(--color-text-muted)]">{item.qrCode}</span>
+          <span className="text-sm font-semibold text-[var(--color-text)]">
+            {[
+              item.quantity > 1 ? `${item.quantity}` : null,
+              item.condition ? item.condition.charAt(0).toUpperCase() + item.condition.slice(1) : null,
+              item.purchasePrice != null ? `$${item.purchasePrice.toFixed(2)}` : null,
+            ].filter(Boolean).join(' · ')}
+          </span>
+          {item.status !== 'active' && <Badge variant="info">{item.status}</Badge>}
+          <span className="font-mono text-[11px] text-[var(--color-text-muted)]">{item.qrCode}</span>
         </div>
 
         {item.description && (
@@ -301,6 +295,32 @@ export function ItemDetail() {
         {propertyId > 0 && (
           <div className="mt-3">
             <TagPicker entityType="item" entityId={item.id} propertyId={propertyId} />
+          </div>
+        )}
+
+        {/* What this item could still tell us. Creation now captures almost
+            nothing on purpose, so the gaps have to look like invitations
+            rather than emptiness — each chip opens the thing that fills it. */}
+        {(item.purchasePrice == null || !item.description) && (
+          <div className="flex flex-wrap gap-1.5 mt-2">
+            {item.purchasePrice == null && (
+              <button
+                type="button"
+                onClick={() => setEditOpen(true)}
+                className="font-mono text-[10px] uppercase tracking-[0.06em] border border-dashed border-[var(--color-text-muted)] text-[var(--color-text-muted)] rounded-full px-3 min-h-[28px] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)]"
+              >
+                + value
+              </button>
+            )}
+            {!item.description && (
+              <button
+                type="button"
+                onClick={() => setEditOpen(true)}
+                className="font-mono text-[10px] uppercase tracking-[0.06em] border border-dashed border-[var(--color-text-muted)] text-[var(--color-text-muted)] rounded-full px-3 min-h-[28px] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)]"
+              >
+                + description
+              </button>
+            )}
           </div>
         )}
       </div>
