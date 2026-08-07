@@ -2,7 +2,7 @@ import * as React from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   Pencil, ArrowRightLeft, Trash2, Printer, HandCoins, Share2,
-  MoreHorizontal, X,
+  MoreHorizontal, X, ChevronRight,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { LabelPrintDialog } from '@/components/labels/label-print-dialog';
@@ -175,13 +175,13 @@ function ItemHistory({
   const shown = all ? list : list.slice(0, 4);
 
   return (
-    <div className="flex flex-col animate-fade-up" style={{ animationDelay: '110ms' }}>
-      <ColHead
+    <div className="animate-fade-up" style={{ animationDelay: '110ms' }}>
+      <Section
+        title="History"
+        count={list.length}
         action={list.length > shown.length ? `All ${list.length}` : undefined}
         onAction={() => setAll(true)}
       >
-        History
-      </ColHead>
       {shown.length === 0 ? (
         <p className="font-mono text-[10px] uppercase tracking-[0.06em] text-[var(--color-text-muted)] py-3">
           Nothing else recorded yet
@@ -201,6 +201,62 @@ function ItemHistory({
           </div>
         ))
       )}
+      </Section>
+    </div>
+  );
+}
+
+/**
+ * A ruled section that starts closed.
+ *
+ * The ledger is the page; everything under it is reference material you go
+ * looking for. Closed by default keeps the page the length of its facts — but
+ * a closed section still states its COUNT, so collapsing never hides the
+ * existence of what is inside.
+ */
+function Section({
+  title,
+  count,
+  action,
+  onAction,
+  defaultOpen = false,
+  children,
+}: {
+  title: string;
+  count?: number;
+  action?: React.ReactNode;
+  onAction?: () => void;
+  defaultOpen?: boolean;
+  children: React.ReactNode;
+}) {
+  const [open, setOpen] = React.useState(defaultOpen);
+  return (
+    <div className="flex flex-col">
+      <div className="flex items-baseline justify-between gap-2 border-b-2 border-[var(--color-rule)] pb-1.5 font-mono text-[11px] uppercase tracking-[0.1em] text-[var(--color-text-muted)]">
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          aria-expanded={open}
+          className="flex items-center gap-1.5 min-h-[32px] -my-1 truncate font-mono uppercase tracking-[0.1em]"
+        >
+          <ChevronRight className={cn('w-3 h-3 shrink-0 transition-transform', open && 'rotate-90')} />
+          <span className="truncate">{title}</span>
+          {count != null && count > 0 && (
+            <span className="text-[var(--color-text)] font-bold">· {count}</span>
+          )}
+        </button>
+        {/* The action must not toggle the section — "Add date" opens a form. */}
+        {action != null && onAction && (
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); onAction(); }}
+            className="shrink-0 -my-1 px-1 min-h-[28px] inline-flex items-center font-bold text-[var(--color-primary)] hover:opacity-80"
+          >
+            {action}
+          </button>
+        )}
+      </div>
+      {open && children}
     </div>
   );
 }
@@ -516,12 +572,11 @@ export function ItemDetail() {
       </div>
 
       {propertyId > 0 && (
-        <div className="flex flex-col">
-          <ColHead>Tags</ColHead>
+        <Section title="Tags">
           <div className="py-2">
             <TagPicker entityType="item" entityId={item.id} propertyId={propertyId} />
           </div>
-        </div>
+        </Section>
       )}
 
       <ItemHistory
@@ -536,8 +591,7 @@ export function ItemDetail() {
           with no rows is already represented in the ledger as "+ add". */}
 
       {(item.productName || item.productImageUrl) && (
-        <div className="flex flex-col">
-          <ColHead>Product</ColHead>
+        <Section title="Product">
           <div className="flex items-start gap-3 py-3">
             {item.productImageUrl && (
               <img
@@ -574,53 +628,47 @@ export function ItemDetail() {
               )}
             </div>
           </div>
-        </div>
+        </Section>
       )}
 
       {/* The soonest date is a ledger row; this is the rest of them. */}
       {(itemDates?.length ?? 0) > 0 && (
-        <div className="flex flex-col">
-          <ColHead action="Add date" onAction={() => setDateFormOpen(true)}>Dates</ColHead>
+        <Section title="Dates" count={itemDates?.length} action="Add date" onAction={() => setDateFormOpen(true)}>
           <DateList itemId={id} />
-        </div>
+        </Section>
       )}
 
       {hasAccessories && (
-        <div className="flex flex-col">
-          <ColHead action="Link" onAction={() => setAccessoryPickerOpen(true)}>Accessories</ColHead>
+        <Section title="Accessories" count={accessories?.length} action="Link" onAction={() => setAccessoryPickerOpen(true)}>
           <AccessoryList itemId={id} />
-        </div>
+        </Section>
       )}
 
       {/* The OPEN loan is a ledger row ("Lent to"); this is the record. */}
       {hasLending && (
-        <div className="flex flex-col">
-          <ColHead>Lending history</ColHead>
+        <Section title="Lending history" count={lendingHistory?.length}>
           <LendingList itemId={id} itemName={item.name} />
-        </div>
+        </Section>
       )}
 
       {hasConditions && (
-        <div className="flex flex-col">
-          <ColHead action="Record" onAction={() => setConditionFormOpen(true)}>Condition history</ColHead>
+        <Section title="Condition history" count={conditions?.length} action="Record" onAction={() => setConditionFormOpen(true)}>
           <ConditionTimeline itemId={id} />
-        </div>
+        </Section>
       )}
 
       {/* Photos live in the ledger row, so this is receipts, manuals, warranties. */}
       {hasFilesAny && (
-        <div className="flex flex-col">
-          <ColHead>Files</ColHead>
+        <Section title="Files" count={itemFiles?.length}>
           <FileList itemId={id} />
-        </div>
+        </Section>
       )}
 
-      <div className="flex flex-col">
-        <ColHead>Attach</ColHead>
+      <Section title="Attach">
         <div className="py-2">
           <FileUpload itemId={id} />
         </div>
-      </div>
+      </Section>
 
       <LabelPrintDialog
         entities={[{
