@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ScanLine, Printer, Share2, Plus, Package, Box, CheckSquare } from 'lucide-react';
+import { ScanLine, Printer, Share2, Plus, Package, Box, CheckSquare, Camera, MoveRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { TitleBar } from '@/components/ui/title-bar';
@@ -23,6 +23,7 @@ import { TagPicker } from '@/components/tags/tag-picker';
 import { LabelPrintDialog } from '@/components/labels/label-print-dialog';
 import { ShareDialog } from '@/components/sharing/share-dialog';
 import { usePrintQueueStore } from '@/store/print-queue-store';
+import { useCarryStore } from '@/store/carry-store';
 
 export function ContainerDetail() {
   const { containerId } = useParams<{ containerId: string }>();
@@ -51,6 +52,8 @@ export function ContainerDetail() {
   const createContainer = useCreateContainer();
   const createItem = useCreateItem();
   const stageMany = usePrintQueueStore((s) => s.addMany);
+  const pickUp = useCarryStore((s) => s.pickUp);
+  const carried = useCarryStore((s) => s.carried);
 
   // A background refetch (30s staleTime + refetch-on-focus) can remove rows
   // out from under an open selection — prune ghosts so the "N selected"
@@ -188,6 +191,57 @@ export function ContainerDetail() {
     exitSelectMode();
   }
 
+  // Flow C: hand the selection to the carry banner, then send the user off to
+  // scan a destination. A selection can mix loose items and nested bins; the
+  // carried load records what each one is so the destination scan knows
+  // whether to move an item or re-parent a subtree.
+  function handleMoveSelected() {
+    const pickedItems = (items ?? []).filter((i) => selected.has(`item:${i.id}`));
+    const pickedBins = (children ?? []).filter((c) => selected.has(`container:${c.id}`));
+    if (pickedItems.length + pickedBins.length === 0) {
+      toast('Select something to move first');
+      return;
+    }
+    pickUp([
+      ...pickedBins.map((c) => ({
+        id: c.id,
+        name: c.name,
+        kind: 'container' as const,
+        fromContainerId: id,
+        fromContainerName: container?.name,
+        fromAreaId: c.areaId,
+      })),
+      ...pickedItems.map((i) => ({
+        id: i.id,
+        name: i.name,
+        kind: 'item' as const,
+        fromContainerId: id,
+        fromContainerName: container?.name,
+      })),
+    ]);
+    exitSelectMode();
+    const n = pickedItems.length + pickedBins.length;
+    toast(`Carrying ${n} thing${n === 1 ? '' : 's'} — scan where they go`);
+    navigate('/scan?mode=move');
+  }
+
+  /**
+   * Move THIS bin. Its origin is its parent container if it is nested, or its
+   * area if it sits at the top level — undo needs to know which.
+   */
+  function handleMoveThis() {
+    if (!container) return;
+    pickUp([{
+      id: container.id,
+      name: container.name,
+      kind: 'container',
+      ...(container.parentContainerId ? { fromContainerId: container.parentContainerId } : {}),
+      fromAreaId: container.areaId,
+    }]);
+    toast(`Carrying ${container.name} — scan an area or a bin to put it in`);
+    navigate('/scan?mode=move');
+  }
+
   function handleSelectAll() {
     setSelected(
       new Set([
@@ -233,6 +287,10 @@ export function ContainerDetail() {
         <Button variant="outline" size="sm" onClick={() => setPrintOpen(true)}>
           <Printer className="w-4 h-4" />
           Label
+        </Button>
+        <Button variant="outline" size="sm" onClick={handleMoveThis}>
+          <MoveRight className="w-4 h-4" />
+          Move
         </Button>
         <Button variant="outline" size="sm" onClick={() => setShareOpen(true)}>
           <Share2 className="w-4 h-4" />
@@ -321,14 +379,18 @@ export function ContainerDetail() {
           <Button variant="outline" size="sm" onClick={exitSelectMode}>
             Cancel
           </Button>
+          <Button size="sm" variant="outline" disabled={selected.size === 0} onClick={handleMoveSelected}>
+            Move
+          </Button>
           <Button size="sm" disabled={selected.size === 0} onClick={handleAddSelected}>
-            Add to queue
+            Queue
           </Button>
         </div>
       )}
 
-      {/* FAB */}
-      {!selecting && (
+      {/* FAB — hidden while carrying: the carry banner occupies that corner, and
+          finishing the move is the active job. It returns when you put down. */}
+      {!selecting && carried.length === 0 && (
       <div className="fixed bottom-[calc(6rem+env(safe-area-inset-bottom))] lg:bottom-8 right-4 lg:right-8 flex flex-col items-end gap-2 z-30">
         {fabOpen && (
           <>
@@ -350,6 +412,24 @@ export function ContainerDetail() {
             >
               <Box className="w-4 h-4" />
               Add Item
+            </Button>
+            {/* The capture loop, pre-pinned to this bin: picture → scan → done */}
+            <Button
+              size="sm"
+              onClick={() => {
+                try {
+                  localStorage.setItem('tally-last-container', JSON.stringify({
+                    id, name: container?.name ?? `#${id}`,
+                    areaId: container?.areaId, propertyId: propertyId > 0 ? propertyId : undefined,
+                  }));
+                } catch { /* private mode */ }
+                navigate('/capture');
+              }}
+              className="shadow-lg animate-scale-in"
+              style={{ animationDelay: '60ms' }}
+            >
+              <Camera className="w-4 h-4" />
+              Capture
             </Button>
           </>
         )}

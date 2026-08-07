@@ -117,6 +117,27 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
   return ok({});
 };
 
+// ?carry=1 seeds the carry banner so the move flow can be eyeballed.
+// ?carryKind=container carries bins instead of items (the re-parent path).
+if (P.get('carry')) {
+  const n = Number(P.get('carry')) || 1;
+  const kind = P.get('carryKind') === 'container' ? ('container' as const) : ('item' as const);
+  import('@/store/carry-store').then(({ useCarryStore }) => {
+    useCarryStore.getState().pickUp(
+      Array.from({ length: n }, (_, i) => ({
+        id: i + 1,
+        name: kind === 'container'
+          ? (i === 0 ? 'Tote — Winter Gear' : `Bin ${i + 1}`)
+          : (i === 0 ? 'Cordless Drill' : `Item ${i + 1}`),
+        kind,
+        fromContainerId: 99,
+        fromContainerName: 'Bin 4',
+        ...(kind === 'container' ? { fromAreaId: 7 } : {}),
+      })),
+    );
+  });
+}
+
 const qc = new QueryClient({ defaultOptions: { queries: { retry: false, refetchOnWindowFocus: false } } });
 
 async function boot() {

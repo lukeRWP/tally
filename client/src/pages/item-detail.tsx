@@ -8,12 +8,14 @@ import { Button } from '@/components/ui/button';
 import { LabelPrintDialog } from '@/components/labels/label-print-dialog';
 import { Card } from '@/components/ui/card';
 import { TitleBar } from '@/components/ui/title-bar';
+import { Badge } from '@/components/ui/badge';
 // (Badge import removed — it was dead; item-detail renders no <Badge>.)
 import { Skeleton } from '@/components/ui/skeleton';
 import { useItem, useDeleteItem, useUpdateItem } from '@/hooks/use-inventory';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { EntityForm } from '@/components/inventory/entity-form';
 import { MoveItemDialog } from '@/components/inventory/move-item-dialog';
+import { useCarryStore } from '@/store/carry-store';
 import { ErrorState } from '@/components/ui/error-state';
 import { toast } from '@/components/ui/toast';
 import { Breadcrumbs } from '@/components/layout/breadcrumbs';
@@ -33,14 +35,7 @@ import { useItemFiles } from '@/hooks/use-files';
 import { useAccessories } from '@/hooks/use-accessories';
 import { useLendingHistory } from '@/hooks/use-lending';
 import { ShareDialog } from '@/components/sharing/share-dialog';
-import { cn, safeExternalUrl } from '@/lib/utils';
-
-const conditionColor: Record<string, string> = {
-  new: 'bg-[var(--color-green)]',
-  good: 'bg-[var(--color-primary)]',
-  fair: 'bg-[var(--color-amber)]',
-  poor: 'bg-[var(--color-red)]',
-};
+import { safeExternalUrl } from '@/lib/utils';
 
 function computeDepreciation(
   purchasePrice: number,
@@ -181,7 +176,9 @@ export function ItemDetail() {
   const [deleteOpen, setDeleteOpen] = React.useState(false);
 
   // Derive property/container from breadcrumb returned by the item detail API
-  const breadcrumb = (item as unknown as { breadcrumb?: { id: number; type: string }[] })?.breadcrumb;
+  // the server sends { id, name, type } (items.service.js _mapItem); `name` was
+  // simply missing from this local cast
+  const breadcrumb = (item as unknown as { breadcrumb?: { id: number; name: string | null; type: string }[] })?.breadcrumb;
   const propertyId = breadcrumb?.find((b) => b.type === 'property')?.id ?? 0;
   // Last container crumb, not the first: breadcrumbs run root→leaf, so for an
   // item inside a nested container .find() would return the OUTERMOST box —
@@ -202,6 +199,7 @@ export function ItemDetail() {
   const updateItem = useUpdateItem();
   const [editOpen, setEditOpen] = React.useState(false);
   const [moveOpen, setMoveOpen] = React.useState(false);
+  const pickUp = useCarryStore((s) => s.pickUp);
   const [conditionFormOpen, setConditionFormOpen] = React.useState(false);
   const [printOpen, setPrintOpen] = React.useState(false);
   const [dateFormOpen, setDateFormOpen] = React.useState(false);
@@ -275,18 +273,18 @@ export function ItemDetail() {
       <div className="animate-fade-up flex flex-col gap-2">
         <TitleBar className="w-fit max-w-full">{item.name}</TitleBar>
 
-        {/* Condition indicator strip */}
+        {/* Facts on ONE line. Most items are "a thing in a bin" — quantity,
+            condition and value said once, in order, beat four labelled cards. */}
         <div className="flex items-center gap-2 flex-wrap">
-          <div className="flex items-center gap-1.5">
-            <span className={cn('w-3 h-3 rounded-full shrink-0', conditionColor[item.condition] ?? 'bg-[var(--color-text-muted)]')} />
-            <span className="text-xs font-medium text-[var(--color-text-secondary)] capitalize">{item.condition}</span>
-          </div>
-          <span className="text-[var(--color-border)] hidden sm:inline">|</span>
-          <span className="text-xs font-medium text-[var(--color-text-secondary)] capitalize">{item.status}</span>
-          {item.quantity > 1 && (
-            <span className="text-xs font-medium text-[var(--color-text-secondary)]">Qty: {item.quantity}</span>
-          )}
-          <span className="text-[11px] font-mono text-[var(--color-text-muted)]">{item.qrCode}</span>
+          <span className="text-sm font-semibold text-[var(--color-text)]">
+            {[
+              item.quantity > 1 ? `${item.quantity}` : null,
+              item.condition ? item.condition.charAt(0).toUpperCase() + item.condition.slice(1) : null,
+              item.purchasePrice != null ? `$${item.purchasePrice.toFixed(2)}` : null,
+            ].filter(Boolean).join(' · ')}
+          </span>
+          {item.status !== 'active' && <Badge variant="info">{item.status}</Badge>}
+          <span className="font-mono text-[11px] text-[var(--color-text-muted)]">{item.qrCode}</span>
         </div>
 
         {item.description && (
@@ -299,6 +297,32 @@ export function ItemDetail() {
             <TagPicker entityType="item" entityId={item.id} propertyId={propertyId} />
           </div>
         )}
+
+        {/* What this item could still tell us. Creation now captures almost
+            nothing on purpose, so the gaps have to look like invitations
+            rather than emptiness — each chip opens the thing that fills it. */}
+        {(item.purchasePrice == null || !item.description) && (
+          <div className="flex flex-wrap gap-1.5 mt-2">
+            {item.purchasePrice == null && (
+              <button
+                type="button"
+                onClick={() => setEditOpen(true)}
+                className="font-mono text-[10px] uppercase tracking-[0.06em] border border-dashed border-[var(--color-text-muted)] text-[var(--color-text-muted)] rounded-full px-3 min-h-[28px] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)]"
+              >
+                + value
+              </button>
+            )}
+            {!item.description && (
+              <button
+                type="button"
+                onClick={() => setEditOpen(true)}
+                className="font-mono text-[10px] uppercase tracking-[0.06em] border border-dashed border-[var(--color-text-muted)] text-[var(--color-text-muted)] rounded-full px-3 min-h-[28px] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)]"
+              >
+                + description
+              </button>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Primary Action Row */}
@@ -307,7 +331,25 @@ export function ItemDetail() {
           <Pencil className="w-3.5 h-3.5" />
           Edit
         </Button>
-        <Button variant="outline" size="sm" className="flex-1 text-xs" onClick={() => setMoveOpen(true)}>
+        <Button
+          variant="outline"
+          size="sm"
+          className="flex-1 text-xs"
+          onClick={() => {
+            // Flow A: Move picks the item UP. The carry banner then follows you
+            // anywhere, and any container label you scan puts it down. The
+            // cascade picker is still reachable from the banner for the case
+            // where nothing is labelled.
+            pickUp([{
+              id: item.id,
+              name: item.name,
+              fromContainerId: containerId,
+              fromContainerName: breadcrumb?.filter((b) => b.type === 'container').at(-1)?.name ?? undefined,
+            }]);
+            toast(`Carrying ${item.name} — scan where it goes`);
+            navigate('/scan?mode=move');
+          }}
+        >
           <ArrowRightLeft className="w-3.5 h-3.5" />
           Move
         </Button>
