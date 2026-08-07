@@ -37,7 +37,6 @@ export function ProductSearch({
   const [localResults, setLocalResults] = useState<SearchProduct[]>([]);
   const [onlineResults, setOnlineResults] = useState<SearchProduct[]>([]);
   const [isLoading, setIsLoading] = useState(false);
-  const [isSearchingOnline, setIsSearchingOnline] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout>>();
   const inputRef = useRef<HTMLInputElement>(null);
@@ -136,14 +135,7 @@ export function ProductSearch({
           </>
         )}
 
-        {isSearchingOnline && (
-          <div className="flex items-center justify-center py-4 gap-2">
-            <Loader2 className="w-4 h-4 text-[var(--color-primary)] animate-spin" />
-            <span className="text-xs text-[var(--color-text-muted)]">Searching online databases...</span>
-          </div>
-        )}
-
-        {!isLoading && !isSearchingOnline && hasSearched && !hasResults && (
+        {!isLoading && hasSearched && !hasResults && (
           <div className="flex flex-col items-center gap-2 py-6">
             <p className="text-sm text-[var(--color-text-muted)]">
               No products found locally or online

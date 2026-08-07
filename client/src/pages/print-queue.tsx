@@ -3,7 +3,6 @@ import { Link } from 'react-router-dom';
 import { Printer as PrinterIcon, Trash2, RotateCw, Send, X, Inbox } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { ColHead } from '@/components/ui/col-head';
 import { Card } from '@/components/ui/card';
 import { TitleBar } from '@/components/ui/title-bar';
 import { toast } from '@/components/ui/toast';

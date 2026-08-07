@@ -6,6 +6,11 @@
     "moduleResolution": "bundler",
     "jsx": "react-jsx",
     "strict": true,
+    // Dead code used to ship silently: there is no eslint here, so unused
+    // imports and unreachable helpers survived every review (the #114-#116
+    // restyle left ~10 behind). These make tsc the guardrail instead.
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
     "noEmit": true,
     "baseUrl": ".",
     "paths": {

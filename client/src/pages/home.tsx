@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, Plus, ChevronDown, Filter, Pencil, ArrowRight, Trash2, RotateCcw, Home as HomeIcon, Package } from 'lucide-react';
+import { Search, Plus, ChevronDown, Filter, Home as HomeIcon, Package } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -131,22 +131,6 @@ function activityDotColor(action: string): string {
   }
 }
 
-function activityIcon(action: string) {
-  switch (action) {
-    case 'created':
-      return <Plus className="w-3.5 h-3.5" />;
-    case 'updated':
-      return <Pencil className="w-3.5 h-3.5" />;
-    case 'moved':
-      return <ArrowRight className="w-3.5 h-3.5" />;
-    case 'deleted':
-      return <Trash2 className="w-3.5 h-3.5" />;
-    case 'restored':
-      return <RotateCcw className="w-3.5 h-3.5" />;
-    default:
-      return <Pencil className="w-3.5 h-3.5" />;
-  }
-}
 
 function activityRelativeTime(dateStr: string): string {
   const now = Date.now();

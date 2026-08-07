@@ -1,4 +1,3 @@
-import * as React from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useConditionHistory } from '@/hooks/use-files';
