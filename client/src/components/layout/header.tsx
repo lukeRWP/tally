@@ -1,4 +1,4 @@
-import { Search } from 'lucide-react';
+import { Search, ScanLine } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { NotificationBell } from '@/components/notifications/notification-bell';
 
@@ -22,6 +22,18 @@ export function Header() {
           onClick={() => navigate('/search')}
         >
           <Search className="w-5 h-5 text-[var(--color-text-secondary)]" />
+        </button>
+        {/* "What is this?" — point the camera at a label and go to it. The
+            centre nav button is the create flow, so this gesture needs a home
+            of its own. Touch tiers only: there is no camera worth opening on a
+            desktop, which is the same rule the bottom nav follows. */}
+        <button
+          type="button"
+          aria-label="Scan a label"
+          className="p-2 xl:hidden"
+          onClick={() => navigate('/scan')}
+        >
+          <ScanLine className="w-5 h-5 text-[var(--color-text-secondary)]" />
         </button>
         <NotificationBell />
       </div>

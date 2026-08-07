@@ -1,6 +1,6 @@
 import * as React from 'react';
-import { useNavigate } from 'react-router-dom';
-import { Camera, ScanLine, Check, X, Printer, Plus, MapPin, SkipForward } from 'lucide-react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { Camera, Check, X, Printer, Plus, MapPin, SkipForward, List, AlertTriangle } from 'lucide-react';
 import { CameraScanner } from '@/components/scanner/camera-scanner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -8,7 +8,7 @@ import { ColHead } from '@/components/ui/col-head';
 import { toast } from '@/components/ui/toast';
 import { api } from '@/lib/api';
 import { findOrCreateLooseContainer } from '@/hooks/use-put-down';
-import { useCreateItem } from '@/hooks/use-inventory';
+import { useCreateItem, useProperties, useAreas, useContainers } from '@/hooks/use-inventory';
 import { useUploadFile } from '@/hooks/use-files';
 import { usePrinters, useCreatePrintJob } from '@/hooks/use-print';
 import { usePrintQueueStore } from '@/store/print-queue-store';
@@ -33,6 +33,11 @@ import { cn } from '@/lib/utils';
  * has an FK to the item and the upload route 404s without one. So "picture
  * first" is a gesture ordering, not a durability guarantee: this is stated in
  * the UI rather than pretended away.
+ *
+ * This is the app's primary create surface (the centre nav button), so it has
+ * to carry what that implies: a keyboard-only path to a destination, duplicate
+ * warnings before you add a second of something, and an answer for labels that
+ * are not destinations at all.
  */
 
 const TLY_CODE_REGEX = /^TLY-[PACI]-[0-9A-Fa-f]{4,8}$/;
@@ -51,6 +56,14 @@ interface Draft {
   productId?: number;
   photo?: Blob;
   photoUrl?: string;
+}
+
+/** An item you already own with this barcode — shown before you add another. */
+interface Dupe {
+  id: number;
+  name: string;
+  containerName: string;
+  areaName: string;
 }
 
 interface Receipt {
@@ -88,6 +101,7 @@ function tidyName(raw: string): string {
 
 export function Capture() {
   const navigate = useNavigate();
+  const [params] = useSearchParams();
   const photoInput = React.useRef<HTMLInputElement>(null);
 
   const [dest, setDest] = React.useState<Destination | null>(() => {
@@ -98,14 +112,25 @@ export function Capture() {
     } catch { return null; }
   });
   const [phase, setPhase] = React.useState<Phase>('photo');
+  const [picking, setPicking] = React.useState(false);
+  const [dupes, setDupes] = React.useState<Dupe[]>([]);
   const [draft, setDraft] = React.useState<Draft>({ name: '' });
   const [receipts, setReceipts] = React.useState<Receipt[]>([]);
   const [busy, setBusy] = React.useState<string | null>(null);
+
+  // The picker is the keyboard path to a destination: no label on the bin, no
+  // camera, or simply knowing where it goes. Seeded from wherever you tapped Add.
+  const [pickProperty, setPickProperty] = React.useState(0);
+  const [pickArea, setPickArea] = React.useState(0);
+  const { data: pickProperties } = useProperties();
+  const { data: pickAreas } = useAreas(pickProperty);
+  const { data: pickContainers } = useContainers(pickArea);
 
   const createItem = useCreateItem();
   const uploadFile = useUploadFile();
   const createPrintJob = useCreatePrintJob();
   const stage = usePrintQueueStore((s) => s.add);
+  const stageMany = usePrintQueueStore((s) => s.addMany);
   const { data: printers } = usePrinters(receipts[0]?.propertyId || undefined);
   const hasPrinter = !!printers?.length;
 
@@ -113,6 +138,49 @@ export function Capture() {
   // over stale state.
   const stateRef = React.useRef({ dest, draft, phase });
   React.useEffect(() => { stateRef.current = { dest, draft, phase }; }, [dest, draft, phase]);
+
+  // Where you were standing when you tapped Add. A container pre-pins outright;
+  // an area or property only seeds the picker, because "somewhere in the garage"
+  // is not a place an item can live.
+  const ctxContainer = Number(params.get('containerId')) || 0;
+  const ctxArea = Number(params.get('areaId')) || 0;
+  const ctxProperty = Number(params.get('propertyId')) || 0;
+
+  React.useEffect(() => {
+    if (!ctxContainer) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const { container } = await api.get<{ container: Destination & { areaId: number } }>(
+          `/api/containers/_x_/${ctxContainer}`,
+        );
+        if (cancelled || !container?.id) return;
+        pinDestination({ id: container.id, name: container.name, areaId: container.areaId });
+      } catch { /* fall back to whatever was pinned before */ }
+    })();
+    return () => { cancelled = true; };
+  }, [ctxContainer]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  React.useEffect(() => {
+    if (ctxArea) setPickArea(ctxArea);
+    if (ctxProperty) setPickProperty(ctxProperty);
+  }, [ctxArea, ctxProperty]);
+
+  // One property is the common case; pre-select it so the picker opens on areas.
+  React.useEffect(() => {
+    if (!pickProperty && pickProperties?.length === 1) setPickProperty(pickProperties[0].id);
+  }, [pickProperties, pickProperty]);
+
+  // An area arriving without its property leaves the cascade blank, so backfill.
+  React.useEffect(() => {
+    if (!ctxArea || pickProperty) return;
+    (async () => {
+      try {
+        const { area } = await api.get<{ area: { propertyId: number } }>(`/api/areas/_x_/${ctxArea}`);
+        if (area?.propertyId) setPickProperty(area.propertyId);
+      } catch { /* the picker still works, it just starts at the property step */ }
+    })();
+  }, [ctxArea, pickProperty]);
 
   function pinDestination(d: Destination) {
     setDest(d);
@@ -174,8 +242,16 @@ export function Capture() {
           `/api/labels/_x_/resolve/${encodeURIComponent(code)}`,
         );
         if (!entity?.exists) { toast.error('That label is not in your inventory'); return; }
+        // An item or property label is not somewhere an item can go — but the
+        // user clearly pointed at it on purpose, so treat it as "show me this"
+        // rather than an error. That keeps scan-to-look-up alive inside the
+        // flow that now owns the thumb button.
+        if (entity.type === 'item' || entity.type === 'property') {
+          navigate(`/s/${encodeURIComponent(code)}`);
+          return;
+        }
         if (entity.type !== 'container' && entity.type !== 'area') {
-          toast.error('That is not a bin or area label');
+          toast.error('That label is not in your inventory');
           return;
         }
         // An area label is a valid answer to "where does this go" — items just
@@ -202,9 +278,17 @@ export function Capture() {
     // Otherwise it is a product barcode.
     setBusy('Looking it up…');
     try {
-      const result = await api.post<{ product?: { id?: number; name?: string } | null }>(
-        '/api/products/_y_/lookup', { barcode: code },
-      );
+      // Ask both questions at once: what is this, and do I already own one?
+      // Without the second, the primary add flow would silently grow duplicates.
+      const [result, dup] = await Promise.all([
+        api.post<{ product?: { id?: number; name?: string } | null }>(
+          '/api/products/_y_/lookup', { barcode: code },
+        ),
+        api.post<{ existingItems: Dupe[] }>(
+          '/api/products/_y_/check-duplicate', { barcode: code },
+        ).catch(() => ({ existingItems: [] as Dupe[] })),
+      ]);
+      setDupes(dup?.existingItems ?? []);
       const product = result?.product;
       const next: Draft = {
         ...curDraft,
@@ -287,8 +371,35 @@ export function Capture() {
               </span>
             )}
           </span>
-          <button type="button" aria-label="Discard" onClick={() => { setDraft({ name: '' }); setPhase('photo'); }}
+          <button type="button" aria-label="Discard" onClick={() => { setDraft({ name: '' }); setDupes([]); setPhase('photo'); }}
             className="min-w-[36px] min-h-[36px] flex items-center justify-center text-[var(--color-text-muted)]">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
+      {dupes.length > 0 && (
+        <div className="flex items-start gap-2 border-2 border-[var(--color-amber)] rounded-[var(--radius-sm)] p-2.5">
+          <AlertTriangle className="w-4 h-4 shrink-0 text-[var(--color-amber)] mt-0.5" />
+          <span className="min-w-0 flex-1">
+            <span className="block font-mono text-[10px] uppercase tracking-[0.1em] font-bold text-[var(--color-amber)]">
+              you already have {dupes.length === 1 ? 'one of these' : `${dupes.length} of these`}
+            </span>
+            {dupes.slice(0, 3).map((d) => (
+              <button key={d.id} type="button" onClick={() => navigate(`/item/${d.id}`)}
+                className="block w-full text-left text-sm truncate underline decoration-dotted">
+                {d.name}
+                <span className="font-mono text-[10px] text-[var(--color-text-muted)]">
+                  {' · '}{[d.areaName, d.containerName].filter(Boolean).join(' › ')}
+                </span>
+              </button>
+            ))}
+            <span className="block font-mono text-[9px] uppercase tracking-[0.06em] text-[var(--color-text-muted)] mt-0.5">
+              adding another is fine — this is a heads-up, not a block
+            </span>
+          </span>
+          <button type="button" aria-label="Dismiss" onClick={() => setDupes([])}
+            className="min-w-[32px] min-h-[32px] flex items-center justify-center text-[var(--color-text-muted)]">
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -337,11 +448,65 @@ export function Capture() {
             </div>
           )}
 
-          {phase === 'place' && (
-            <Button variant="outline" size="sm" onClick={() => navigate('/scan')}>
-              <ScanLine className="w-4 h-4" />
-              Pick a bin manually
+          {phase === 'place' && !picking && (
+            <Button variant="outline" size="sm" onClick={() => setPicking(true)}>
+              <List className="w-4 h-4" />
+              Pick a bin from the list
             </Button>
+          )}
+        </div>
+      )}
+
+      {/* ── the keyboard path to a destination ──────────────────────────── */}
+      {picking && (
+        <div className="flex flex-col gap-2 border-2 border-[var(--color-text)] rounded-[var(--radius-sm)] p-3">
+          <div className="flex items-center justify-between">
+            <span className="font-mono text-[10px] uppercase tracking-[0.1em] font-bold">Choose a bin</span>
+            <button type="button" aria-label="Close" onClick={() => setPicking(false)}
+              className="min-w-[32px] min-h-[32px] flex items-center justify-center text-[var(--color-text-muted)]">
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+
+          {(pickProperties?.length ?? 0) > 1 && (
+            <select value={pickProperty} onChange={(e) => { setPickProperty(Number(e.target.value)); setPickArea(0); }}
+              className="w-full min-h-[40px] px-2 rounded-[var(--radius-sm)] border border-[var(--color-rule)] bg-[var(--color-bg)] text-sm">
+              <option value={0}>Property…</option>
+              {pickProperties?.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>
+          )}
+
+          <select value={pickArea} onChange={(e) => setPickArea(Number(e.target.value))} disabled={!pickProperty}
+            className="w-full min-h-[40px] px-2 rounded-[var(--radius-sm)] border border-[var(--color-rule)] bg-[var(--color-bg)] text-sm disabled:opacity-50">
+            <option value={0}>Area…</option>
+            {pickAreas?.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+          </select>
+
+          {pickArea > 0 && (
+            (pickContainers?.length ?? 0) === 0 ? (
+              <p className="font-mono text-[10px] uppercase tracking-[0.06em] text-[var(--color-text-muted)] py-2">
+                No bins in this area yet — scan its area label to file loose
+              </p>
+            ) : (
+              <div className="flex flex-col max-h-56 overflow-y-auto">
+                {pickContainers?.map((c) => (
+                  <button key={c.id} type="button"
+                    onClick={() => {
+                      pinDestination({ id: c.id, name: c.name, areaId: c.areaId });
+                      setPicking(false);
+                      toast.success(`Adding to ${c.name}`);
+                      const d = stateRef.current.draft;
+                      if (d.name || d.photo || d.barcode) void commit(d, { id: c.id, name: c.name, areaId: c.areaId });
+                      else setPhase('photo');
+                    }}
+                    className="flex items-center gap-2 py-2.5 border-b border-[var(--color-rule)] last:border-b-0 text-left">
+                    <MapPin className="w-3.5 h-3.5 shrink-0 text-[var(--color-text-muted)]" />
+                    <span className="min-w-0 flex-1 text-sm font-medium truncate">{c.name}</span>
+                    <span className="font-mono text-[10px] text-[var(--color-text-muted)]">{c.itemCount ?? 0}</span>
+                  </button>
+                ))}
+              </div>
+            )
           )}
         </div>
       )}
@@ -349,7 +514,17 @@ export function Capture() {
       {/* ── receipts ─────────────────────────────────────────────────────── */}
       {receipts.length > 0 && (
         <div className="flex flex-col">
-          <ColHead>Added this session · {receipts.length}</ColHead>
+          <ColHead
+            action={receipts.length > 1 ? `Queue all ${receipts.length}` : undefined}
+            onAction={() => {
+              stageMany(receipts.map((r) => ({
+                id: r.id, entityType: 'item' as const, name: r.name, qrCode: r.qrCode, propertyId: r.propertyId,
+              })));
+              toast.success(`Queued ${receipts.length} labels`);
+            }}
+          >
+            Added this session · {receipts.length}
+          </ColHead>
           {receipts.map((r) => (
             <div key={r.id} className="flex items-center gap-2 py-2.5 border-b border-[var(--color-rule)] last:border-b-0">
               <Check className="w-4 h-4 text-[var(--color-green)] shrink-0" />
@@ -374,7 +549,7 @@ export function Capture() {
               </Button>
             </div>
           ))}
-          <Button className="mt-3" onClick={() => { setDraft({ name: '' }); setPhase('photo'); }}>
+          <Button className="mt-3" onClick={() => { setDraft({ name: '' }); setDupes([]); setPhase('photo'); }}>
             <Plus className="w-4 h-4" />
             Add another
           </Button>
