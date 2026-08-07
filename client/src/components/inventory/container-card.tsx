@@ -31,7 +31,7 @@ export function ContainerCard({ container, selectable, selected, onToggle }: Con
       leading={leading}
       title={container.name}
       titleTrailing={<Badge variant="warning">{container.type}</Badge>}
-      meta={`${container.qrCode} · ${container.nestedContainerCount} nested · ${container.itemCount} items`}
+      meta={`${container.qrCode} · ${container.containerCount} nested · ${container.itemCount} items`}
     />
   );
 }

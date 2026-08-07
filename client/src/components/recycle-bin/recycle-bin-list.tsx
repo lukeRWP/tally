@@ -11,16 +11,11 @@ interface DeletedItem {
   id: number;
   name: string;
   deletedAt: string;
-  purgeAt: string | null;
+  /** Days left in the 30-day window, computed server side. */
+  daysLeft: number | null;
   propertyName: string | null;
   areaName: string | null;
   containerName: string | null;
-}
-
-function daysUntil(dateStr: string | null): number | null {
-  if (!dateStr) return null;
-  const diff = new Date(dateStr).getTime() - Date.now();
-  return Math.max(0, Math.ceil(diff / (1000 * 60 * 60 * 24)));
 }
 
 function locationLabel(item: DeletedItem): string {
@@ -34,7 +29,12 @@ export function RecycleBinList() {
 
   const { data: items, isLoading } = useQuery({
     queryKey: [...queryKeys.items.all, 'deleted'],
-    queryFn: () => api.get<DeletedItem[]>('/api/items/_x_/deleted'),
+    // The route replies { items: [...] } and parseEnvelope returns json.data,
+    // so this is an OBJECT, not an array. Typing it as DeletedItem[] made
+    // list.length undefined, which is neither === 0 nor > 0 — so the bin
+    // rendered no rows AND no empty state, on every visit.
+    queryFn: () => api.get<{ items: DeletedItem[] }>('/api/items/_x_/deleted'),
+    select: (data) => data.items ?? [],
   });
 
   const restore = useMutation({
@@ -111,7 +111,7 @@ export function RecycleBinList() {
       {!isLoading && list.length > 0 && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
           {list.map((item) => {
-            const days = daysUntil(item.purgeAt);
+            const days = item.daysLeft;
             return (
               <div
                 key={item.id}

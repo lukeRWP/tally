@@ -29,7 +29,7 @@ export interface Container {
   type: string;
   description: string | null;
   qrCode: string;
-  nestedContainerCount: number;
+  containerCount: number;
   itemCount: number;
   breadcrumb: BreadcrumbItem[];
 }
