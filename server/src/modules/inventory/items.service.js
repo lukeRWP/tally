@@ -44,6 +44,15 @@ const ItemsService = {
     };
   },
 
+  /** The names of the places an item sits in, for rows that must answer "where?". */
+  _locationOf(row) {
+    return {
+      property: row.PROPERTY_NAME || null,
+      area: row.AREA_NAME || null,
+      container: row.CONTAINER_NAME || null,
+    };
+  },
+
   // ── Queries ────────────────────────────────────────────────────────────────
 
   async getByContainer(containerId) {
@@ -369,13 +378,53 @@ const ItemsService = {
     return rows.map(row => {
       const item = ItemsService._mapItem(row);
       // Presentation stays client-side; the server just names the places.
-      item.location = {
-        property: row.PROPERTY_NAME || null,
-        area: row.AREA_NAME || null,
-        container: row.CONTAINER_NAME || null,
-      };
+      item.location = ItemsService._locationOf(row);
       return item;
     });
+  },
+
+  /**
+   * The newest things in the house, across every property the caller can see.
+   *
+   * Ordered by CREATED_AT with ID as the tiebreaker: CREATED_AT is a DATETIME
+   * with one-second resolution and a capture session lands several items inside
+   * the same second — without the tiebreaker their order is the optimiser's
+   * choice and the list reshuffles between loads.
+   */
+  async getRecent(userId, { limit = 25 } = {}) {
+    const rows = await _db.query(
+      `SELECT
+         i.*,
+         p.NAME AS PRODUCT_NAME,
+         p.BRAND AS PRODUCT_BRAND,
+         p.IMAGE_URL AS PRODUCT_IMAGE_URL,
+         (SELECT f.FILE_KEY FROM TALLY.item_files f
+           WHERE f.ITEM_ID = i.ID AND f.FILE_TYPE = 'photo'
+           ORDER BY f.ID DESC LIMIT 1) AS PHOTO_KEY,
+         c.NAME  AS CONTAINER_NAME,
+         a.NAME  AS AREA_NAME,
+         pr.NAME AS PROPERTY_NAME
+       FROM TALLY.items i
+       LEFT JOIN TALLY.products p ON i.PRODUCT_ID = p.ID
+       JOIN TALLY.containers c ON i.CONTAINER_ID = c.ID
+       JOIN TALLY.areas a ON c.AREA_ID = a.ID
+       JOIN TALLY.properties pr ON a.PROPERTY_ID = pr.ID
+       JOIN TALLY.property_members pm ON a.PROPERTY_ID = pm.PROPERTY_ID
+       WHERE pm.USER_ID = ?
+         AND i.DELETED_AT IS NULL
+         AND c.DELETED_AT IS NULL
+         AND a.DELETED_AT IS NULL
+         AND pr.DELETED_AT IS NULL
+       ORDER BY i.CREATED_AT DESC, i.ID DESC
+       LIMIT ?`,
+      [userId, limit]
+    );
+
+    return ItemsService._withPhotoUrls(rows.map((row) => {
+      const item = ItemsService._mapItem(row);
+      item.location = ItemsService._locationOf(row);
+      return item;
+    }));
   },
 
   async getPropertyIdForItem(itemId) {

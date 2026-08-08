@@ -1,22 +1,27 @@
 import { useEffect, useRef } from 'react';
 import { Outlet, Navigate, useLocation, useNavigate } from 'react-router-dom';
-import { Home, Search, Bell, Settings, Printer } from 'lucide-react';
+import { Home, Search, Bell, Settings, Printer, DoorOpen, BarChart2 } from 'lucide-react';
 import { useAuth } from '@/hooks/use-auth';
 import { useAuthStore } from '@/store/auth-store';
 import { useUnreadCount } from '@/hooks/use-notifications';
 import { Header } from './header';
-import { BottomNav } from './bottom-nav';
+import { BottomNav, isNavActive } from './bottom-nav';
 import { CarryBanner } from '@/components/inventory/carry-banner';
 import { cn } from '@/lib/utils';
 import { useCarryStore } from '@/store/carry-store';
 
-// Mirrors the bottom nav's five destinations in the same order, plus Search at
-// the top — the two surfaces expressed different IAs before (7 items here, 6
-// there, different sets), which meant desktop and mobile were different apps.
+// Mirrors the bottom nav's destinations in the same order, plus Search at the
+// top: one information architecture expressed on both surfaces, so desktop and
+// mobile are the same app rather than two that resemble each other. A desk has
+// room for the query page the phone reaches from its header, and ADD gets no
+// row: the raised disc is a thumb affordance, and a pointer creates from the
+// page it is already looking at.
 const navItems = [
   { path: '/search', icon: Search, label: 'Search' },
   { path: '/', icon: Home, label: 'Home' },
   { path: '/print', icon: Printer, label: 'Print' },
+  { path: '/areas', icon: DoorOpen, label: 'Areas' },
+  { path: '/reports', icon: BarChart2, label: 'Reports' },
   { path: '/notifications', icon: Bell, label: 'Alerts' },
   { path: '/settings', icon: Settings, label: 'Settings' },
 ];
@@ -41,13 +46,14 @@ function Sidebar() {
       {/* Nav items */}
       <nav className="flex-1 px-3 py-4 space-y-1">
         {navItems.map((item) => {
-          const isActive = location.pathname === item.path;
+          const isActive = isNavActive(item.path, location.pathname);
           const Icon = item.icon;
 
           return (
             <button
               key={item.path}
               onClick={() => navigate(item.path)}
+              aria-current={isActive ? 'page' : undefined}
               className={cn(
                 'flex items-center gap-3 w-full px-3 py-2.5 rounded-[var(--radius-sm)] font-mono text-xs font-bold uppercase tracking-[0.08em] transition-colors duration-150',
                 isActive

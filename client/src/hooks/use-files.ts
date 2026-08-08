@@ -43,6 +43,11 @@ export function useUploadFile() {
     },
     onSuccess: (_: unknown, vars: { itemId: number; file: File; fileType: string }) => {
       qc.invalidateQueries({ queryKey: queryKeys.files.byItem(vars.itemId) });
+      // Item rows carry their newest photo, and the capture flow uploads it
+      // only AFTER the item exists — so without this the thing you just
+      // photographed sits in every list with an empty frame until the cache
+      // goes stale on its own.
+      qc.invalidateQueries({ queryKey: queryKeys.items.all });
     },
   });
 }
@@ -54,6 +59,8 @@ export function useDeleteFile() {
       api.del(`/api/files/_d_/${fileId}`),
     onSuccess: (_: unknown, vars: { fileId: number; itemId: number }) => {
       qc.invalidateQueries({ queryKey: queryKeys.files.byItem(vars.itemId) });
+      // Deleting the newest photo changes which one an item row shows.
+      qc.invalidateQueries({ queryKey: queryKeys.items.all });
     },
   });
 }

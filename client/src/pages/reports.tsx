@@ -7,10 +7,12 @@ import {
   History,
   Tag,
   Loader2,
+  ChevronRight,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Card } from '@/components/ui/card';
 import { TitleBar } from '@/components/ui/title-bar';
+import { ColHead } from '@/components/ui/col-head';
+import { PropertyChips } from '@/components/inventory/property-chips';
 import { useProperties } from '@/hooks/use-inventory';
 import { usePropertyTags } from '@/hooks/use-tags';
 import { useGenerateReport } from '@/hooks/use-reports';
@@ -22,31 +24,24 @@ interface ReportType {
   label: string;
   description: string;
   icon: React.ElementType;
-  iconColor: string;
-  iconBg: string;
-  borderColor: string;
   hasGroupBy?: boolean;
   hasTagSelect?: boolean;
 }
 
+// Six hues across six rows is a card-grid tactic. A ruled list separates rows
+// with ink and spends orange only on the one currently open.
 const REPORT_TYPES: ReportType[] = [
   {
     id: 'insurance',
     label: 'Insurance Summary',
     description: 'Items with values, condition, photos',
     icon: FileText,
-    iconColor: 'text-[var(--color-primary)]',
-    iconBg: 'bg-[var(--color-primary-bg)]',
-    borderColor: 'border-l-[var(--color-primary)]',
   },
   {
     id: 'total-value',
     label: 'Total Value',
     description: 'Aggregate by location or tag',
     icon: DollarSign,
-    iconColor: 'text-[var(--color-green)]',
-    iconBg: 'bg-[var(--color-green-bg)]',
-    borderColor: 'border-l-[var(--color-green)]',
     hasGroupBy: true,
   },
   {
@@ -54,39 +49,35 @@ const REPORT_TYPES: ReportType[] = [
     label: 'Items by Location',
     description: 'Hierarchical inventory view',
     icon: Layers,
-    iconColor: 'text-[var(--color-purple)]',
-    iconBg: 'bg-[var(--color-purple-bg)]',
-    borderColor: 'border-l-[var(--color-purple)]',
   },
   {
     id: 'lending',
     label: 'Lending Report',
     description: 'Currently lent items',
     icon: HandCoins,
-    iconColor: 'text-[var(--color-amber)]',
-    iconBg: 'bg-[var(--color-amber-bg)]',
-    borderColor: 'border-l-[var(--color-amber)]',
   },
   {
     id: 'activity',
     label: 'Activity Log',
     description: 'Who did what, when',
     icon: History,
-    iconColor: 'text-[var(--color-text-secondary)]',
-    iconBg: 'bg-[var(--color-elevated)]',
-    borderColor: 'border-l-[var(--color-text-muted)]',
   },
   {
     id: 'tags',
     label: 'Tag Report',
     description: 'Items by selected tags',
-    hasTagSelect: true,
     icon: Tag,
-    iconColor: 'text-[var(--color-red)]',
-    iconBg: 'bg-[var(--color-red-bg)]',
-    borderColor: 'border-l-[var(--color-red)]',
+    hasTagSelect: true,
   },
 ];
+
+function FieldLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <p className="font-mono text-[10px] uppercase tracking-[0.1em] text-[var(--color-text-muted)]">
+      {children}
+    </p>
+  );
+}
 
 function TagMultiSelect({
   propertyId,
@@ -100,7 +91,11 @@ function TagMultiSelect({
   const { data: tags } = usePropertyTags(propertyId);
 
   if (!tags || tags.length === 0) {
-    return <p className="text-xs text-[var(--color-text-muted)]">No tags available for this property.</p>;
+    return (
+      <p className="font-mono text-[11px] uppercase tracking-[0.06em] text-[var(--color-text-muted)]">
+        No tags for this property
+      </p>
+    );
   }
 
   function toggle(id: number) {
@@ -113,22 +108,29 @@ function TagMultiSelect({
 
   return (
     <div className="flex flex-wrap gap-1.5">
-      {tags.map((tag) => (
-        <button
-          key={tag.id}
-          type="button"
-          onClick={() => toggle(tag.id)}
-          className={cn(
-            'px-2.5 py-1 rounded-md text-xs font-semibold transition-all duration-200 border',
-            selected.includes(tag.id)
-              ? 'border-transparent text-white'
-              : 'border-[var(--color-border)] text-[var(--color-text-secondary)] bg-[var(--color-elevated)]',
-          )}
-          style={selected.includes(tag.id) ? { backgroundColor: tag.color, borderColor: tag.color } : {}}
-        >
-          {tag.name}
-        </button>
-      ))}
+      {tags.map((tag) => {
+        const on = selected.includes(tag.id);
+        return (
+          <button
+            key={tag.id}
+            type="button"
+            aria-pressed={on}
+            onClick={() => toggle(tag.id)}
+            className={cn(
+              // Filter chips stay pills; only badges and buttons are squared.
+              'inline-flex items-center gap-1.5 rounded-full border px-3 min-h-[32px] font-mono text-[10px] uppercase tracking-[0.08em] transition-colors',
+              on
+                ? 'bg-[var(--color-text)] text-[var(--color-bg)] border-[var(--color-text)]'
+                : 'border-[var(--color-rule)] text-[var(--color-text-secondary)] hover:bg-[var(--color-elevated)]',
+            )}
+          >
+            {/* The tag's own colour is identity, not state — a user hex can't be
+                trusted to stay legible as a fill on either ground. */}
+            <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: tag.color }} aria-hidden="true" />
+            {tag.name}
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -149,66 +151,56 @@ function ReportOptionsPanel({
   const [tagIds, setTagIds] = React.useState<number[]>([]);
 
   return (
-    <div className="mt-3 pt-3 border-t border-[var(--color-border)] flex flex-col gap-3 animate-fade-up">
-      {/* Format toggle -- segmented control */}
-      <div>
-        <p className="text-xs font-medium text-[var(--color-text-muted)] mb-1.5">Format</p>
-        <div className="flex gap-1 p-1 rounded-[var(--radius-md)] bg-[var(--color-elevated)]">
+    // No rule along the top: the row this panel hangs off already carries one,
+    // and a second would double up inside a single cell.
+    <div className="flex flex-col gap-3 pb-3 animate-fade-up">
+      <div className="flex flex-col gap-1.5">
+        <FieldLabel>Format</FieldLabel>
+        <div className="flex gap-2">
           {(['pdf', 'csv'] as const).map((f) => (
-            <button
+            <Button
               key={f}
-              type="button"
+              size="sm"
+              variant={format === f ? 'default' : 'outline'}
+              aria-pressed={format === f}
               onClick={() => setFormat(f)}
-              className={cn(
-                'flex-1 px-3 py-1.5 rounded-[var(--radius-sm)] text-sm font-medium transition-all duration-200 cursor-pointer uppercase',
-                format === f
-                  ? 'bg-[var(--color-card)] text-[var(--color-primary)] shadow-sm'
-                  : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]',
-              )}
             >
               {f}
-            </button>
+            </Button>
           ))}
         </div>
       </div>
 
-      {/* Group-by for Total Value -- segmented */}
       {report.hasGroupBy && (
-        <div>
-          <p className="text-xs font-medium text-[var(--color-text-muted)] mb-1.5">Group By</p>
-          <div className="flex gap-1 p-1 rounded-[var(--radius-md)] bg-[var(--color-elevated)]">
+        <div className="flex flex-col gap-1.5">
+          <FieldLabel>Group by</FieldLabel>
+          <div className="flex gap-2">
             {(['location', 'tag', 'condition'] as const).map((opt) => (
-              <button
+              <Button
                 key={opt}
-                type="button"
+                size="sm"
+                variant={groupBy === opt ? 'default' : 'outline'}
+                aria-pressed={groupBy === opt}
                 onClick={() => setGroupBy(opt)}
-                className={cn(
-                  'flex-1 px-3 py-1.5 rounded-[var(--radius-sm)] text-sm font-medium transition-all duration-200 cursor-pointer capitalize',
-                  groupBy === opt
-                    ? 'bg-[var(--color-card)] text-[var(--color-primary)] shadow-sm'
-                    : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]',
-                )}
               >
                 {opt}
-              </button>
+              </Button>
             ))}
           </div>
         </div>
       )}
 
-      {/* Tag multiselect for Tag Report */}
       {report.hasTagSelect && (
-        <div>
-          <p className="text-xs font-medium text-[var(--color-text-muted)] mb-1.5">Tags</p>
+        <div className="flex flex-col gap-1.5">
+          <FieldLabel>Tags</FieldLabel>
           <TagMultiSelect propertyId={propertyId} selected={tagIds} onChange={setTagIds} />
         </div>
       )}
 
-      {/* Generate button */}
       <Button
         onClick={() => onGenerate(format, report.hasGroupBy ? groupBy : undefined, report.hasTagSelect ? tagIds : undefined)}
         disabled={isPending}
-        className="w-full"
+        className="w-full sm:w-auto sm:self-start"
       >
         {isPending ? (
           <>
@@ -224,10 +216,7 @@ function ReportOptionsPanel({
 }
 
 export function Reports() {
-  const { data: propertiesData } = useProperties();
-  const properties = (propertiesData as unknown as { properties: { id: number; name: string }[] })?.properties
-    ?? (propertiesData as unknown as { id: number; name: string }[])
-    ?? [];
+  const { data: properties = [] } = useProperties();
 
   const [propertyId, setPropertyId] = React.useState<number>(0);
   const [expandedReport, setExpandedReport] = React.useState<string | null>(null);
@@ -241,7 +230,7 @@ export function Reports() {
     }
   }, [properties, propertyId]);
 
-  function handleCardClick(reportId: string) {
+  function toggleReport(reportId: string) {
     setExpandedReport((prev) => (prev === reportId ? null : reportId));
   }
 
@@ -270,139 +259,75 @@ export function Reports() {
     );
   }
 
-  // Insurance report is the featured one
-  const insuranceReport = REPORT_TYPES.find((r) => r.id === 'insurance')!;
-  const otherReports = REPORT_TYPES.filter((r) => r.id !== 'insurance');
-  const isInsuranceExpanded = expandedReport === 'insurance';
-
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-5">
       <h1 className="animate-fade-up"><TitleBar>Reports</TitleBar></h1>
 
-      {/* Property selector -- pill style */}
-      <div className="animate-fade-up" style={{ animationDelay: '50ms' }}>
-        <div className="flex gap-1.5 overflow-x-auto pb-1 -mx-1 px-1">
-          {properties.map((p) => (
-            <button
-              key={p.id}
-              type="button"
-              onClick={() => setPropertyId(p.id)}
-              className={cn(
-                'px-3.5 py-1.5 rounded-full text-sm font-medium whitespace-nowrap transition-all duration-200 shrink-0 border',
-                propertyId === p.id
-                  ? 'bg-[var(--color-primary)] text-white border-[var(--color-primary)]'
-                  : 'bg-[var(--color-card)] text-[var(--color-text-secondary)] border-[var(--color-border)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)]',
-              )}
-            >
-              {p.name}
-            </button>
-          ))}
-          {properties.length === 0 && (
-            <p className="text-xs text-[var(--color-text-muted)] py-1">No properties available.</p>
-          )}
-        </div>
-      </div>
+      <PropertyChips properties={properties} value={propertyId} onChange={setPropertyId} />
+      {properties.length === 0 && (
+        <p className="font-mono text-[11px] uppercase tracking-[0.06em] text-[var(--color-text-muted)]">
+          No properties available
+        </p>
+      )}
 
-      {/* All reports in a uniform grid */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-        {/* Insurance report */}
-        <div
-          className={cn(
-            'col-span-1 animate-fade-up',
-            isInsuranceExpanded && 'sm:col-span-2 lg:col-span-3',
-          )}
-          style={{ animationDelay: '100ms' }}
-        >
-          <Card
-            className={cn(
-              'cursor-pointer select-none border-l-[3px] h-full',
-              insuranceReport.borderColor,
-              isInsuranceExpanded
-                ? 'border-[var(--color-primary)] shadow-[0_2px_12px_rgba(0,0,0,0.08)]'
-                : 'hover:shadow-[0_2px_8px_rgba(0,0,0,0.06)] hover:border-[var(--color-primary)]/30',
-            )}
-            onClick={() => handleCardClick('insurance')}
-          >
-            <div className="flex items-start gap-3">
-              <div className={cn('flex items-center justify-center w-10 h-10 rounded-[var(--radius-lg)] shrink-0', insuranceReport.iconBg)}>
-                <FileText className={cn('w-5 h-5', insuranceReport.iconColor)} />
-              </div>
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-semibold text-[var(--color-text)] leading-tight">{insuranceReport.label}</p>
-                <p className="text-xs text-[var(--color-text-muted)] mt-0.5 leading-snug">{insuranceReport.description}</p>
-              </div>
-            </div>
+      <section className="flex flex-col">
+        <ColHead>Reports · {REPORT_TYPES.length}</ColHead>
 
-            {isInsuranceExpanded && propertyId > 0 && (
-              <ReportOptionsPanel
-                report={insuranceReport}
-                propertyId={propertyId}
-                onGenerate={(format, groupBy, tagIds) => handleGenerate(insuranceReport, format, groupBy, tagIds)}
-                isPending={generateReport.isPending}
-              />
-            )}
-
-            {isInsuranceExpanded && !propertyId && (
-              <p className="mt-3 pt-3 border-t border-[var(--color-border)] text-xs text-[var(--color-text-muted)]">
-                Select a property above to configure this report.
-              </p>
-            )}
-          </Card>
-        </div>
-
-        {/* Other reports */}
-        {otherReports.map((report, idx) => {
+        {REPORT_TYPES.map((report, idx) => {
           const Icon = report.icon;
           const isExpanded = expandedReport === report.id;
 
           return (
             <div
               key={report.id}
-              className={cn(
-                'col-span-1 animate-fade-up',
-                isExpanded && 'sm:col-span-2 lg:col-span-3',
-              )}
-              style={{ animationDelay: `${(idx + 2) * 50}ms` }}
+              className="border-b border-[var(--color-rule)] last:border-b-0 animate-fade-up"
+              style={{ animationDelay: `${idx * 40}ms` }}
             >
-              <Card
-                className={cn(
-                  'cursor-pointer select-none border-l-[3px] h-full',
-                  report.borderColor,
-                  isExpanded
-                    ? 'border-[var(--color-primary)] shadow-[0_2px_12px_rgba(0,0,0,0.08)]'
-                    : 'hover:shadow-[0_2px_8px_rgba(0,0,0,0.06)] hover:border-[var(--color-primary)]/30',
-                )}
-                onClick={() => handleCardClick(report.id)}
+              {/* Hand-built rather than RuledRow: the options panel below holds
+                  buttons of its own, which cannot live inside a row that is
+                  itself a <button>. */}
+              <button
+                type="button"
+                onClick={() => toggleReport(report.id)}
+                aria-expanded={isExpanded}
+                className="flex w-full items-center gap-3 py-3 text-left transition-colors hover:bg-[var(--color-elevated)]/60 active:bg-[var(--color-elevated)] focus-visible:outline-none focus-visible:bg-[var(--color-elevated)]"
               >
-                <div className="flex items-start gap-3">
-                  <div className={cn('flex items-center justify-center w-10 h-10 rounded-[var(--radius-lg)] shrink-0', report.iconBg)}>
-                    <Icon className={cn('w-5 h-5', report.iconColor)} />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-semibold text-[var(--color-text)] leading-tight">{report.label}</p>
-                    <p className="text-xs text-[var(--color-text-muted)] mt-0.5 leading-snug">{report.description}</p>
-                  </div>
-                </div>
+                <Icon
+                  className={cn(
+                    'w-4 h-4 shrink-0',
+                    isExpanded ? 'text-[var(--color-primary)]' : 'text-[var(--color-text-muted)]',
+                  )}
+                />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm font-semibold text-[var(--color-text)]">{report.label}</span>
+                  <span className="block truncate font-mono text-[11px] tracking-[0.02em] text-[var(--color-text-muted)]">
+                    {report.description}
+                  </span>
+                </span>
+                <ChevronRight
+                  className={cn(
+                    'w-4 h-4 shrink-0 text-[var(--color-text-muted)] transition-transform',
+                    isExpanded && 'rotate-90',
+                  )}
+                />
+              </button>
 
-                {isExpanded && propertyId > 0 && (
-                  <ReportOptionsPanel
-                    report={report}
-                    propertyId={propertyId}
-                    onGenerate={(format, groupBy, tagIds) => handleGenerate(report, format, groupBy, tagIds)}
-                    isPending={generateReport.isPending}
-                  />
-                )}
-
-                {isExpanded && !propertyId && (
-                  <p className="mt-3 pt-3 border-t border-[var(--color-border)] text-xs text-[var(--color-text-muted)]">
-                    Select a property above to configure this report.
-                  </p>
-                )}
-              </Card>
+              {isExpanded && (propertyId > 0 ? (
+                <ReportOptionsPanel
+                  report={report}
+                  propertyId={propertyId}
+                  onGenerate={(format, groupBy, tagIds) => handleGenerate(report, format, groupBy, tagIds)}
+                  isPending={generateReport.isPending}
+                />
+              ) : (
+                <p className="pb-3 font-mono text-[11px] uppercase tracking-[0.06em] text-[var(--color-text-muted)]">
+                  Pick a property above to configure this report
+                </p>
+              ))}
             </div>
           );
         })}
-      </div>
+      </section>
     </div>
   );
 }

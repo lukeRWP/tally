@@ -1,6 +1,8 @@
 import * as React from 'react';
 import { Printer as PrinterIcon, Copy, Trash2, RotateCw } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { ColHead } from '@/components/ui/col-head';
 import { Input } from '@/components/ui/input';
 import { toast } from '@/components/ui/toast';
 import {
@@ -63,11 +65,11 @@ export function PrinterSettings({ propertyId }: { propertyId?: number }) {
       )}
 
       {issuedToken && (
-        <div className="rounded-[var(--radius-md)] border border-[var(--color-border)] p-3 flex flex-col gap-2">
+        <div className="rounded-[var(--radius-sm)] border border-[var(--color-rule)] p-3 flex flex-col gap-2">
           <p className="text-xs text-[var(--color-text-secondary)]">
             Copy this now — it is shown only once. Paste it into <code>tally-printer.conf</code> on the SD card:
           </p>
-          <pre className="text-[10px] font-mono bg-[var(--color-elevated)] p-2 rounded overflow-x-auto">
+          <pre className="text-[10px] font-mono bg-[var(--color-elevated)] p-2 rounded-[var(--radius-sm)] overflow-x-auto">
 {`tally_url   = ${window.location.origin}
 agent_token = ${issuedToken}`}
           </pre>
@@ -85,12 +87,9 @@ agent_token = ${issuedToken}`}
           <div className="flex items-center gap-2">
             <PrinterIcon className="w-4 h-4" />
             <span className="text-sm font-medium">{printer.name}</span>
-            <span className={`text-[10px] px-2 py-0.5 rounded-full ${
-              problem ? 'bg-[var(--color-red-bg)] text-[var(--color-red)]'
-              : online ? 'bg-[var(--color-green-bg)] text-[var(--color-green)]'
-              : 'bg-[var(--color-elevated)] text-[var(--color-text-muted)]'}`}>
+            <Badge variant={problem ? 'danger' : online ? 'success' : 'default'}>
               {problem ?? (online ? 'Online' : 'Offline')}
-            </span>
+            </Badge>
             <Button variant="outline" size="sm" className="ml-auto"
                     disabled={revokePrinter.isPending}
                     onClick={() => revokePrinter.mutate(printer.id, {
@@ -101,8 +100,8 @@ agent_token = ${issuedToken}`}
             </Button>
           </div>
 
-          <div>
-            <p className="text-xs text-[var(--color-text-muted)] mb-1.5">Loaded roll</p>
+          <div className="flex flex-col gap-1.5">
+            <p className="font-mono text-[10px] uppercase tracking-[0.1em] text-[var(--color-text-muted)]">Loaded roll</p>
             <div className="flex gap-2">
               {ROLLS.map((r) => (
                 <Button key={r.value} size="sm"
@@ -122,11 +121,11 @@ agent_token = ${issuedToken}`}
       )}
 
       {!!jobs?.length && (
-        <div>
-          <p className="text-xs text-[var(--color-text-muted)] mb-1.5">Recent jobs</p>
-          <div className="flex flex-col gap-1">
+        <div className="flex flex-col">
+          <ColHead>Recent jobs · {jobs.length}</ColHead>
+          <div className="flex flex-col">
             {jobs.map((j) => (
-              <div key={j.id} className="flex flex-col gap-1 text-xs border border-[var(--color-border)] rounded-[var(--radius-md)] px-2 py-1.5">
+              <div key={j.id} className="flex flex-col gap-1 text-xs py-2 border-b border-[var(--color-rule)] last:border-b-0">
                 <div className="flex items-center gap-2">
                 <span className="font-mono">{j.preset}</span>
                 <span className="text-[var(--color-text-muted)]">

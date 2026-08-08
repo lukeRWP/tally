@@ -32,4 +32,11 @@ const searchItems = Joi.object({
   tagIds: Joi.array().items(Joi.number().integer()).allow(null),
 });
 
-module.exports = { createItem, updateItem, moveItem, searchItems };
+// Home shows everything the caller can see, so there is nothing to filter by —
+// only how much of it to show. A property filter here would be dead weight, the
+// way searchItems.propertyId is: validated and read by nobody.
+const recentItems = Joi.object({
+  limit: Joi.number().integer().min(1).max(100).default(25),
+});
+
+module.exports = { createItem, updateItem, moveItem, searchItems, recentItems };

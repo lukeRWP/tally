@@ -4,15 +4,13 @@ import { Button } from '@/components/ui/button';
 import { ColHead } from '@/components/ui/col-head';
 import { toast } from '@/components/ui/toast';
 import { NotificationList } from '@/components/notifications/notification-list';
+import { RecentActivity } from '@/components/activity/recent-activity';
 import { TitleBar } from '@/components/ui/title-bar';
 import { useActiveLoans, useReturnItem } from '@/hooks/use-lending';
 import { daysOverdue, formatDueDate } from '@/lib/dates';
 
-/**
- * The alerts hub. "On loan" leads: getting things back is the actionable job
- * this page exists for, and until now the only cross-house view of loans was
- * a generated PDF — the overdue endpoint existed and no screen consumed it.
- */
+// Renders nothing at all when nothing is out, so a house that lends nothing
+// never pays a header for it.
 function OnLoanSection() {
   const navigate = useNavigate();
   const { data: loans } = useActiveLoans();
@@ -80,12 +78,24 @@ function OnLoanSection() {
   );
 }
 
+/**
+ * Everything that happened without you: what is still out on loan, what the app
+ * wants to tell you, and the raw change log underneath both. Ordered by how
+ * actionable it is, so on loan leads — getting things back is the one job here
+ * that needs a person to do something. Notifications need reading, activity
+ * only needs scanning.
+ *
+ * This is also the only cross-house view of loans outside a generated report,
+ * which is why the overdue endpoint feeds a screen and not just a PDF.
+ */
 export function NotificationListPage() {
   return (
-    <div className="flex flex-col gap-4 p-4">
+    // No padding of its own: `main` owns the gutter and the scroll.
+    <div className="flex flex-col gap-4">
       <h1 className="max-w-2xl mx-auto w-full"><TitleBar>Alerts</TitleBar></h1>
       <OnLoanSection />
       <NotificationList />
+      <RecentActivity />
     </div>
   );
 }
