@@ -361,6 +361,25 @@ export function Capture() {
 
   const step = phase === 'photo' ? 1 : phase === 'identify' ? 2 : 3;
 
+  /**
+   * Step 2 answers "what is this?" and step 3 answers "where does it go?", so
+   * naming something by hand ends the step — it does not end the flow.
+   *
+   * Committing from here is only right once the bin has actually been
+   * confirmed this session; a bin left in localStorage days ago is an offer,
+   * not an answer, and filing into it silently would skip the question step 3
+   * exists to ask. The barcode path already gates on exactly this flag.
+   *
+   * A photo or a barcode identifies a thing as well as a typed name does —
+   * commit() names the unnamed rather than refusing them.
+   */
+  const identified = !!(draft.name.trim() || draft.barcode || draft.photo);
+  function finishIdentifying() {
+    if (busy || !identified) return;
+    if (destConfirmed && dest) void commit(draft, dest);
+    else setPhase('place');
+  }
+
   return (
     <div className="flex flex-col gap-3 max-w-lg mx-auto h-full">
       {/* progress + destination */}
@@ -571,19 +590,27 @@ export function Capture() {
           {phase === 'identify' && (
             <div className="flex gap-2 shrink-0">
               <Input placeholder="Name it, or search…" value={draft.name}
-                onChange={(e) => setDraft((d) => ({ ...d, name: e.target.value }))} />
-              {/* Once the bin IS confirmed the row above disappears, which
-                  used to leave no way back to step 3. Costs no vertical px. */}
+                onChange={(e) => setDraft((d) => ({ ...d, name: e.target.value }))}
+                // Typing a name and pressing enter is one gesture; making the
+                // keyboard's own confirm key do nothing strands anyone who
+                // never looks up from the field.
+                onKeyDown={(e) => {
+                  if (e.key !== 'Enter') return;
+                  e.preventDefault();
+                  finishIdentifying();
+                }} />
+              {/* The row above hides once the bin is confirmed, so this keeps a
+                  way back to step 3. Costs no vertical px. */}
               {destConfirmed && (
                 <Button size="sm" variant="outline" aria-label="Change the bin"
                   className="shrink-0" onClick={() => setPhase('place')}>
                   <MapPin className="w-4 h-4" />
                 </Button>
               )}
-              <Button size="sm" className="shrink-0" disabled={!dest || !!busy}
-                onClick={() => dest && commit(draft, dest)}>
+              <Button size="sm" className="shrink-0" disabled={!identified || !!busy}
+                onClick={finishIdentifying}>
                 <Check className="w-4 h-4" />
-                Add
+                {destConfirmed ? 'Add' : 'Next'}
               </Button>
             </div>
           )}
