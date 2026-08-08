@@ -83,7 +83,10 @@ const ReportsService = {
            GROUP BY ITEM_ID
          ) cs2 ON cs1.ITEM_ID = cs2.ITEM_ID AND cs1.CREATED_AT = cs2.MAX_CREATED
        ) cs_latest ON cs_latest.ITEM_ID = i.ID
-       LEFT JOIN TALLY.item_dates id_purchase ON id_purchase.ITEM_ID = i.ID AND id_purchase.DATE_TYPE = 'purchase'
+       -- DATE_TYPE is free text the user types; the form's own preset is
+       -- "Purchased", so an exact match on 'purchase' finds nothing anyone
+       -- entered and every report's purchase date comes back empty.
+       LEFT JOIN TALLY.item_dates id_purchase ON id_purchase.ITEM_ID = i.ID AND LOWER(id_purchase.DATE_TYPE) IN ('purchased', 'purchase')
        WHERE a.PROPERTY_ID = ?
          AND i.STATUS = 'active'
          AND i.DELETED_AT IS NULL
@@ -146,7 +149,7 @@ const ReportsService = {
              JOIN TALLY.containers c ON c.ID = i.CONTAINER_ID
              JOIN TALLY.areas a ON a.ID = c.AREA_ID
              LEFT JOIN TALLY.products p ON p.ID = i.PRODUCT_ID
-             LEFT JOIN TALLY.item_dates id_purchase ON id_purchase.ITEM_ID = i.ID AND id_purchase.DATE_TYPE = 'purchase'
+             LEFT JOIN TALLY.item_dates id_purchase ON id_purchase.ITEM_ID = i.ID AND LOWER(id_purchase.DATE_TYPE) IN ('purchased', 'purchase')
              WHERE a.PROPERTY_ID = ?
                AND i.STATUS = 'active'
                AND i.DELETED_AT IS NULL
@@ -166,7 +169,7 @@ const ReportsService = {
              JOIN TALLY.containers c ON c.ID = i.CONTAINER_ID
              JOIN TALLY.areas a ON a.ID = c.AREA_ID
              LEFT JOIN TALLY.products p ON p.ID = i.PRODUCT_ID
-             LEFT JOIN TALLY.item_dates id_purchase ON id_purchase.ITEM_ID = i.ID AND id_purchase.DATE_TYPE = 'purchase'
+             LEFT JOIN TALLY.item_dates id_purchase ON id_purchase.ITEM_ID = i.ID AND LOWER(id_purchase.DATE_TYPE) IN ('purchased', 'purchase')
              JOIN TALLY.entity_tags et ON et.ENTITY_ID = i.ID AND et.ENTITY_TYPE = 'item'
              JOIN TALLY.tags t ON t.ID = et.TAG_ID
              WHERE a.PROPERTY_ID = ?
@@ -189,7 +192,7 @@ const ReportsService = {
              JOIN TALLY.containers c ON c.ID = i.CONTAINER_ID
              JOIN TALLY.areas a ON a.ID = c.AREA_ID
              LEFT JOIN TALLY.products p ON p.ID = i.PRODUCT_ID
-             LEFT JOIN TALLY.item_dates id_purchase ON id_purchase.ITEM_ID = i.ID AND id_purchase.DATE_TYPE = 'purchase'
+             LEFT JOIN TALLY.item_dates id_purchase ON id_purchase.ITEM_ID = i.ID AND LOWER(id_purchase.DATE_TYPE) IN ('purchased', 'purchase')
              WHERE a.PROPERTY_ID = ?
                AND i.STATUS = 'active'
                AND i.DELETED_AT IS NULL

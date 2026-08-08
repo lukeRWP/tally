@@ -2,7 +2,7 @@ module.exports = function productsRoutes({ app, db, logger }) {
   const ProductsService = require('./products.service');
   ProductsService.init({ db, logger });
 
-  const { createProduct, updateProduct, lookupBarcode } = require('./products.schema');
+  const { createProduct, lookupBarcode } = require('./products.schema');
   const { success, error } = require('../../utils/response');
 
   // ── Get by Barcode (local only) ───────────────────────────────────────────
@@ -125,22 +125,12 @@ module.exports = function productsRoutes({ app, db, logger }) {
     }
   );
 
-  // ── Update Product ─────────────────────────────────────────────────────────
-
-  // PUT /api/products/_u_/:productId
-  app.put(
-    '/api/products/_u_/:productId',
-    app.locals.requireAuth,
-    async (req, res) => {
-      const { error: validationError, value } = updateProduct.validate(req.body, { abortEarly: false });
-      if (validationError) {
-        return error(res, 'Validation failed', 422, validationError.details.map(d => d.message));
-      }
-      const product = await ProductsService.update(req.params.productId, value);
-      if (!product) return error(res, 'Product not found', 404);
-      success(res, { product });
-    }
-  );
+  // The catalogue is shared by every household and rows in it have no owner,
+  // so a write here is a write to everyone's data. There is no route for it:
+  // `requireAuth` proves only that someone is signed in, which is not a claim
+  // over a product, and items now read their description, price and brand
+  // straight out of these rows. Editing belongs to the item, which is scoped.
+  // Any future catalogue editing needs an ownership model first.
 
   // ── Check Duplicate ────────────────────────────────────────────────────────
 
