@@ -150,27 +150,6 @@ const ProductsService = {
     }
   },
 
-  async update(id, data) {
-    const fields = [];
-    const values = [];
-
-    if (data.name !== undefined) { fields.push('NAME = ?'); values.push(data.name); }
-    if (data.brand !== undefined) { fields.push('BRAND = ?'); values.push(data.brand); }
-    if (data.category !== undefined) { fields.push('CATEGORY = ?'); values.push(data.category); }
-    if (data.description !== undefined) { fields.push('DESCRIPTION = ?'); values.push(data.description); }
-    if (data.retailPrice !== undefined) { fields.push('RETAIL_PRICE = ?'); values.push(data.retailPrice); }
-    if (data.depreciationRate !== undefined) { fields.push('DEPRECIATION_RATE = ?'); values.push(data.depreciationRate); }
-
-    if (!fields.length) return ProductsService.getById(id);
-
-    values.push(id);
-    await _db.query(
-      `UPDATE TALLY.products SET ${fields.join(', ')} WHERE ID = ?`,
-      values
-    );
-
-    return ProductsService.getById(id);
-  },
 
   async checkDuplicate(barcode, userId) {
     const rows = await _db.query(

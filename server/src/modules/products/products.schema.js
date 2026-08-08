@@ -21,17 +21,8 @@ const createProduct = Joi.object({
   dataSource: Joi.string().valid('upc_db', 'open_food_facts', 'scrape', 'manual').default('manual'),
 });
 
-const updateProduct = Joi.object({
-  name: Joi.string().max(255),
-  brand: Joi.string().max(255).allow('', null),
-  category: Joi.string().max(100).allow('', null),
-  description: Joi.string().allow('', null),
-  retailPrice: Joi.number().precision(2).allow(null),
-  depreciationRate: Joi.number().precision(4).min(0).max(1).allow(null),
-}).min(1);
-
 const lookupBarcode = Joi.object({
   barcode: Joi.string().max(50).required(),
 });
 
-module.exports = { createProduct, updateProduct, lookupBarcode };
+module.exports = { createProduct, lookupBarcode };
