@@ -22,8 +22,14 @@ import { cn } from '@/lib/utils';
  * The capture flow: PICTURE → SCAN → SCAN → DONE.
  *
  * The photo captures the thing, the product barcode names it, the tag files
- * it — and the tote then stays in recents, so the second item can be picture,
- * name, tap.
+ * it. All three steps run for every item.
+ *
+ * Step 3 is the one that cannot be skipped. Identifying something says WHAT it
+ * is and never where it belongs, so nothing is written until it has been put
+ * somewhere — an item that appears in a bin nobody chose for it is worse than
+ * one more tap, and the tote in front of you is rarely the tote from an hour
+ * ago. A remembered bin is a shortcut for ANSWERING step 3 (one tap on a
+ * recent chip), never a reason to skip past it.
  *
  * Each step uses the scanner that matches its question: step 2 decodes UPC/EAN
  * only, step 3 QR only. A scanner that cannot read the other kind cannot
@@ -31,10 +37,10 @@ import { cn } from '@/lib/utils';
  * scanner read everything and the page routed by the code's shape — it made
  * both steps able to swallow the other's input.)
  *
- * Nothing is mandatory. No photo → skip it. No barcode → type a name, search
- * the catalogue, or paste a link. No tag on the tote → tap a recent one or
- * pick from the list. The commit needs a container and a name, and the flow
- * synthesises a name rather than blocking.
+ * Within a step nothing is mandatory. No photo → skip it. No barcode → type a
+ * name, search the catalogue, or paste a link. No tag on the tote → tap a
+ * recent one or pick from the list. The commit needs a container and a name,
+ * and the flow synthesises a name rather than blocking.
  *
  * The photo is held as a Blob and uploaded AFTER the item exists — item_files
  * has an FK to the item and the upload route 404s without one. So "picture
@@ -137,11 +143,10 @@ export function Capture() {
    * carried in from the page you tapped Add on) rather than merely remembered
    * from last time.
    *
-   * The loop — "item two is just picture + scan" — depends on committing the
-   * moment a product barcode resolves. But that is only right once you have
-   * actually told the flow where you are standing. Treating a leftover
-   * localStorage bin as an answer silently filed items into whatever tote you
-   * used days ago and skipped the scan-the-bin step entirely.
+   * It decides how step 3 PRESENTS a bin, not whether step 3 runs: a confirmed
+   * bin reads "adding to", a remembered one reads "last used" and has to be
+   * tapped before it counts. Either way the item is not written until someone
+   * answers the question on that step.
    */
   const [destConfirmed, setDestConfirmed] = React.useState(false);
   const [phase, setPhase] = React.useState<Phase>('photo');
@@ -268,7 +273,7 @@ export function Capture() {
   }
 
   const handleCode = React.useCallback(async (code: string) => {
-    const { dest: curDest, draft: curDraft, destConfirmed: curConfirmed } = stateRef.current;
+    const { draft: curDraft } = stateRef.current;
 
     // Rule 1: route by code shape, not by which step we think we're on.
     if (TLY_CODE_REGEX.test(code)) {
@@ -332,15 +337,11 @@ export function Capture() {
         productId: product?.id,
       };
       setDraft(next);
-      if (product?.name && curDest && curConfirmed) {
-        // Named and homed: commit straight away — this is what makes it a loop.
-        void commit(next, curDest);
-      } else {
-        // Named but not homed yet: go to the step that asks where it goes,
-        // which is the whole point of scan → scan → done.
-        setPhase('place');
-        if (!product?.name) toast('No match — name it yourself');
-      }
+      // A barcode says WHAT the thing is, never where it goes. Every item
+      // earns its place by being put somewhere on step 3 — a pinned bin is a
+      // shortcut for answering that question, not a reason to skip it.
+      setPhase('place');
+      if (!product?.name) toast('No match — name it yourself');
     } catch {
       setDraft((d) => ({ ...d, barcode: code }));
       setPhase('identify');
@@ -362,13 +363,9 @@ export function Capture() {
   const step = phase === 'photo' ? 1 : phase === 'identify' ? 2 : 3;
 
   /**
-   * Step 2 answers "what is this?" and step 3 answers "where does it go?", so
-   * naming something by hand ends the step — it does not end the flow.
-   *
-   * Committing from here is only right once the bin has actually been
-   * confirmed this session; a bin left in localStorage days ago is an offer,
-   * not an answer, and filing into it silently would skip the question step 3
-   * exists to ask. The barcode path already gates on exactly this flag.
+   * Step 2 answers "what is this?"; step 3 answers "where does it go?". The
+   * second question is never assumed — nothing is filed until it is put
+   * somewhere on step 3, so an item cannot land in a bin nobody named for it.
    *
    * A photo or a barcode identifies a thing as well as a typed name does —
    * commit() names the unnamed rather than refusing them.
@@ -376,8 +373,7 @@ export function Capture() {
   const identified = !!(draft.name.trim() || draft.barcode || draft.photo);
   function finishIdentifying() {
     if (busy || !identified) return;
-    if (destConfirmed && dest) void commit(draft, dest);
-    else setPhase('place');
+    setPhase('place');
   }
 
   return (
@@ -610,7 +606,7 @@ export function Capture() {
               <Button size="sm" className="shrink-0" disabled={!identified || !!busy}
                 onClick={finishIdentifying}>
                 <Check className="w-4 h-4" />
-                {destConfirmed ? 'Add' : 'Next'}
+                Next
               </Button>
             </div>
           )}
