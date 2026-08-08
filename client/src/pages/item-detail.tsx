@@ -2,14 +2,13 @@ import * as React from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   Pencil, ArrowRightLeft, Trash2, Printer, HandCoins, Share2,
-  MoreHorizontal, X, ChevronRight, Camera,
+  MoreHorizontal, X, ChevronRight, Camera, Scissors,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { LabelPrintDialog } from '@/components/labels/label-print-dialog';
 import { TitleBar } from '@/components/ui/title-bar';
 import { ColHead } from '@/components/ui/col-head';
 import { Badge } from '@/components/ui/badge';
-// (Badge import removed — it was dead; item-detail renders no <Badge>.)
 import { Skeleton } from '@/components/ui/skeleton';
 import { useItem, useDeleteItem, useUpdateItem } from '@/hooks/use-inventory';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
@@ -521,6 +520,26 @@ export function ItemDetail() {
             {item.status}
           </Badge>
         </div>
+        {/* Shown only when it would actually change the name, so it retires
+            itself the moment it is used. Quiet by design: a catalogue title is
+            ugly, not broken, and the row it names is still perfectly findable. */}
+        {item.suggestedName && (
+          <button
+            type="button"
+            disabled={updateItem.isPending}
+            onClick={() => updateItem.mutate(
+              { id, name: item.suggestedName },
+              {
+                onSuccess: () => toast.success('Name shortened'),
+                onError: (e: Error) => toast.error(e.message || 'Could not rename it'),
+              },
+            )}
+            className="flex items-start gap-1.5 text-left min-h-[32px] font-mono text-[10px] uppercase tracking-[0.06em] text-[var(--color-primary)] disabled:opacity-45"
+          >
+            <Scissors className="w-3.5 h-3.5 shrink-0 mt-[1px]" />
+            <span className="min-w-0">Shorten to “{item.suggestedName}”</span>
+          </button>
+        )}
         </div>
       </div>
 
