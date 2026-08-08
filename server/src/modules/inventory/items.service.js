@@ -1,4 +1,5 @@
 const { generateCode } = require('../../utils/qr');
+const { simplifyProductName } = require('../../utils/product-name');
 const AuditService = require('../audit/audit.service');
 const RecycleService = require('../recycle/recycle.service');
 const storage = require('../../infrastructure/storage');
@@ -155,6 +156,22 @@ const ItemsService = {
     if (row.PRODUCT_DATA_SOURCE !== undefined) {
       item.productDataSource = row.PRODUCT_DATA_SOURCE || null;
     }
+
+    // Anything filed before the shortener existed still wears its catalogue
+    // title verbatim, and only those rows are offered a shorter one. Keying on
+    // an exact match rather than "differs from the product" matters: a name
+    // someone chose themselves would otherwise be nagged back towards the
+    // marketing copy they were replacing.
+    //
+    // Safe where a bulk rewrite is not — the original survives on the product,
+    // the change is one deliberate tap by someone looking at both, and it lands
+    // in History like any other edit. Null once taken, since shortening twice
+    // is a no-op.
+    const catalogueTitle = row.PRODUCT_NAME || null;
+    const suggested = catalogueTitle && catalogueTitle === item.name
+      ? simplifyProductName(catalogueTitle)
+      : null;
+    item.suggestedName = suggested && suggested !== item.name ? suggested : null;
 
     // Build breadcrumb: property → area → container
     item.breadcrumb = [

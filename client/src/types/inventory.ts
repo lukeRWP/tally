@@ -63,6 +63,8 @@ export interface Item {
   productRetailLinks?: { retailer: string; url: string; price?: number }[] | null;
   productSpecs?: Record<string, unknown> | null;
   productDataSource?: string | null;
+  /** A shorter name worth offering, or null when the current one is fine. */
+  suggestedName?: string | null;
 }
 
 export interface BreadcrumbItem {
