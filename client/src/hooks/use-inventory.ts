@@ -222,9 +222,12 @@ export function useUpdateItem() {
   return useMutation({
     mutationFn: ({ id, ...data }: { id: number } & Record<string, unknown>) =>
       api.put<{ item: Item }>(`/api/items/_u_/${id}`, data),
-    onSuccess: (_: unknown, vars: { id: number }) => {
+    onSuccess: (_: unknown, vars: { id: number } & Record<string, unknown>) => {
       qc.invalidateQueries({ queryKey: queryKeys.items.detail(vars.id) });
       qc.invalidateQueries({ queryKey: queryKeys.items.all });
+      // Purchase price feeds the insurance and total-value reports, and the
+      // retail-promotion dialog says so out loud.
+      qc.invalidateQueries({ queryKey: ['reports'] });
     },
   });
 }

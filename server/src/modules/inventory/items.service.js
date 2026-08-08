@@ -23,7 +23,10 @@ const ItemsService = {
       containerId: row.CONTAINER_ID,
       productId: row.PRODUCT_ID || null,
       name: row.NAME,
-      description: row.DESCRIPTION || null,
+      // '' and NULL are different answers: '' means "I looked and there is
+      // nothing to say", and the item page must not fall back to the product's
+      // description for it.
+      description: row.DESCRIPTION != null ? row.DESCRIPTION : null,
       quantity: row.QUANTITY != null ? Number(row.QUANTITY) : 1,
       qrCode: row.QR_CODE || null,
       purchasePrice: row.PURCHASE_PRICE != null ? Number(row.PURCHASE_PRICE) : null,

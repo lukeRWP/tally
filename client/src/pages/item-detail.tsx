@@ -287,6 +287,7 @@ function LedgerRow({
   onAdd,
   onEdit,
   wrap,
+  inherited,
 }: {
   label: string;
   value?: React.ReactNode;
@@ -294,6 +295,11 @@ function LedgerRow({
   onEdit?: () => void;
   /** Let the value wrap instead of ellipsing — for prose like a description. */
   wrap?: boolean;
+  /**
+   * The value came from the catalogue, not from this object. Shown, but
+   * marked: the ledger must never claim the user told it something they didn't.
+   */
+  inherited?: string;
 }) {
   const filled = value !== null && value !== undefined && value !== '';
   // min-h on the ROW, not on the button — otherwise an empty row stands taller
@@ -313,10 +319,16 @@ function LedgerRow({
           disabled={!onEdit}
           aria-label={onEdit ? `Edit ${label}` : undefined}
           className={cn(
-            'text-sm font-semibold text-right min-w-0 disabled:cursor-default',
+            'text-sm text-right min-w-0 disabled:cursor-default',
+            inherited ? 'font-normal text-[var(--color-text-secondary)]' : 'font-semibold',
             wrap ? 'whitespace-normal py-2' : 'truncate',
           )}
         >
+          {inherited && (
+            <span className="font-mono text-[9px] uppercase tracking-[0.06em] mr-1.5 align-middle text-[var(--color-text-muted)]">
+              {inherited}
+            </span>
+          )}
           {value}
         </button>
       ) : (
@@ -375,6 +387,14 @@ export function ItemDetail() {
   const [lendFormOpen, setLendFormOpen] = React.useState(false);
   const [shareOpen, setShareOpen] = React.useState(false);
   const [photoOpen, setPhotoOpen] = React.useState(false);
+  const [useRetailOpen, setUseRetailOpen] = React.useState(false);
+  /**
+   * The edit dialog is shared by every ledger row, so the catalogue
+   * description may only be pre-filled when the DESCRIPTION row is what opened
+   * it. Otherwise changing the quantity silently signs the user's name to text
+   * a scraper wrote — and publishes it on every share link.
+   */
+  const [adoptDesc, setAdoptDesc] = React.useState(false);
   const photoInput = React.useRef<HTMLInputElement>(null);
   const uploadPhoto = useUploadFile();
 
@@ -567,6 +587,19 @@ export function ItemDetail() {
           onAdd={() => setEditOpen(true)}
         />
 
+        {/* The catalogue's price is a different fact from what YOU paid, so it
+            gets its own rule rather than filling in the row above. Value feeds
+            the insurance total and every share link; it only ever changes on an
+            explicit confirm. Zero is a scrape artefact, not a price. */}
+        {item.productRetailPrice != null && item.productRetailPrice > 0 && (
+          <LedgerRow
+            label="Retail"
+            value={`$${item.productRetailPrice.toFixed(2)}`}
+            inherited="product"
+            onEdit={item.purchasePrice == null ? () => setUseRetailOpen(true) : undefined}
+          />
+        )}
+
         {/* Depreciation was only ever shown inside the Value card; as a row it
             survives the rebuild and reads better next to what was paid. */}
         {depreciation && (
@@ -577,8 +610,22 @@ export function ItemDetail() {
           />
         )}
 
-        <LedgerRow label="Description" value={item.description || null} wrap
-          onEdit={() => setEditOpen(true)} onAdd={() => setEditOpen(true)} />
+        <LedgerRow
+          label="Description"
+          value={item.description ?? item.productDescription ?? null}
+          inherited={item.description == null && item.productDescription ? 'product' : undefined}
+          wrap
+          onEdit={() => { setAdoptDesc(true); setEditOpen(true); }}
+          onAdd={() => { setAdoptDesc(true); setEditOpen(true); }}
+        />
+
+        {/* Already selected, mapped and typed by getById, so these rows cost
+            no extra query. */}
+        {item.productBrand && <LedgerRow label="Brand" value={item.productBrand} inherited="product" />}
+        {item.productCategory && <LedgerRow label="Category" value={item.productCategory} inherited="product" />}
+        {typeof item.productSpecs?.model === 'string' && item.productSpecs.model && (
+          <LedgerRow label="Model" value={item.productSpecs.model} inherited="product" />
+        )}
 
         {/* Dates are user-named, so the row shows the soonest one and the
             section below lists the rest when there is more than one. */}
@@ -617,7 +664,7 @@ export function ItemDetail() {
           with no rows is already represented in the ledger as "+ add". */}
 
       {(item.productName || item.productImageUrl) && (
-        <Section title="Product">
+        <Section title="Product" defaultOpen>
           <div className="flex items-start gap-3 py-3">
             {item.productImageUrl && (
               <img
@@ -628,14 +675,8 @@ export function ItemDetail() {
             )}
             <div className="min-w-0 flex-1">
               {item.productName && <p className="text-sm font-semibold">{item.productName}</p>}
-              {item.productBrand && (
-                <p className="font-mono text-[10px] uppercase tracking-[0.06em] text-[var(--color-text-muted)]">
-                  {item.productBrand}
-                </p>
-              )}
-              {item.productDescription && (
-                <p className="text-sm text-[var(--color-text-secondary)] mt-1">{item.productDescription}</p>
-              )}
+              {/* Brand and description are ledger rows — the same fact twice
+                  on one page reads like two different facts. */}
               {(item.productRetailLinks?.length ?? 0) > 0 && (
                 <div className="flex flex-wrap gap-1.5 mt-2">
                   {item.productRetailLinks!.slice(0, 5).map((link, i) => (
@@ -713,11 +754,14 @@ export function ItemDetail() {
       {editOpen && (
         <EntityForm
           open
-          onOpenChange={(o) => { if (!o) setEditOpen(false); }}
+          onOpenChange={(o) => { if (!o) { setEditOpen(false); setAdoptDesc(false); } }}
           type="item"
           defaultValues={{
             name: item.name,
-            description: item.description ?? '',
+            // Pre-filled ONLY when the Description row opened this dialog, so
+            // saving there ADOPTS the catalogue text and the row stops being
+            // inherited — while an edit to the quantity leaves it alone.
+            description: item.description ?? (adoptDesc ? item.productDescription ?? '' : '') ?? '',
             quantity: item.quantity,
             purchasePrice: item.purchasePrice ?? '',
             condition: item.condition,
@@ -727,11 +771,11 @@ export function ItemDetail() {
             try {
               // EntityForm strips empty values (it was built for create, where
               // absent means "don't set"). In EDIT, absent means the user
-              // CLEARED the field — without this, clearing the price toasts
-              // "Item updated" while the old price silently survives. The
-              // update schema allows null for exactly these fields.
+              // CLEARED the field. The description clears to '' rather than
+              // NULL: NULL is what makes the row fall back to the catalogue,
+              // so a cleared description would immediately reappear.
               const cleared: Record<string, unknown> = {};
-              if (!('description' in data)) cleared.description = null;
+              if (!('description' in data)) cleared.description = '';
               if (!('purchasePrice' in data)) cleared.purchasePrice = null;
               await updateItem.mutateAsync({ id, ...cleared, ...data });
               toast('Item updated');
@@ -807,6 +851,28 @@ export function ItemDetail() {
         confirmLabel="Delete"
         isPending={deleteItem.isPending}
         onConfirm={confirmDeleteItem}
+      />
+
+      <ConfirmDialog
+        open={useRetailOpen}
+        onOpenChange={setUseRetailOpen}
+        title="Use the retail price?"
+        description={
+          item.productRetailPrice != null
+            ? `Record $${item.productRetailPrice.toFixed(2)} as what you paid for this. It will count towards your insurance and total-value reports, and show on any share link.`
+            : ''
+        }
+        confirmLabel="Use it"
+        isPending={updateItem.isPending}
+        onConfirm={() => {
+          updateItem.mutate(
+            { id, purchasePrice: item.productRetailPrice },
+            {
+              onSuccess: () => { setUseRetailOpen(false); toast('Value set'); },
+              onError: (e: Error) => toast(e.message),
+            },
+          );
+        }}
       />
     </div>
   );

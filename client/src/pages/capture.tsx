@@ -84,6 +84,12 @@ interface Destination {
 
 interface Draft {
   name: string;
+  /**
+   * The catalogue title before shortening — kept only for the case where the
+   * lookup could NOT be saved to the catalogue, so PRODUCT_ID will be null and
+   * nothing else in the database will ever hold these words.
+   */
+  fullName?: string;
   barcode?: string;
   productId?: number;
   photo?: Blob;
@@ -121,14 +127,6 @@ async function downscale(file: File, max = 1600): Promise<Blob> {
   return new Promise((resolve) =>
     canvas.toBlob((b) => resolve(b ?? file), 'image/jpeg', 0.82),
   );
-}
-
-function tidyName(raw: string): string {
-  const name = raw.trim();
-  if (name.length <= 60) return name;
-  const cut = name.slice(0, 60);
-  const at = Math.max(cut.lastIndexOf(','), cut.lastIndexOf(' '));
-  return (at > 24 ? cut.slice(0, at) : cut).trim();
 }
 
 export function Capture() {
@@ -203,11 +201,17 @@ export function Capture() {
   }, [phase]);
 
   function adoptProduct(product: Record<string, unknown>) {
-    const name = typeof product.name === 'string' ? product.name : '';
+    // shortName is the catalogue title with the sales copy taken off. Nothing
+    // is lost: the full title stays on the product row and the item page shows
+    // it under "Product".
+    const short = typeof product.shortName === 'string' ? product.shortName : '';
+    const full = typeof product.name === 'string' ? product.name : '';
+    const id = typeof product.id === 'number' ? product.id : undefined;
     setDraft((d) => ({
       ...d,
-      name: name ? tidyName(name) : d.name,
-      productId: typeof product.id === 'number' ? product.id : d.productId,
+      name: short || full || d.name,
+      fullName: id ? undefined : full,
+      productId: id ?? d.productId,
       barcode: typeof product.barcode === 'string' && product.barcode ? product.barcode : d.barcode,
     }));
     setIdentifying(false);
@@ -232,6 +236,13 @@ export function Capture() {
         name,
         containerId: destination.id,
         ...(d.productId ? { productId: d.productId } : {}),
+        // Without a product row there is nothing to inherit from and no way
+        // back — items has no BARCODE column. The full title rides along as the
+        // description so the words stay searchable (ft_items_search covers
+        // NAME and DESCRIPTION) instead of being thrown away with the chop.
+        ...(!d.productId && d.fullName && d.fullName !== name
+          ? { description: d.fullName }
+          : {}),
       } as Parameters<typeof createItem.mutateAsync>[0]);
       const created = res?.item;
       if (!created) throw new Error('Create returned no item');
@@ -321,7 +332,7 @@ export function Capture() {
       // Ask both questions at once: what is this, and do I already own one?
       // Without the second, the primary add flow would silently grow duplicates.
       const [result, dup] = await Promise.all([
-        api.post<{ product?: { id?: number; name?: string } | null }>(
+        api.post<{ product?: { id?: number; name?: string; shortName?: string } | null }>(
           '/api/products/_y_/lookup', { barcode: code },
         ),
         api.post<{ existingItems: Dupe[] }>(
@@ -333,7 +344,8 @@ export function Capture() {
       const next: Draft = {
         ...curDraft,
         barcode: code,
-        name: product?.name ? tidyName(product.name) : curDraft.name,
+        name: product?.shortName || product?.name || curDraft.name,
+        fullName: product?.id ? undefined : product?.name,
         productId: product?.id,
       };
       setDraft(next);

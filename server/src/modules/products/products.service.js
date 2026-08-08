@@ -1,4 +1,43 @@
 const lookupOrchestrator = require('./lookup/lookup-orchestrator');
+const { simplifyProductName } = require('../../utils/product-name');
+
+/**
+ * The catalogue title sells the product; the item on the shelf needs a name
+ * that fits a label. Derived on read and never stored — NAME keeps the full
+ * title, which is what ft_products_search matches and what the item page shows
+ * under "Product", so nothing the lookup found is lost.
+ *
+ * A hand-typed catalogue entry is left alone: "Dad's old drill, garage" is
+ * already the name its owner chose, and pruning it would rewrite their words.
+ */
+function withShortName(product) {
+  if (!product || typeof product.name !== 'string' || !product.name) return product;
+  if (product.dataSource === 'manual') return { ...product, shortName: product.name };
+  return { ...product, shortName: simplifyProductName(product.name) || product.name };
+}
+
+/**
+ * DATA_SOURCE is an ENUM that predates three of the lookup providers
+ * (open_products_facts, web_search, url_extract). Under STRICT sql_mode an
+ * out-of-range value fails the whole INSERT, the auto-save catch swallows it,
+ * and the item is then created with PRODUCT_ID NULL — losing its image,
+ * description, price and full title over a provenance label nothing renders.
+ */
+const DATA_SOURCES = new Set(['upc_db', 'open_food_facts', 'scrape', 'manual']);
+function storableDataSource(source) {
+  return DATA_SOURCES.has(source) ? source : 'scrape';
+}
+
+/**
+ * VARCHAR limits, enforced at the one choke point every adapter passes
+ * through. web-search returns a scraped <h3> and url-extractor a raw <title>,
+ * neither truncated; UPCitemdb returns a full "A > B > C" category breadcrumb.
+ * A strict-mode 1406 is swallowed exactly the way 1265 is, and costs the item
+ * its whole product record.
+ */
+function clip(value, max) {
+  return typeof value === 'string' && value.length > max ? value.slice(0, max) : value;
+}
 
 let _db = null;
 let _logger = null;
@@ -19,6 +58,9 @@ const ProductsService = {
       id: row.ID,
       barcode: row.BARCODE || null,
       name: row.NAME,
+      shortName: row.DATA_SOURCE === 'manual'
+        ? row.NAME
+        : (simplifyProductName(row.NAME) || row.NAME),
       brand: row.BRAND || null,
       category: row.CATEGORY || null,
       description: row.DESCRIPTION || null,
@@ -70,6 +112,10 @@ const ProductsService = {
       }
     }
 
+    // A local hit comes back through the orchestrator's own mapper, not
+    // _mapProduct, so this is the only place that covers a RE-scan — and a
+    // failed auto-save leaves the raw adapter shape, which needs it too.
+    result.product = withShortName(result.product);
     return result;
   },
 
@@ -80,17 +126,17 @@ const ProductsService = {
            (BARCODE, NAME, BRAND, CATEGORY, DESCRIPTION, SPECS, IMAGE_URL, RETAIL_PRICE, RETAIL_LINKS, DEPRECIATION_RATE, DATA_SOURCE)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
-          data.barcode || null,
-          data.name,
-          data.brand || null,
-          data.category || null,
+          clip(data.barcode, 50) || null,
+          clip(data.name, 255),
+          clip(data.brand, 255) || null,
+          clip(data.category, 100) || null,
           data.description || null,
           data.specs ? JSON.stringify(data.specs) : null,
           data.imageUrl || null,
           data.retailPrice != null ? data.retailPrice : null,
           data.retailLinks ? JSON.stringify(data.retailLinks) : null,
           data.depreciationRate != null ? data.depreciationRate : null,
-          data.dataSource || 'manual',
+          storableDataSource(data.dataSource || 'manual'),
         ]
       );
       return ProductsService.getById(result.insertId);
@@ -191,5 +237,7 @@ const ProductsService = {
     return rows.map(ProductsService._mapProduct);
   },
 };
+
+ProductsService.withShortName = withShortName;
 
 module.exports = ProductsService;

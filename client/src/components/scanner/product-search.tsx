@@ -14,6 +14,8 @@ interface ProductSearchProps {
 interface SearchProduct {
   id?: number;
   name: string;
+  /** The catalogue title with the sales copy taken off — what the item is named. */
+  shortName?: string;
   brand: string;
   category: string;
   barcode: string;
@@ -151,7 +153,9 @@ function ProductCard({ product, onSelect, online }: {
         )}
       </div>
       <div className="flex-1 min-w-0">
-        <p className="text-sm font-semibold text-[var(--color-text)] truncate">{product.name}</p>
+        <p className="text-sm font-semibold text-[var(--color-text)] truncate">
+          {product.shortName || product.name}
+        </p>
         <div className="flex items-center gap-2 mt-0.5 flex-wrap">
           {product.brand && (
             <span className="text-xs text-[var(--color-text-secondary)]">{product.brand}</span>
