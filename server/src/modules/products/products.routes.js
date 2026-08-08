@@ -45,7 +45,10 @@ module.exports = function productsRoutes({ app, db, logger }) {
         }
       }
 
-      success(res, { products, onlineProducts });
+      // Online results never touch _mapProduct — they are raw adapter shapes,
+      // so the short name has to be attached here or adoptProduct gets the
+      // full marketing title back.
+      success(res, { products, onlineProducts: onlineProducts.map(ProductsService.withShortName) });
     }
   );
 
@@ -82,7 +85,7 @@ module.exports = function productsRoutes({ app, db, logger }) {
         const urlExtractor = require('./lookup/url-extractor');
         const product = await urlExtractor.extractFromUrl(url);
         if (!product) return error(res, 'Could not extract product details from URL', 404);
-        success(res, { product });
+        success(res, { product: ProductsService.withShortName(product) });
       } catch (err) {
         logger.warn('URL extraction failed', { url, error: err.message });
         return error(res, `Failed to fetch URL: ${err.message}`, 500);

@@ -60,7 +60,6 @@ async function lookupBarcode(barcode) {
     const html = google.data;
     // Extract product title from Google Shopping result
     const titleMatch = html.match(/<h3[^>]*>([^<]+)<\/h3>/);
-    const priceMatch = html.match(/\$(\d+\.?\d*)/);
     if (titleMatch?.[1]) {
       return {
         barcode,
@@ -69,7 +68,11 @@ async function lookupBarcode(barcode) {
         category: null,
         description: null,
         imageUrl: null,
-        retailPrice: priceMatch?.[1] ? parseFloat(priceMatch[1]) : null,
+        // No price. The only figure available here is the first "$n.nn" in a
+        // search-results page — it belongs to whichever listing rendered first,
+        // not to this product. The item page offers a catalogue price as
+        // something you PAID, and a number this weak must not be in that offer.
+        retailPrice: null,
         dataSource: 'web_search',
       };
     }

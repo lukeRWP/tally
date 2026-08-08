@@ -3,7 +3,10 @@ import { api } from '@/lib/api';
 import { queryKeys } from '@/lib/query-client';
 
 interface LookupResult {
-  source: 'local' | 'upc_db' | 'open_food_facts' | 'not_found';
+  source:
+    | 'local' | 'upc_db' | 'open_food_facts'
+    | 'open_products_facts' | 'web_search' | 'url_extract'
+    | 'not_found';
   product: Record<string, unknown>;
 }
 
