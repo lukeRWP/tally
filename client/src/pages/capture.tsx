@@ -133,6 +133,7 @@ export function Capture() {
   const navigate = useNavigate();
   const [params] = useSearchParams();
   const photoInput = React.useRef<HTMLInputElement>(null);
+  const nameField = React.useRef<HTMLInputElement>(null);
 
   const [recents, setRecents] = React.useState<Destination[]>(readRecents);
   const [dest, setDest] = React.useState<Destination | null>(() => readRecents()[0] ?? null);
@@ -230,19 +231,21 @@ export function Capture() {
 
   async function commit(d: Draft, destination: Destination) {
     const name = d.name.trim() || (d.barcode ? `Item ${d.barcode}` : 'Untitled item');
+    // Without a product row there is nothing to inherit from and no way back —
+    // items has no BARCODE column. Whatever the scan did learn rides along as
+    // the description so it stays searchable (ft_items_search covers NAME and
+    // DESCRIPTION) rather than surviving only by disfiguring the title.
+    const kept = !d.productId
+      ? [d.fullName && d.fullName !== name ? d.fullName : null,
+         d.barcode ? `UPC ${d.barcode}` : null].filter(Boolean).join('\n')
+      : '';
     setBusy('Saving…');
     try {
       const res = await createItem.mutateAsync({
         name,
         containerId: destination.id,
         ...(d.productId ? { productId: d.productId } : {}),
-        // Without a product row there is nothing to inherit from and no way
-        // back — items has no BARCODE column. The full title rides along as the
-        // description so the words stay searchable (ft_items_search covers
-        // NAME and DESCRIPTION) instead of being thrown away with the chop.
-        ...(!d.productId && d.fullName && d.fullName !== name
-          ? { description: d.fullName }
-          : {}),
+        ...(kept ? { description: kept } : {}),
       } as Parameters<typeof createItem.mutateAsync>[0]);
       const created = res?.item;
       if (!created) throw new Error('Create returned no item');
@@ -349,11 +352,18 @@ export function Capture() {
         productId: product?.id,
       };
       setDraft(next);
-      // A barcode says WHAT the thing is, never where it goes. Every item
-      // earns its place by being put somewhere on step 3 — a pinned bin is a
-      // shortcut for answering that question, not a reason to skip it.
-      setPhase('place');
-      if (!product?.name) toast('No match — name it yourself');
+      if (product?.name) {
+        // A barcode says WHAT the thing is, never where it goes. Every item
+        // earns its place by being put somewhere on step 3 — a pinned bin is a
+        // shortcut for answering that question, not a reason to skip it.
+        setPhase('place');
+      } else {
+        // Half the household is not in any catalogue. Telling someone to name
+        // a thing and then taking the field away leaves the barcode standing
+        // in as the title, which is how items end up called "Item 036000…".
+        toast('Not in the catalogue — name it yourself');
+        nameField.current?.focus();
+      }
     } catch {
       setDraft((d) => ({ ...d, barcode: code }));
       setPhase('identify');
@@ -597,7 +607,7 @@ export function Capture() {
 
           {phase === 'identify' && (
             <div className="flex gap-2 shrink-0">
-              <Input placeholder="Name it, or search…" value={draft.name}
+              <Input ref={nameField} placeholder="Name it, or search…" value={draft.name}
                 onChange={(e) => setDraft((d) => ({ ...d, name: e.target.value }))}
                 // Typing a name and pressing enter is one gesture; making the
                 // keyboard's own confirm key do nothing strands anyone who
