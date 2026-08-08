@@ -4,7 +4,7 @@ module.exports = function itemsRoutes({ app, db, logger }) {
 
   const ContainersService = require('./containers.service');
 
-  const { createItem, updateItem, moveItem, searchItems } = require('./items.schema');
+  const { createItem, updateItem, moveItem, searchItems, recentItems } = require('./items.schema');
   const { success, error } = require('../../utils/response');
 
   // ── Middleware ─────────────────────────────────────────────────────────────
@@ -61,6 +61,26 @@ module.exports = function itemsRoutes({ app, db, logger }) {
         condition: value.condition || null,
         status: value.status || null,
       });
+      success(res, { items });
+    }
+  );
+
+  // ── Recently Added ────────────────────────────────────────────────────────
+
+  // GET /api/items/_x_/recent
+  // Must stay above /_x_/:itemId or Express reads "recent" as an item id and
+  // answers 404 forever — the same reason /search and /deleted sit up here.
+  app.get(
+    '/api/items/_x_/recent',
+    app.locals.requireAuth,
+    async (req, res) => {
+      const { error: validationError, value } = recentItems.validate(req.query, { abortEarly: false });
+      if (validationError) {
+        return error(res, 'Validation failed', 422, validationError.details.map(d => d.message));
+      }
+      // There is no single property to resolve here, so no resolvePropertyRole:
+      // the membership join inside the query IS the access check.
+      const items = await ItemsService.getRecent(req.user.id, { limit: value.limit });
       success(res, { items });
     }
   );

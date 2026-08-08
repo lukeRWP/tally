@@ -1,22 +1,16 @@
 import * as React from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, Plus, ChevronDown, Filter, Home as HomeIcon, Package } from 'lucide-react';
+import { Search, ChevronDown, Filter, X } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
+import { ColHead } from '@/components/ui/col-head';
+import { ErrorState } from '@/components/ui/error-state';
 import { Skeleton } from '@/components/ui/skeleton';
-import { PropertyCard } from '@/components/inventory/property-card';
 import { ItemCard } from '@/components/inventory/item-card';
-import { EntityForm } from '@/components/inventory/entity-form';
 import { TagBadge } from '@/components/tags/tag-badge';
-import { useProperties, useCreateProperty, useSearchItems, useAreas, type SearchFilters } from '@/hooks/use-inventory';
-import { useActiveLoans } from '@/hooks/use-lending';
-import { AreaCard } from '@/components/inventory/area-card';
+import { useProperties, useRecentItems, useSearchItems, type SearchFilters } from '@/hooks/use-inventory';
 import { usePropertyTags, type Tag } from '@/hooks/use-tags';
-import { useRecentActivity, type AuditEntry } from '@/hooks/use-notifications';
-import { useAuthStore } from '@/store/auth-store';
-import { toast } from '@/components/ui/toast';
 import { cn } from '@/lib/utils';
-import { daysOverdue } from '@/lib/dates';
 
 // -- AllPropertyTags: fetch tags across all user properties --------------------
 
@@ -75,7 +69,7 @@ function PillButton({
   );
 }
 
-// -- Condition options -------------------------------------------------------
+// -- Filter options ----------------------------------------------------------
 
 const CONDITIONS: Array<{ label: string; value: string | null }> = [
   { label: 'All', value: null },
@@ -85,95 +79,34 @@ const CONDITIONS: Array<{ label: string; value: string | null }> = [
   { label: 'Poor', value: 'poor' },
 ];
 
-// Which activity entries can be tapped through to their entity.
-const ACTIVITY_ROUTES: Record<string, string> = {
-  item: '/item',
-  container: '/container',
-  area: '/area',
-  property: '/property',
-};
-
 const STATUSES: Array<{ label: string; value: string }> = [
   // 'All' first and default: the thing you most need to FIND is often exactly
   // the thing that is lent out — hiding those by default made search return
   // zero results for the very item you were hunting.
+  //
+  // There is no 'Removed' option. Soft-deleted rows always carry DELETED_AT and
+  // search always excludes them, so it could never match anything; deleted
+  // things live in the Recycle Bin.
   { label: 'All', value: 'all' },
   { label: 'Active', value: 'active' },
-  { label: 'Removed', value: 'removed' },
   { label: 'Lent', value: 'lent' },
 ];
 
-// -- Greeting helper ---------------------------------------------------------
-
-function getGreeting(): string {
-  const hour = new Date().getHours();
-  if (hour < 12) return 'Good morning';
-  if (hour < 17) return 'Good afternoon';
-  return 'Good evening';
-}
-
-// -- Activity feed helpers ---------------------------------------------------
-
-function activityDotColor(action: string): string {
-  switch (action) {
-    case 'created':
-      return 'bg-[var(--color-green)]';
-    case 'updated':
-      return 'bg-[var(--color-primary)]';
-    case 'moved':
-      return 'bg-[var(--color-amber)]';
-    case 'deleted':
-      return 'bg-[var(--color-red)]';
-    case 'restored':
-      return 'bg-[var(--color-purple)]';
-    default:
-      return 'bg-[var(--color-text-muted)]';
-  }
-}
-
-
-function activityRelativeTime(dateStr: string): string {
-  const now = Date.now();
-  const then = new Date(dateStr).getTime();
-  const diff = Math.floor((now - then) / 1000);
-  if (diff < 60) return 'just now';
-  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
-  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
-  return `${Math.floor(diff / 86400)}d ago`;
-}
-
-function activityDayLabel(dateStr: string): string {
-  const d = new Date(dateStr);
-  const now = new Date();
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const entry = new Date(d.getFullYear(), d.getMonth(), d.getDate());
-  const diffDays = Math.floor((today.getTime() - entry.getTime()) / 86400000);
-  if (diffDays === 0) return 'Today';
-  if (diffDays === 1) return 'Yesterday';
-  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-}
-
-function activityLabel(entry: AuditEntry): React.ReactNode {
-  // The server's recent-activity query never joins an entity name, so
-  // changes.name is only present when the change payload happened to carry
-  // one. Falling back to the entity TYPE printed it twice — "updated
-  // container container". The id is at least identifying.
-  const name = typeof entry.changes?.name === 'string' ? entry.changes.name : `#${entry.entityId}`;
-  return (
-    <span>
-      {entry.displayName} {entry.action} {entry.entityType} <span className="font-semibold text-[var(--color-text)]">{name}</span>
-    </span>
-  );
-}
-
 // -- Home page ---------------------------------------------------------------
 
+/**
+ * Two questions, one screen. "Where is my X" is the search field at the top,
+ * with the filters that narrow it. "What did we just put away" is the list
+ * underneath, which is what a landing screen can usefully answer when you
+ * arrived without anything particular in mind — and it is what the search
+ * results temporarily stand in front of, never replace.
+ *
+ * Browsing the house by place has a tab of its own, so no property list here.
+ */
 export function Home() {
   const navigate = useNavigate();
-  const { user } = useAuthStore();
   const [searchInput, setSearchInput] = React.useState('');
   const [searchQuery, setSearchQuery] = React.useState('');
-  const [createOpen, setCreateOpen] = React.useState(false);
 
   // Filter state
   const [selectedTagIds, setSelectedTagIds] = React.useState<number[]>([]);
@@ -183,24 +116,23 @@ export function Home() {
   // Filter panel visibility (collapsible on mobile)
   const [filtersOpen, setFiltersOpen] = React.useState(false);
 
-  // Activity feed collapsed/expanded
-  const [activityExpanded, setActivityExpanded] = React.useState(false);
-
   // Tag dropdown
   const [tagDropdownOpen, setTagDropdownOpen] = React.useState(false);
   const tagDropdownRef = React.useRef<HTMLDivElement>(null);
 
-  const { data: properties, isLoading: propertiesLoading } = useProperties();
-  const { data: activeLoans } = useActiveLoans();
-  // Single-property households skip the ceremony of a one-card property list:
-  // Home shows the areas themselves. The property page stays reachable via the
-  // header link for edits and members.
-  const singleProperty = properties && properties.length === 1 ? properties[0] : null;
-  const { data: singlePropertyAreas } = useAreas(singleProperty?.id ?? 0);
-
-  const createProperty = useCreateProperty();
+  const {
+    data: properties,
+    isLoading: propertiesLoading,
+    isError: propertiesError,
+    refetch: refetchProperties,
+  } = useProperties();
   const allTags = useAllPropertyTags(properties);
-  const { data: recentActivity, isLoading: activityLoading } = useRecentActivity();
+  const {
+    data: recentItems,
+    isLoading: recentLoading,
+    isError: recentError,
+    refetch: refetchRecent,
+  } = useRecentItems();
 
   // Build filters for search
   const filters: SearchFilters = {
@@ -209,7 +141,12 @@ export function Home() {
     status: selectedStatus === 'all' ? undefined : selectedStatus,
   };
 
-  const { data: searchResults } = useSearchItems(searchQuery, filters);
+  const {
+    data: searchResults,
+    isLoading: searchLoading,
+    isError: searchError,
+    refetch: refetchSearch,
+  } = useSearchItems(searchQuery, filters);
 
   // Debounce search
   React.useEffect(() => {
@@ -229,12 +166,6 @@ export function Home() {
     return () => document.removeEventListener('mousedown', handleClick);
   }, [tagDropdownOpen]);
 
-  function handleCreateProperty(data: Record<string, unknown>) {
-    return createProperty.mutateAsync(data as { name: string; address?: string; description?: string })
-      .then(() => toast('Property created'))
-      .catch((err: Error) => { toast(err.message); throw err; });
-  }
-
   function toggleTag(tagId: number) {
     setSelectedTagIds((prev) =>
       prev.includes(tagId) ? prev.filter((id) => id !== tagId) : [...prev, tagId],
@@ -245,55 +176,42 @@ export function Home() {
     setSelectedTagIds((prev) => prev.filter((id) => id !== tagId));
   }
 
+  // Drop the settled query as well as the input: waiting out the debounce
+  // before the recent list comes back reads as a hang, not a clear.
+  function clearSearch() {
+    setSearchInput('');
+    setSearchQuery('');
+  }
+
   const selectedTags = allTags.filter((t) => selectedTagIds.includes(t.id));
   const hasActiveFilters =
     selectedTagIds.length > 0 || selectedCondition !== null || selectedStatus !== 'all';
 
-  // Compute stats from properties
-  const totalItems = properties?.reduce((sum, p) => sum + p.itemCount, 0) ?? 0;
-  const totalContainers = properties?.reduce((sum, p) => sum + p.containerCount, 0) ?? 0;
-  const totalAreas = properties?.reduce((sum, p) => sum + p.areaCount, 0) ?? 0;
-
-  // Group activity by day
-  const activityEntries = recentActivity?.slice(0, 10) ?? [];
-  const activityByDay: Array<{ label: string; entries: typeof activityEntries }> = [];
-  let lastDayLabel = '';
-  for (const entry of activityEntries) {
-    const dayLabel = activityDayLabel(entry.createdAt);
-    if (dayLabel !== lastDayLabel) {
-      activityByDay.push({ label: dayLabel, entries: [] });
-      lastDayLabel = dayLabel;
-    }
-    activityByDay[activityByDay.length - 1].entries.push(entry);
-  }
+  // The results stand in front of the recent list rather than replacing it, so
+  // the exit is always the same gesture: empty the field, get the house back.
+  const searching = searchQuery.length >= 1;
 
   return (
-    <div className="flex flex-col gap-5">
-      {/* Hero Greeting */}
-      <div className="animate-fade-up">
-        <h1 className="text-2xl font-extrabold text-[var(--color-text)] tracking-tight">
-          {getGreeting()}, {user?.displayName?.split(' ')[0] ?? 'there'}
-        </h1>
-
-        {/* Stat line — mono ledger figures, matching the property page */}
-        {properties && properties.length > 0 && (
-          <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2 font-mono text-[11px] uppercase tracking-[0.06em] text-[var(--color-text-muted)]">
-            <span><b className="text-[var(--color-text)] font-semibold tabular-nums">{totalItems}</b> items</span>
-            <span><b className="text-[var(--color-text)] font-semibold tabular-nums">{totalContainers}</b> containers</span>
-            <span><b className="text-[var(--color-text)] font-semibold tabular-nums">{totalAreas}</b> areas</span>
-          </div>
-        )}
-      </div>
-
+    <div className="flex flex-col gap-4">
       {/* Search */}
-      <div className="relative animate-fade-up" style={{ animationDelay: '30ms' }}>
+      <div className="relative animate-fade-up">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4.5 h-4.5 text-[var(--color-text-muted)]" />
         <Input
           placeholder="Search items..."
           value={searchInput}
           onChange={(e) => setSearchInput(e.target.value)}
-          className="pl-10 pr-12 h-12 text-base bg-[var(--color-elevated)] focus:shadow-[inset_0_0_0_2px_var(--color-primary)] transition-shadow duration-200"
+          className="pl-10 pr-20 h-12 text-base bg-[var(--color-elevated)] focus:shadow-[inset_0_0_0_2px_var(--color-primary)] transition-shadow duration-200"
         />
+        {searchInput.length > 0 && (
+          <button
+            type="button"
+            onClick={clearSearch}
+            aria-label="Clear search"
+            className="absolute right-10 top-1/2 -translate-y-1/2 flex items-center justify-center w-8 h-8 -mr-1.5 rounded-[var(--radius-sm)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors duration-200"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        )}
         <button
           type="button"
           onClick={() => setFiltersOpen((v) => !v)}
@@ -424,300 +342,128 @@ export function Home() {
         </div>
       )}
 
-      {/* Search Results */}
-      {searchQuery.length >= 1 && searchResults && searchResults.length > 0 && (
-        <section className="animate-fade-up">
-          <h2 className="font-mono text-[11px] uppercase tracking-[0.1em] font-semibold text-[var(--color-text)] mb-2">
-            Items ({searchResults.length})
-          </h2>
-          <div className="flex flex-col">
-            {searchResults.map((item) => (
-              <ItemCard key={item.id} item={item} />
-            ))}
-          </div>
-        </section>
-      )}
+      {searching ? (
+        <section className="flex flex-col animate-fade-up">
+          {/* The way back to the recent list is named on the list that hid it,
+              not just parked in the field's corner. */}
+          <ColHead action="Clear ✕" onAction={clearSearch}>
+            Results{searchResults ? ` · ${searchResults.length}` : ''}
+          </ColHead>
 
-      {searchQuery.length >= 1 && searchResults && searchResults.length === 0 && (
-        <div className="flex flex-col items-center py-8 gap-2 animate-fade-up">
-          <Search className="w-8 h-8 text-[var(--color-text-muted)]" />
-          <p className="text-sm text-[var(--color-text-muted)] text-center">
-            No items found for &ldquo;{searchQuery}&rdquo;
-          </p>
-        </div>
-      )}
-
-      {/* On loan — the things currently out of the house. Only renders when
-          something actually is; Return lives on the Alerts page. */}
-      {activeLoans && activeLoans.length > 0 && (
-        <section className="animate-fade-up" style={{ animationDelay: '50ms' }}>
-          <div className="flex items-center justify-between mb-2">
-            <h2 className="font-mono text-[11px] uppercase tracking-[0.1em] font-semibold text-[var(--color-text)]">
-              On loan ({activeLoans.length})
-            </h2>
-            <button
-              type="button"
-              onClick={() => navigate('/notifications')}
-              className="text-xs text-[var(--color-primary)] hover:underline"
-            >
-              View all
-            </button>
-          </div>
-          <div className="flex flex-col">
-            {activeLoans.slice(0, 3).map((loan) => {
-              const overdueDays = loan.dueAt
-                ? daysOverdue(loan.dueAt)
-                : null;
-              return (
-                <button
-                  key={loan.id}
-                  type="button"
-                  onClick={() => navigate(`/item/${loan.itemId}`)}
-                  className="flex items-center gap-3 py-3 border-b border-[var(--color-rule)] last:border-b-0 text-left transition-colors hover:bg-[var(--color-elevated)]/60 active:bg-[var(--color-elevated)]"
-                >
-                  <span className="flex-1 min-w-0">
-                    <span className="block text-sm font-semibold text-[var(--color-text)] truncate">
-                      {loan.itemName ?? `Item #${loan.itemId}`}
-                    </span>
-                    <span className="block font-mono text-[11px] text-[var(--color-text-muted)] mt-0.5">
-                      {loan.lentTo}
-                      {overdueDays !== null && overdueDays > 0 && (
-                        <span className="text-[var(--color-red)] font-semibold uppercase"> · {overdueDays}d overdue</span>
-                      )}
-                    </span>
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-        </section>
-      )}
-
-      {/* Recent Activity */}
-      <section className="animate-fade-up" style={{ animationDelay: '100ms' }}>
-        <div className="flex items-center justify-between mb-2">
-          <button
-            type="button"
-            onClick={() => setActivityExpanded(!activityExpanded)}
-            className="flex items-center gap-2"
-          >
-            <h2 className="font-mono text-[11px] uppercase tracking-[0.1em] font-semibold text-[var(--color-text)]">Recent Activity</h2>
-            <ChevronDown className={cn(
-              "w-4 h-4 text-[var(--color-text-muted)] transition-transform duration-200",
-              activityExpanded && "rotate-180"
-            )} />
-          </button>
-          <button
-            type="button"
-            onClick={() => navigate('/notifications')}
-            className="text-xs text-[var(--color-primary)] hover:underline transition-colors duration-150"
-          >
-            View all
-          </button>
-        </div>
-
-        {activityLoading && (
-          <div className="flex flex-col gap-2">
-            {[1, 2, 3].map((i) => (
-              <Skeleton key={i} className="h-10 w-full" />
-            ))}
-          </div>
-        )}
-
-        {!activityLoading && (!recentActivity || recentActivity.length === 0) && (
-          <div className="flex flex-col items-center py-6 gap-2">
-            <Package className="w-8 h-8 text-[var(--color-text-muted)]" />
-            <p className="text-sm text-[var(--color-text-muted)] text-center">
-              No recent activity
-            </p>
-          </div>
-        )}
-
-        {!activityLoading && recentActivity && recentActivity.length > 0 && (() => {
-          // Flatten entries for slicing when collapsed
-          const visibleEntries = activityExpanded ? activityEntries : activityEntries.slice(0, 3);
-          const visibleByDay: Array<{ label: string; entries: typeof activityEntries }> = [];
-          let lastDay = '';
-          for (const entry of visibleEntries) {
-            const dayLabel = activityDayLabel(entry.createdAt);
-            if (dayLabel !== lastDay) {
-              visibleByDay.push({ label: dayLabel, entries: [] });
-              lastDay = dayLabel;
-            }
-            visibleByDay[visibleByDay.length - 1].entries.push(entry);
-          }
-
-          return (
-            <div className="flex flex-col gap-0">
-              {visibleByDay.map((group, gIdx) => (
-                <div key={group.label}>
-                  {/* Day divider */}
-                  <div className={cn(
-                    'flex items-center gap-2 py-1.5',
-                    gIdx > 0 && 'mt-2',
-                  )}>
-                    <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">
-                      {group.label}
-                    </span>
-                    <div className="flex-1 h-px bg-[var(--color-border)]" />
-                  </div>
-
-                  {group.entries.map((entry, idx) => (
-                    // Rows navigate to their entity — they were inert spans,
-                    // which made the feed a dead end ("moved WHERE?" answered
-                    // only by hunting). Unknown entity types stay inert.
-                    <div
-                      key={entry.id}
-                      role={ACTIVITY_ROUTES[entry.entityType] ? 'button' : undefined}
-                      tabIndex={ACTIVITY_ROUTES[entry.entityType] ? 0 : undefined}
-                      onClick={() => {
-                        const base = ACTIVITY_ROUTES[entry.entityType];
-                        if (base) navigate(`${base}/${entry.entityId}`);
-                      }}
-                      onKeyDown={(e) => {
-                        const base = ACTIVITY_ROUTES[entry.entityType];
-                        if (base && (e.key === 'Enter' || e.key === ' ')) {
-                          // Space scrolls the page by default — a role=button must eat it.
-                          e.preventDefault();
-                          navigate(`${base}/${entry.entityId}`);
-                        }
-                      }}
-                      className={cn(
-                        'flex items-start gap-3 text-xs py-1.5 animate-fade-up',
-                        ACTIVITY_ROUTES[entry.entityType] &&
-                          'cursor-pointer rounded-[var(--radius-sm)] hover:bg-[var(--color-elevated)] -mx-1 px-1',
-                      )}
-                      style={{ animationDelay: `${idx * 30}ms` }}
-                    >
-                      {/* Colored dot */}
-                      <span className={cn(
-                        'flex-shrink-0 mt-1.5 w-2 h-2 rounded-full',
-                        activityDotColor(entry.action),
-                      )} />
-                      <span className="flex-1 text-[var(--color-text-secondary)] line-clamp-1">
-                        {activityLabel(entry)}
-                      </span>
-                      <span className="flex-shrink-0 text-[var(--color-text-muted)]">
-                        {activityRelativeTime(entry.createdAt)}
-                      </span>
-                    </div>
-                  ))}
-                </div>
+          {searchLoading && (
+            <div className="flex flex-col gap-2 mt-2">
+              {[1, 2, 3].map((i) => (
+                <Skeleton key={i} className="h-14 w-full" />
               ))}
-
-              {!activityExpanded && activityEntries.length > 3 && (
-                <button
-                  type="button"
-                  onClick={() => setActivityExpanded(true)}
-                  className="text-xs text-[var(--color-primary)] mt-2 text-left hover:underline"
-                >
-                  Show {activityEntries.length - 3} more
-                </button>
-              )}
-
-              {activityExpanded && activityEntries.length > 3 && (
-                <button
-                  type="button"
-                  onClick={() => setActivityExpanded(false)}
-                  className="text-xs text-[var(--color-primary)] mt-2 text-left hover:underline"
-                >
-                  Show less
-                </button>
-              )}
             </div>
-          );
-        })()}
-      </section>
+          )}
 
-      {/* Properties */}
-      <section className="animate-fade-up" style={{ animationDelay: '150ms' }}>
-        <div className="flex items-center justify-between mb-2">
-          <h2 className="font-mono text-[11px] uppercase tracking-[0.1em] font-semibold text-[var(--color-text)]">
-            {singleProperty ? singleProperty.name : 'Your Properties'}
-          </h2>
-          <div className="flex items-center gap-3">
-            {singleProperty ? (
-              <button
-                type="button"
-                onClick={() => navigate(`/property/${singleProperty.id}`)}
-                className="text-xs text-[var(--color-primary)] hover:underline"
-              >
-                View property
-              </button>
+          {/* A search that fell over and a search that matched nothing are the
+              same blank screen otherwise, and only one of them is worth
+              retyping the query for. */}
+          {searchError && (
+            <ErrorState message="Couldn't run that search." onRetry={() => refetchSearch()} />
+          )}
+
+          {!searchLoading && searchResults && searchResults.length === 0 && (
+            <div className="flex flex-col items-center gap-3 py-10 text-center">
+              <p className="font-mono text-[11px] uppercase tracking-[0.1em] text-[var(--color-text-muted)]">
+                Nothing matched
+              </p>
+              <p className="max-w-xs text-sm text-[var(--color-text-secondary)]">
+                No items for &ldquo;{searchQuery}&rdquo;
+                {hasActiveFilters && ' with these filters'}.
+              </p>
+              <Button variant="outline" size="sm" onClick={clearSearch}>
+                Back to recent
+              </Button>
+            </div>
+          )}
+
+          {searchResults?.map((item) => (
+            <ItemCard key={item.id} item={item} />
+          ))}
+        </section>
+      ) : (
+        <section className="flex flex-col animate-fade-up">
+          <ColHead>Recently added{recentItems?.length ? ` · ${recentItems.length}` : ''}</ColHead>
+
+          {recentLoading && (
+            <div className="flex flex-col gap-2 mt-2">
+              {[1, 2, 3].map((i) => (
+                <Skeleton key={i} className="h-14 w-full" />
+              ))}
+            </div>
+          )}
+
+          {/* "You own nothing" is a worse lie on this screen than anywhere
+              else — it is the one people open to reassure themselves the
+              inventory is still there. */}
+          {recentError && (
+            <ErrorState message="Couldn't load your recent items." onRetry={() => refetchRecent()} />
+          )}
+
+          {/* Which empty state is true depends on the property list, and that
+              request counts the whole house so it lands well after this one.
+              Guessing from a list that has not arrived tells a house full of
+              places that it has none. */}
+          {!recentLoading && !recentError && recentItems && recentItems.length === 0 && (
+            propertiesLoading ? (
+              <div className="flex flex-col gap-2 mt-2">
+                {[1, 2].map((i) => (
+                  <Skeleton key={i} className="h-14 w-full" />
+                ))}
+              </div>
+            ) : propertiesError ? (
+              <ErrorState
+                message="Couldn't check what's set up here."
+                onRetry={() => refetchProperties()}
+              />
             ) : (
-              properties && properties.length > 0 && (
-                <span className="text-xs font-medium text-[var(--color-text-muted)] bg-[var(--color-elevated)] px-2 py-0.5 rounded-full">
-                  {properties.length} properties
-                </span>
-              )
-            )}
-            {/* Property creation demoted from a hero Quick Action to a quiet
-                link — it happens roughly once per house. */}
-            <button
-              type="button"
-              onClick={() => setCreateOpen(true)}
-              className="text-xs text-[var(--color-text-muted)] hover:text-[var(--color-primary)]"
-            >
-              + Add
-            </button>
-          </div>
-        </div>
+              <EmptyHouse properties={properties} onGo={(path) => navigate(path)} />
+            )
+          )}
 
-        {propertiesLoading && (
-          <div className="flex flex-col gap-2">
-            {[1, 2, 3].map((i) => (
-              <Skeleton key={i} className="h-20 w-full" />
-            ))}
-          </div>
-        )}
+          {!recentError && recentItems?.map((item) => (
+            <ItemCard key={item.id} item={item} />
+          ))}
+        </section>
+      )}
+    </div>
+  );
+}
 
-        {properties && properties.length === 0 && (
-          <div className="flex flex-col items-center py-10 gap-3 animate-fade-up">
-            <div className="w-14 h-14 rounded-full bg-[var(--color-primary-bg)] flex items-center justify-center">
-              <HomeIcon className="w-7 h-7 text-[var(--color-primary)]" />
-            </div>
-            <div className="text-center">
-              <p className="text-base font-bold text-[var(--color-text)]">No properties yet</p>
-              <p className="text-xs text-[var(--color-text-muted)] mt-0.5">Create a property to start organizing your inventory</p>
-            </div>
-            <Button size="sm" onClick={() => setCreateOpen(true)}>
-              <Plus className="w-4 h-4" />
-              Create Property
-            </Button>
-          </div>
-        )}
+/**
+ * Filing a thing needs a bin, a bin needs an area, an area needs a property.
+ * An empty list names the missing link in that chain and sends you to the page
+ * that makes it — the camera flow cannot finish against a destination picker
+ * with nothing in it, so "tap Add" is only true once a bin exists.
+ */
+function EmptyHouse({
+  properties,
+  onGo,
+}: {
+  properties: Array<{ containerCount: number }> | undefined;
+  onGo: (path: string) => void;
+}) {
+  const hasProperty = (properties?.length ?? 0) > 0;
+  const hasBin = (properties ?? []).some((p) => p.containerCount > 0);
 
-        {singleProperty ? (
-          // The one-property household is the actual household: a list with a
-          // single card that must be tapped through conveys nothing. Land on
-          // the areas directly.
-          singlePropertyAreas && singlePropertyAreas.length > 0 ? (
-            <div className="flex flex-col">
-              {singlePropertyAreas.map((area) => (
-                <AreaCard key={area.id} area={area} />
-              ))}
-            </div>
-          ) : (
-            <p className="text-xs text-[var(--color-text-muted)] py-4 text-center">
-              No areas yet — add one from the property page.
-            </p>
-          )
-        ) : properties && properties.length > 0 ? (
-          <div className="flex flex-col">
-            {properties.map((property, idx) => (
-              <PropertyCard key={property.id} property={property} index={idx} />
-            ))}
-          </div>
-        ) : null}
-      </section>
-
-      <EntityForm
-        open={createOpen}
-        onOpenChange={setCreateOpen}
-        type="property"
-        onSubmit={handleCreateProperty}
-        isPending={createProperty.isPending}
-      />
+  return (
+    <div className="flex flex-col items-center gap-3 py-12 text-center">
+      <p className="font-mono text-[11px] uppercase tracking-[0.1em] text-[var(--color-text-muted)]">
+        {!hasProperty ? 'No property yet' : !hasBin ? 'Nowhere to put things' : 'Nothing filed yet'}
+      </p>
+      <p className="max-w-xs text-sm text-[var(--color-text-secondary)]">
+        {!hasProperty
+          ? 'Start with the building — a house, a flat, a lock-up. Areas and bins hang off it.'
+          : !hasBin
+            ? 'Add an area and a bin, then things have somewhere to land.'
+            : 'Tap Add and photograph the first thing.'}
+      </p>
+      <Button size="sm" onClick={() => onGo(hasBin ? '/capture' : '/areas')}>
+        {hasBin ? 'Add an item' : 'Set up a place'}
+      </Button>
     </div>
   );
 }

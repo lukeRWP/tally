@@ -187,6 +187,18 @@ export function useItem(id: number) {
   });
 }
 
+/**
+ * The newest items across every property the user can see — the whole of the
+ * home screen's list.
+ */
+export function useRecentItems(limit = 25) {
+  return useQuery({
+    queryKey: queryKeys.items.recent(limit),
+    queryFn: () => api.get<{ items: Item[] }>(`/api/items/_x_/recent?limit=${limit}`),
+    select: (data) => data.items,
+  });
+}
+
 export function useCreateItem() {
   const qc = useQueryClient();
   return useMutation({

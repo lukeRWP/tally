@@ -41,6 +41,10 @@ export const queryKeys = {
     byContainer: (containerId: number) => [...queryKeys.items.all, 'byContainer', containerId] as const,
     detail: (id: number) => [...queryKeys.items.all, 'detail', id] as const,
     search: (q: string, filters?: unknown) => [...queryKeys.items.all, 'search', q, filters] as const,
+    // Nested under items.all so the prefix-matching invalidation every item
+    // mutation already performs reaches it — a newly added thing has to appear
+    // at the top of Home without anyone remembering to wire it up.
+    recent: (limit: number) => [...queryKeys.items.all, 'recent', limit] as const,
   },
   auth: {
     session: ['auth', 'session'] as const,

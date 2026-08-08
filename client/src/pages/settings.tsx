@@ -1,17 +1,19 @@
 import * as React from 'react';
-import { LogOut, Sun, Moon, Monitor, Trash2, Link2, Copy, Tags, ChevronRight, ChevronDown, BarChart2 } from 'lucide-react';
+import { LogOut, Sun, Moon, Monitor, Trash2, Copy } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
-import { Card } from '@/components/ui/card';
 import { TitleBar } from '@/components/ui/title-bar';
+import { ColHead } from '@/components/ui/col-head';
+import { RuledRow } from '@/components/ui/ruled-row';
+import { Skeleton } from '@/components/ui/skeleton';
 import { useAuthStore } from '@/store/auth-store';
 import { useProperties } from '@/hooks/use-inventory';
+import { PropertyChips } from '@/components/inventory/property-chips';
 import { TagManager } from '@/components/tags/tag-manager';
-import { NotificationPrefsRedesigned } from '@/components/notifications/notification-prefs-redesigned';
+import { NotificationPrefs } from '@/components/notifications/notification-prefs';
 import { PrinterSettings } from '@/components/print/printer-settings';
 import { useMyShareLinks, useRevokeShareLink } from '@/hooks/use-sharing';
 import { toast } from '@/components/ui/toast';
-import { cn } from '@/lib/utils';
 
 function formatDate(dateStr: string) {
   return new Date(dateStr).toLocaleDateString(undefined, {
@@ -21,50 +23,11 @@ function formatDate(dateStr: string) {
   });
 }
 
-// -- Collapsible Settings Section -----------------------------------------------
-
-function CollapsibleSettingsSection({
-  title,
-  defaultOpen = true,
-  children,
-  animationDelay,
-}: {
-  title: string;
-  defaultOpen?: boolean;
-  children: React.ReactNode;
-  animationDelay?: string;
-}) {
-  const [open, setOpen] = React.useState(defaultOpen);
-
-  return (
-    <Card animationDelay={animationDelay}>
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="flex items-center w-full gap-2 text-left cursor-pointer"
-      >
-        <h2 className="font-mono text-[11px] uppercase tracking-[0.1em] font-semibold text-[var(--color-text)] flex-1">{title}</h2>
-        {open ? (
-          <ChevronDown className="w-4 h-4 text-[var(--color-text-muted)]" />
-        ) : (
-          <ChevronRight className="w-4 h-4 text-[var(--color-text-muted)]" />
-        )}
-      </button>
-      {open && <div className="mt-3">{children}</div>}
-    </Card>
-  );
-}
-
 // -- Share Links Section --------------------------------------------------------
 
 function ShareLinksSection() {
-  const { data: links, isLoading } = useMyShareLinks();
+  const { data: allLinks = [], isLoading } = useMyShareLinks();
   const revokeLink = useRevokeShareLink();
-
-  const allLinks = (links as unknown as {
-    id: number; token: string; entityType: string; entityId: number;
-    url: string; expiresAt: string; createdAt: string;
-  }[] | undefined) ?? [];
 
   function handleCopy(url: string) {
     navigator.clipboard.writeText(url).then(
@@ -81,58 +44,52 @@ function ShareLinksSection() {
   }
 
   return (
-    <Card animationDelay="300ms">
-      <h2 className="font-mono text-[11px] uppercase tracking-[0.1em] font-semibold text-[var(--color-text)] mb-3 flex items-center gap-2">
-        <Link2 className="w-4 h-4 text-[var(--color-primary)]" />
-        Share Links
-      </h2>
+    <section className="flex flex-col animate-fade-up" style={{ animationDelay: '160ms' }}>
+      <ColHead>Share links · {allLinks.length}</ColHead>
 
-      {isLoading && (
-        <p className="text-xs text-[var(--color-text-muted)]">Loading...</p>
-      )}
+      {isLoading && <Skeleton className="h-14 w-full mt-2" />}
 
       {!isLoading && allLinks.length === 0 && (
-        <p className="text-xs text-[var(--color-text-muted)]">No active share links.</p>
+        <p className="font-mono text-[11px] uppercase tracking-[0.06em] text-[var(--color-text-muted)] py-3">
+          No active share links
+        </p>
       )}
 
-      {!isLoading && allLinks.length > 0 && (
-        <div className="flex flex-col gap-2">
-          {allLinks.map((link) => (
-            <div
-              key={link.id}
-              className="flex items-start gap-2 p-2.5 rounded-[var(--radius-md)] bg-[var(--color-elevated)] transition-all duration-150"
-            >
-              <div className="flex-1 min-w-0">
-                <p className="text-xs font-medium text-[var(--color-text)] capitalize">
-                  {link.entityType}
-                </p>
-                <p className="text-[10px] font-mono text-[var(--color-text-muted)] truncate">{link.url}</p>
-                <p className="text-[10px] text-[var(--color-text-muted)] mt-0.5">
-                  Expires {formatDate(link.expiresAt)}
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => handleCopy(link.url)}
-                className="p-1.5 rounded-[var(--radius-sm)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-card)] transition-all duration-150 shrink-0"
-                title="Copy link"
-              >
-                <Copy className="w-3.5 h-3.5" />
-              </button>
-              <button
-                type="button"
-                onClick={() => handleRevoke(link.id)}
-                disabled={revokeLink.isPending}
-                className="p-1.5 rounded-[var(--radius-sm)] text-[var(--color-red)] hover:bg-[var(--color-red-bg)] transition-all duration-150 shrink-0 disabled:opacity-40"
-                title="Revoke link"
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-              </button>
-            </div>
-          ))}
+      {allLinks.map((link) => (
+        <div
+          key={link.id}
+          className="flex items-center gap-2 min-h-[44px] py-2 border-b border-[var(--color-rule)] last:border-b-0"
+        >
+          <span className="min-w-0 flex-1">
+            <span className="block text-sm font-semibold capitalize text-[var(--color-text)]">{link.entityType}</span>
+            <span className="block truncate font-mono text-[11px] text-[var(--color-text-muted)]">{link.url}</span>
+            <span className="block font-mono text-[10px] uppercase tracking-[0.06em] text-[var(--color-text-muted)]">
+              Expires {formatDate(link.expiresAt)}
+            </span>
+          </span>
+          {/* Named, not titled — a tooltip never appears on touch, so on a phone
+              these two icons would be the same unlabelled square. */}
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label={`Copy the ${link.entityType} share link`}
+            onClick={() => handleCopy(link.url)}
+          >
+            <Copy className="w-4 h-4" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label={`Revoke the ${link.entityType} share link`}
+            disabled={revokeLink.isPending}
+            onClick={() => handleRevoke(link.id)}
+            className="text-[var(--color-red)] hover:bg-[var(--color-red)] hover:text-white"
+          >
+            <Trash2 className="w-4 h-4" />
+          </Button>
         </div>
-      )}
-    </Card>
+      ))}
+    </section>
   );
 }
 
@@ -141,20 +98,16 @@ function ShareLinksSection() {
 export function SettingsPage() {
   const navigate = useNavigate();
   const { user, theme, setTheme, logout } = useAuthStore();
-  const { data: propertiesData } = useProperties();
-  const properties = (propertiesData as unknown as { properties: { id: number; name: string }[] })?.properties
-    ?? (propertiesData as unknown as { id: number; name: string }[])
-    ?? [];
+  const { data: properties = [] } = useProperties();
 
-  // Tag management -- property selector
-  const [selectedTagPropertyId, setSelectedTagPropertyId] = React.useState<number>(0);
+  const [selectedPropertyId, setSelectedPropertyId] = React.useState<number>(0);
 
   // Auto-select first property
   React.useEffect(() => {
-    if (!selectedTagPropertyId && properties.length > 0) {
-      setSelectedTagPropertyId(properties[0].id);
+    if (!selectedPropertyId && properties.length > 0) {
+      setSelectedPropertyId(properties[0].id);
     }
-  }, [properties, selectedTagPropertyId]);
+  }, [properties, selectedPropertyId]);
 
   const themeOptions = [
     { key: 'light' as const, icon: Sun, label: 'Light' },
@@ -163,146 +116,116 @@ export function SettingsPage() {
   ];
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-5">
       <h1 className="animate-fade-up"><TitleBar>Settings</TitleBar></h1>
 
+      {/* Tags and printers are both property-scoped, so the selector belongs to
+          the page: parked inside either section it silently governs the other. */}
+      <PropertyChips
+        properties={properties}
+        value={selectedPropertyId}
+        onChange={setSelectedPropertyId}
+      />
+
       {/* Desktop: 2-column layout / Mobile: single column */}
-      <div className="lg:grid lg:grid-cols-2 lg:gap-6">
+      <div className="lg:grid lg:grid-cols-2 lg:gap-8">
         {/* Left column */}
-        <div className="flex flex-col gap-4">
-          {/* Profile -- collapsed by default */}
-          <CollapsibleSettingsSection title="Profile" defaultOpen={false} animationDelay="0ms">
+        <div className="flex flex-col gap-5">
+          {/* Profile */}
+          <section className="flex flex-col animate-fade-up">
+            <ColHead>Profile</ColHead>
             {user ? (
-              <div className="flex items-center gap-4">
+              <div className="flex items-center gap-3 py-3">
                 {user.avatarUrl ? (
+                  // alt="" — the display name is already read out alongside it.
                   <img
                     src={user.avatarUrl}
-                    alt={user.displayName}
-                    className="w-14 h-14 rounded-full object-cover ring-2 ring-[var(--color-border)]"
+                    alt=""
+                    className="w-10 h-10 rounded-[var(--radius-sm)] object-cover border border-[var(--color-rule)]"
                   />
                 ) : (
-                  <div className="w-14 h-14 rounded-full bg-[var(--color-primary-bg)] flex items-center justify-center text-lg font-bold text-[var(--color-primary)]">
+                  <span className="w-10 h-10 rounded-[var(--radius-sm)] border border-[var(--color-text)] flex items-center justify-center font-mono text-sm font-bold text-[var(--color-text)]">
                     {user.displayName.charAt(0).toUpperCase()}
-                  </div>
+                  </span>
                 )}
-                <div>
-                  <p className="font-mono text-[11px] uppercase tracking-[0.1em] font-semibold text-[var(--color-text)]">{user.displayName}</p>
-                  <p className="text-xs text-[var(--color-text-muted)]">{user.email}</p>
-                </div>
+                <span className="min-w-0">
+                  <span className="block truncate text-sm font-semibold text-[var(--color-text)]">{user.displayName}</span>
+                  <span className="block truncate font-mono text-[11px] text-[var(--color-text-muted)]">{user.email}</span>
+                </span>
               </div>
             ) : (
-              <p className="text-sm text-[var(--color-text-muted)]">Not signed in</p>
+              <p className="font-mono text-[11px] uppercase tracking-[0.06em] text-[var(--color-text-muted)] py-3">
+                Not signed in
+              </p>
             )}
-          </CollapsibleSettingsSection>
+          </section>
 
-          {/* Theme -- expanded by default */}
-          <Card animationDelay="50ms">
-            <h2 className="font-mono text-[11px] uppercase tracking-[0.1em] font-semibold text-[var(--color-text)] mb-3">Appearance</h2>
-            <div className="flex gap-1 p-1 rounded-[var(--radius-md)] bg-[var(--color-elevated)]">
+          {/* Appearance — a setting, not a filter, so it commits with squared
+              buttons rather than pills. */}
+          <section className="flex flex-col gap-2 animate-fade-up" style={{ animationDelay: '40ms' }}>
+            <ColHead>Appearance</ColHead>
+            <div className="flex gap-2 pt-1">
               {themeOptions.map(({ key, icon: Icon, label }) => (
-                <button
+                <Button
                   key={key}
-                  type="button"
+                  size="sm"
+                  variant={theme === key ? 'default' : 'outline'}
+                  aria-pressed={theme === key}
                   onClick={() => setTheme(key)}
-                  className={cn(
-                    'flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-[var(--radius-sm)] text-sm font-medium transition-all duration-200 cursor-pointer',
-                    theme === key
-                      ? 'bg-[var(--color-card)] text-[var(--color-primary)] shadow-sm'
-                      : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]',
-                  )}
+                  className="flex-1"
                 >
                   <Icon className="w-4 h-4" />
                   {label}
-                </button>
+                </Button>
               ))}
             </div>
-          </Card>
+          </section>
 
-          {/* Data — always visible. The Recycle Bin was buried in a collapsed
-              accordion while every delete in the app funnels into it; and
-              Reports lives here now instead of holding a permanent nav slot
-              for a few-times-a-year export. */}
-          <Card animationDelay="350ms">
-            <h2 className="font-mono text-[11px] uppercase tracking-[0.1em] font-semibold text-[var(--color-text)] mb-3">Data</h2>
-            <div className="flex flex-col gap-1">
-              <button
-                type="button"
-                onClick={() => navigate('/recycle-bin')}
-                className="flex items-center gap-2 text-sm text-[var(--color-text)] hover:text-[var(--color-primary)] transition-all duration-200 py-1.5"
-              >
-                <Trash2 className="w-4 h-4" />
-                Recycle Bin
-              </button>
-              <button
-                type="button"
-                onClick={() => navigate('/reports')}
-                className="flex items-center gap-2 text-sm text-[var(--color-text)] hover:text-[var(--color-primary)] transition-all duration-200 py-1.5"
-              >
-                <BarChart2 className="w-4 h-4" />
-                Reports &amp; Exports
-              </button>
-            </div>
-          </Card>
+          {/* Every delete in the app funnels into the recycle bin, and this is
+              its only entry point, so it sits on the page rather than behind a
+              disclosure. */}
+          <section className="flex flex-col animate-fade-up" style={{ animationDelay: '80ms' }}>
+            <ColHead>Data</ColHead>
+            <RuledRow
+              onNavigate={() => navigate('/recycle-bin')}
+              leading={<Trash2 className="w-4 h-4 shrink-0 text-[var(--color-text-muted)]" />}
+              title="Recycle bin"
+              meta="Deleted things, restorable for 30 days"
+            />
+          </section>
         </div>
 
         {/* Right column */}
-        <div className="flex flex-col gap-4 mt-4 lg:mt-0">
-          {/* Tag Management with property pill selector */}
+        <div className="flex flex-col gap-5 mt-5 lg:mt-0">
+          {/* Tags */}
           {properties.length > 0 && (
-            <Card animationDelay="100ms">
-              <h2 className="font-mono text-[11px] uppercase tracking-[0.1em] font-semibold text-[var(--color-text)] mb-3 flex items-center gap-2">
-                <Tags className="w-4 h-4 text-[var(--color-primary)]" />
-                Tag Management
-              </h2>
-
-              {/* Property pill bar */}
-              <div className="flex gap-1.5 mb-4 overflow-x-auto pb-1 -mx-1 px-1">
-                {properties.map((property) => (
-                  <button
-                    key={property.id}
-                    type="button"
-                    onClick={() => setSelectedTagPropertyId(property.id)}
-                    className={cn(
-                      'px-3 py-1 rounded-full text-xs font-medium whitespace-nowrap transition-all duration-200 shrink-0 border',
-                      selectedTagPropertyId === property.id
-                        ? 'bg-[var(--color-primary)] text-white border-[var(--color-primary)]'
-                        : 'bg-transparent text-[var(--color-text-secondary)] border-[var(--color-border)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)]',
-                    )}
-                  >
-                    {property.name}
-                  </button>
-                ))}
-              </div>
-
-              {/* Show only selected property's tags */}
-              {selectedTagPropertyId > 0 && (
-                <TagManager propertyId={selectedTagPropertyId} />
-              )}
-            </Card>
+            <section className="flex flex-col gap-2 animate-fade-up" style={{ animationDelay: '40ms' }}>
+              <ColHead>Tags</ColHead>
+              {selectedPropertyId > 0 && <TagManager propertyId={selectedPropertyId} />}
+            </section>
           )}
 
-          {/* Notifications with toggle switches */}
-          <Card animationDelay="200ms">
-            <h2 className="font-mono text-[11px] uppercase tracking-[0.1em] font-semibold text-[var(--color-text)] mb-3">Notifications</h2>
-            <NotificationPrefsRedesigned />
-          </Card>
+          {/* Notifications */}
+          <section className="flex flex-col animate-fade-up" style={{ animationDelay: '80ms' }}>
+            <ColHead>Notifications</ColHead>
+            <NotificationPrefs />
+          </section>
 
           {/* Printing -- printer registration, loaded roll, job queue */}
-          {selectedTagPropertyId > 0 && (
-            <Card animationDelay="250ms">
-              <h2 className="font-mono text-[11px] uppercase tracking-[0.1em] font-semibold text-[var(--color-text)] mb-3">Printing</h2>
-              <PrinterSettings propertyId={selectedTagPropertyId} />
-            </Card>
+          {selectedPropertyId > 0 && (
+            <section className="flex flex-col gap-3 animate-fade-up" style={{ animationDelay: '120ms' }}>
+              <ColHead>Printing</ColHead>
+              <PrinterSettings propertyId={selectedPropertyId} />
+            </section>
           )}
 
-          {/* Share Links */}
           <ShareLinksSection />
         </div>
       </div>
 
       {/* Logout -- full width below */}
-      <div className="border-t border-[var(--color-border)]/50" />
-      <Button variant="destructive" onClick={logout} className="w-full lg:max-w-xs animate-fade-up" style={{ animationDelay: '400ms' }}>
+      <div className="border-t border-[var(--color-rule)]" />
+      <Button variant="destructive" onClick={logout} className="w-full lg:max-w-xs animate-fade-up" style={{ animationDelay: '200ms' }}>
         <LogOut className="w-4 h-4" />
         Sign Out
       </Button>

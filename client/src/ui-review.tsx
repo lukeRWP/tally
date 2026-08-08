@@ -89,6 +89,9 @@ const routes: [RegExp, () => unknown][] = [
   [/\/api\/containers\/_x_\/\d+/, () => ({ container: containers[0] })],
   [/\/api\/items\/_x_\/container\/\d+/, () => ({ items })],
   [/\/api\/items\/_x_\/search/, () => ({ items })],
+  // Ahead of the /\d+/ pattern for the same reason the real router registers it
+  // first: "recent" is not an item id.
+  [/\/api\/items\/_x_\/recent/, () => ({ items })],
   [/\/api\/items\/_x_\/\d+/, () => ({ item: items[0] })],
   [/\/api\/audit\/_x_\/recent/, () => ({ entries: activity })],
   [/\/api\/lending\/_x_\/active/, () => ({ active: loans })],

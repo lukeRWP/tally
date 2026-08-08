@@ -7,6 +7,7 @@ import { ShareView } from '@/pages/share-view';
 
 // Lazy load pages to keep initial bundle small
 import { Home } from '@/pages/home';
+import { AreasPage } from '@/pages/areas';
 import { PropertyDetail } from '@/pages/property-detail';
 import { AreaDetail } from '@/pages/area-detail';
 import { ContainerDetail } from '@/pages/container-detail';
@@ -30,9 +31,11 @@ export function App() {
       <Route path="/share/:token" element={<ShareView />} />
       <Route element={<RootLayout />}>
         <Route index element={<Home />} />
-        {/* The Inventory tab was a strict subset of Home; the route survives
-            as a redirect so old links and muscle memory keep working. */}
-        <Route path="/inventory" element={<Navigate to="/" replace />} />
+        {/* Areas is the property grid, so /inventory names the same screen; it
+            redirects rather than 404s to keep old links and muscle memory
+            working. */}
+        <Route path="/inventory" element={<Navigate to="/areas" replace />} />
+        <Route path="/areas" element={<AreasPage />} />
         <Route path="/search" element={<SearchPage />} />
         <Route path="/property/:propertyId" element={<PropertyDetail />} />
         <Route path="/area/:areaId" element={<AreaDetail />} />

@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Pencil, Trash2, Check, X, Plus, Tags } from 'lucide-react';
+import { Pencil, Trash2, Check, X, Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { TagBadge } from './tag-badge';
@@ -99,27 +99,27 @@ export function TagManager({ propertyId }: TagManagerProps) {
   }
 
   if (isLoading) {
-    return <p className="text-xs text-[var(--color-text-muted)]">Loading tags...</p>;
+    return (
+      <p className="font-mono text-[11px] uppercase tracking-[0.06em] text-[var(--color-text-muted)] py-3">
+        Loading tags
+      </p>
+    );
   }
 
   return (
     <div className="flex flex-col gap-3">
       {/* Empty state */}
       {tagList.length === 0 && !createOpen && (
-        <div className="flex flex-col items-center py-6 gap-3 animate-fade-up">
-          <div className="w-12 h-12 rounded-full bg-[var(--color-primary-bg)] flex items-center justify-center">
-            <Tags className="w-6 h-6 text-[var(--color-primary)]" />
-          </div>
-          <div className="text-center">
-            <p className="text-sm font-semibold text-[var(--color-text)]">No tags yet</p>
-            <p className="text-xs text-[var(--color-text-muted)] mt-0.5">Create your first tag to start organizing</p>
-          </div>
+        <div className="flex flex-col items-center gap-3 py-8 animate-fade-up">
+          <p className="font-mono text-[11px] uppercase tracking-[0.06em] text-[var(--color-text-muted)] text-center">
+            No tags yet
+          </p>
           <Button
             type="button"
             size="sm"
             onClick={() => setCreateOpen(true)}
           >
-            <Plus className="w-3.5 h-3.5" />
+            <Plus className="w-4 h-4" />
             Create Tag
           </Button>
         </div>
@@ -127,16 +127,16 @@ export function TagManager({ propertyId }: TagManagerProps) {
 
       {/* Tag list */}
       {tagList.length > 0 && (
-        <div className="flex flex-col gap-2">
+        <div className="flex flex-col">
           {tagList.map((tag, idx) => (
             <div
               key={tag.id}
-              className="animate-fade-up rounded-[var(--radius-lg)] bg-[var(--color-elevated)] overflow-hidden transition-all duration-200"
+              className="animate-fade-up border-b border-[var(--color-rule)] last:border-b-0"
               style={{ animationDelay: `${idx * 30}ms` }}
             >
               {editingId === tag.id ? (
                 /* Inline edit mode */
-                <div className="p-3 flex flex-col gap-3 animate-scale-in">
+                <div className="py-3 flex flex-col gap-3 animate-scale-in">
                   <Input
                     value={editState.name}
                     onChange={(e) => setEditState((s) => ({ ...s, name: e.target.value }))}
@@ -188,7 +188,7 @@ export function TagManager({ propertyId }: TagManagerProps) {
                 </div>
               ) : deletingId === tag.id ? (
                 /* Inline delete confirmation */
-                <div className="p-3 flex items-center gap-3 animate-scale-in bg-[var(--color-red-bg)]">
+                <div className="px-2 py-3 flex items-center gap-3 animate-scale-in bg-[var(--color-red-bg)]">
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium text-[var(--color-text)]">
                       Delete &ldquo;{tag.name}&rdquo;?
@@ -221,7 +221,7 @@ export function TagManager({ propertyId }: TagManagerProps) {
                 </div>
               ) : (
                 /* Display row */
-                <div className="flex items-center gap-3 p-3">
+                <div className="flex items-center gap-3 min-h-[44px] py-2">
                   <div
                     className="w-4 h-4 rounded-[var(--radius-sm)] shrink-0"
                     style={{ backgroundColor: tag.color }}
@@ -260,7 +260,7 @@ export function TagManager({ propertyId }: TagManagerProps) {
         <button
           type="button"
           onClick={() => setCreateOpen(true)}
-          className="flex items-center justify-center gap-2 w-full py-2.5 border border-dashed border-[var(--color-border)] rounded-[var(--radius-lg)] text-sm font-medium text-[var(--color-primary)] hover:bg-[var(--color-primary-bg)] hover:border-[var(--color-primary)]/30 transition-all duration-200 cursor-pointer"
+          className="flex items-center justify-center gap-2 w-full py-2.5 border border-dashed border-[var(--color-rule)] rounded-[var(--radius-sm)] font-mono text-[11px] uppercase tracking-[0.08em] text-[var(--color-primary)] hover:bg-[var(--color-elevated)] transition-colors cursor-pointer"
         >
           <Plus className="w-4 h-4" />
           New Tag
@@ -268,9 +268,9 @@ export function TagManager({ propertyId }: TagManagerProps) {
       )}
 
       {createOpen && (
-        <div className="border border-[var(--color-border)] rounded-[var(--radius-lg)] p-4 flex flex-col gap-3 bg-[var(--color-card)] animate-scale-in">
+        <div className="border border-[var(--color-rule)] rounded-[var(--radius-sm)] p-3 flex flex-col gap-3 bg-transparent animate-scale-in">
           <div className="flex items-center justify-between">
-            <p className="text-sm font-semibold text-[var(--color-text)]">New Tag</p>
+            <p className="font-mono text-[11px] uppercase tracking-[0.1em] font-bold text-[var(--color-text)]">New Tag</p>
             <button
               type="button"
               onClick={() => { setCreateOpen(false); setNewName(''); }}
@@ -301,8 +301,8 @@ export function TagManager({ propertyId }: TagManagerProps) {
           />
 
           {/* Color palette strip */}
-          <div>
-            <p className="text-xs font-medium text-[var(--color-text-muted)] mb-2">Color</p>
+          <div className="flex flex-col gap-2">
+            <p className="font-mono text-[10px] uppercase tracking-[0.1em] text-[var(--color-text-muted)]">Color</p>
             <div className="flex gap-2 items-center">
               {PRESET_COLORS.map((color) => (
                 <button
