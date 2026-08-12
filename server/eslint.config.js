@@ -23,6 +23,9 @@ module.exports = [
         URL: 'readonly',
         URLSearchParams: 'readonly',
         fetch: 'readonly',
+        // Node 16+ global, same tier as fetch above. Used to abort an upstream
+        // request when the browser hangs up mid-flight.
+        AbortController: 'readonly',
       },
     },
     rules: {

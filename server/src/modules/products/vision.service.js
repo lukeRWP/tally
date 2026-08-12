@@ -16,9 +16,10 @@ const OFF     = Object.freeze({ available: false, suggestion: null });
 const NOTHING = Object.freeze({ available: true,  suggestion: null });
 
 // C0/C1 controls, zero-width marks, and the bidi overrides that let stored text
-// render as something other than what a later consumer reads.
-const CONTROL_AND_INVISIBLE =
-  /[\u0000-\u001F\u007F-\u009F\u200B-\u200F\u202A-\u202E\u2060-\u2064\uFEFF]/g;
+// render as something other than what a later consumer reads. Matching control
+// characters is the entire point here -- they are what this exists to remove.
+// eslint-disable-next-line no-control-regex
+const CONTROL_AND_INVISIBLE = /[\u0000-\u001F\u007F-\u009F\u200B-\u200F\u202A-\u202E\u2060-\u2064\uFEFF]/g;
 
 function clean(value, max) {
   if (typeof value !== 'string') return null;
