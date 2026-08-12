@@ -191,6 +191,9 @@ export function Capture() {
   // A failed identify used to be indistinguishable from a disabled feature and
   // from an honest 'cannot tell'. All three showed nothing.
   const [visionFailed, setVisionFailed] = React.useState(false);
+  // The model was asked and had nothing useful to say. Distinct from failure
+  // (the request broke) and from the feature being off (nothing was asked).
+  const [visionEmpty, setVisionEmpty] = React.useState(false);
 
   /**
    * Clear everything belonging to the item just finished (or abandoned).
@@ -208,6 +211,7 @@ export function Capture() {
     setNameIsSuggested(false);
     setReviewOpen(false);
     setVisionFailed(false);
+    setVisionEmpty(false);
   }
 
   const createItem = useCreateItem();
@@ -493,6 +497,7 @@ export function Capture() {
   async function identifyPhoto(blob: Blob) {
     setVisionPending(true);
     setVisionFailed(false);
+    setVisionEmpty(false);
     try {
       const sendable = await asSendableImage(blob);
       const form = new FormData();
@@ -512,7 +517,16 @@ export function Capture() {
         return;
       }
       const data = await parseEnvelope<{ available: boolean; suggestion: Vision | null }>(res);
-      if (!data?.suggestion) return;
+      if (!data?.suggestion) {
+        // Two very different things used to look the same here, and telling
+        // them apart from the outside cost hours: the feature being switched
+        // off (nothing was asked) versus the model being asked and having
+        // nothing useful to say. Only the second is worth reporting — but it
+        // IS worth reporting, because silence reads as "it didn't run".
+        console.info('[vision] no suggestion', { available: data?.available });
+        if (data?.available) setVisionEmpty(true);
+        return;
+      }
 
       const s = data.suggestion;
       setVision(s);
@@ -591,6 +605,7 @@ export function Capture() {
               <span className="block font-mono text-[9px] uppercase tracking-[0.06em] text-[var(--color-text-muted)]">
                 {visionPending ? 'photo held — looking at it…'
                   : visionFailed ? "photo held — couldn't read it"
+                  : visionEmpty ? 'photo held — nothing recognised'
                   : vision ? `photo held — ${vision.confidence === 'high' ? 'read' : 'guessed'} from the photo`
                   : 'photo held — saves with the item'}
               </span>
