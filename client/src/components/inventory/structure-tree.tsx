@@ -78,7 +78,7 @@ function ContainerRow({ node, depth, expanded, onToggle }: {
 
         <button
           type="button"
-          onClick={() => navigate(`/containers/${container.id}`)}
+          onClick={() => navigate(`/container/${container.id}`)}
           className="min-w-0 flex-1 text-left py-2"
         >
           <span className="block truncate text-sm font-semibold">{container.name}</span>
@@ -139,7 +139,7 @@ export function StructureTree({ areas, containers }: { areas: Area[]; containers
               </button>
               <button
                 type="button"
-                onClick={() => navigate(`/areas/${area.id}`)}
+                onClick={() => navigate(`/area/${area.id}`)}
                 className="min-w-0 flex-1 text-left py-2"
               >
                 <span className="block truncate text-sm font-bold uppercase tracking-[0.06em]">{area.name}</span>
