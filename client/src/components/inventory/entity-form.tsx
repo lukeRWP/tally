@@ -1,6 +1,8 @@
+import * as React from 'react';
 import { useForm } from 'react-hook-form';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Select } from '@/components/ui/select';
 import {
   Dialog,
   DialogContent,
@@ -21,7 +23,50 @@ interface EntityFormProps {
   isPending?: boolean;
 }
 
-const fieldsByType: Record<EntityType, { name: string; label: string; required?: boolean; type?: string }[]> = {
+/**
+ * The shapes worth picking from a list. Not exhaustive by design — the column
+ * is free text and stays that way, so "Other…" covers everything else rather
+ * than this list having to anticipate every household.
+ */
+export const CONTAINER_TYPES = [
+  'Box', 'Bin', 'Tote', 'Crate', 'Basket', 'Bag', 'Shelf', 'Drawer', 'Cabinet',
+] as const;
+
+/** Sentinel for the "Other…" option. Never reaches the form value — see the onChange. */
+const OTHER = '__other__';
+
+/**
+ * The options to show, given what the record already holds.
+ *
+ * The column was free text before this dropdown existed, and one value is
+ * still written by code: `findOrCreateLooseContainer` stamps type `'loose'` on
+ * the synthetic per-area container. That is not something a user should be
+ * able to pick, but editing such a container must not silently rewrite it —
+ * so an unrecognised current value is prepended verbatim and round-trips.
+ */
+export function optionsWithCurrent(
+  known: readonly string[],
+  current: unknown,
+): readonly string[] {
+  if (typeof current === 'string' && current && !known.includes(current)) {
+    return [current, ...known];
+  }
+  return known;
+}
+
+/** containers.TYPE is VARCHAR(50); the server's Joi schema agrees. */
+const TYPE_MAX = 50;
+
+interface FieldDef {
+  name: string;
+  label: string;
+  required?: boolean;
+  type?: string;
+  /** Present = render a dropdown of these plus "Other…" instead of a text box. */
+  options?: readonly string[];
+}
+
+const fieldsByType: Record<EntityType, FieldDef[]> = {
   property: [
     { name: 'name', label: 'Name', required: true },
     { name: 'address', label: 'Address' },
@@ -33,7 +78,7 @@ const fieldsByType: Record<EntityType, { name: string; label: string; required?:
   ],
   container: [
     { name: 'name', label: 'Name', required: true },
-    { name: 'type', label: 'Type (e.g. box, shelf, drawer)', required: true },
+    { name: 'type', label: 'Type', required: true, options: CONTAINER_TYPES },
     { name: 'description', label: 'Description' },
   ],
   item: [
@@ -60,12 +105,25 @@ export function EntityForm({
   onSubmit,
   isPending,
 }: EntityFormProps) {
-  const { register, handleSubmit, reset, formState: { errors } } = useForm({
+  const { register, handleSubmit, reset, setValue, formState: { errors } } = useForm({
     defaultValues: defaultValues as Record<string, string>,
   });
 
   const fields = fieldsByType[type];
   const isEdit = !!defaultValues;
+
+  // Which dropdown fields the user has switched to freehand entry. Kept in
+  // component state rather than in the form value so only ONE name is ever
+  // registered per field — the sentinel can never survive into the payload.
+  const [customFields, setCustomFields] = React.useState<Record<string, boolean>>({});
+
+  // A reopened dialog must not inherit the last session's "Other" mode.
+  React.useEffect(() => {
+    if (!open) setCustomFields({});
+  }, [open]);
+
+  const optionsFor = (field: FieldDef) =>
+    optionsWithCurrent(field.options ?? [], defaultValues?.[field.name]);
 
   async function handleFormSubmit(data: Record<string, string>) {
     const cleaned: Record<string, unknown> = {};
@@ -101,12 +159,75 @@ export function EntityForm({
         </DialogHeader>
 
         <form onSubmit={handleSubmit(handleFormSubmit)} className="flex flex-col gap-3">
-          {fields.map((field) => (
+          {fields.map((field) => {
+            const invalid = errors[field.name] ? true : undefined;
+            const errClass = errors[field.name] ? 'border-[var(--color-red)]' : undefined;
+            const requiredRule = field.required && `${field.label} is required`;
+
+            // Composed rather than spread-then-overridden: register()'s own
+            // onChange still has to run for every real value, or the field
+            // never updates. Only the sentinel short-circuits it.
+            // Guarded on the render branch, not just on `options`: in custom
+            // mode the Input below registers the same name, and two register()
+            // calls per render would leave the field's rules decided by call
+            // order rather than by which control is actually mounted.
+            const showSelect = !!field.options && !customFields[field.name];
+            const selectReg = showSelect ? register(field.name, { required: requiredRule }) : null;
+
+            return (
             <div key={field.name} className="flex flex-col gap-1">
               <label htmlFor={field.name} className="text-xs font-medium text-[var(--color-text-muted)]">
                 {field.label}
                 {field.required && <span className="text-[var(--color-red)]"> *</span>}
               </label>
+
+              {showSelect ? (
+                <Select
+                  id={field.name}
+                  aria-invalid={invalid}
+                  className={errClass}
+                  {...selectReg}
+                  onChange={(e) => {
+                    if (e.target.value === OTHER) {
+                      setCustomFields((s) => ({ ...s, [field.name]: true }));
+                      setValue(field.name, '', { shouldValidate: false });
+                      return;
+                    }
+                    selectReg?.onChange(e);
+                  }}
+                >
+                  <option value="">Select…</option>
+                  {optionsFor(field).map((o) => (
+                    <option key={o} value={o}>{o}</option>
+                  ))}
+                  <option value={OTHER}>Other…</option>
+                </Select>
+              ) : field.options ? (
+                <>
+                  <Input
+                    id={field.name}
+                    autoFocus
+                    placeholder="e.g. Wardrobe"
+                    maxLength={TYPE_MAX}
+                    aria-invalid={invalid}
+                    className={errClass}
+                    {...register(field.name, {
+                      required: requiredRule,
+                      maxLength: { value: TYPE_MAX, message: `Types are limited to ${TYPE_MAX} characters` },
+                    })}
+                  />
+                  <button
+                    type="button"
+                    className="self-start text-xs text-[var(--color-primary)] underline"
+                    onClick={() => {
+                      setCustomFields((s) => ({ ...s, [field.name]: false }));
+                      setValue(field.name, '', { shouldValidate: false });
+                    }}
+                  >
+                    Choose from list
+                  </button>
+                </>
+              ) : (
               <Input
                 id={field.name}
                 type={field.type || 'text'}
@@ -119,22 +240,25 @@ export function EntityForm({
                 // quantity failed validation on a name the user never typed.
                 // The server's own limit is 255.
                 maxLength={field.name === 'name' ? 255 : undefined}
-                aria-invalid={errors[field.name] ? true : undefined}
-                className={errors[field.name] ? 'border-[var(--color-red)]' : undefined}
+                aria-invalid={invalid}
+                className={errClass}
                 {...register(field.name, {
-                  required: field.required && `${field.label} is required`,
+                  required: requiredRule,
                   ...(field.name === 'name'
                     ? { maxLength: { value: 255, message: 'Names are limited to 255 characters' } }
                     : {}),
                 })}
               />
+              )}
+
               {errors[field.name] && (
                 <span className="text-xs text-[var(--color-red)]">
                   {(errors[field.name]?.message as string) || `${field.label} is required`}
                 </span>
               )}
             </div>
-          ))}
+            );
+          })}
 
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
