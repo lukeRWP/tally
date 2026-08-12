@@ -17,6 +17,7 @@ import { useUploadFile } from '@/hooks/use-files';
 import { usePrinters, useCreatePrintJob } from '@/hooks/use-print';
 import { usePrintQueueStore } from '@/store/print-queue-store';
 import { cn } from '@/lib/utils';
+import { extractTlyCode } from '@/lib/tly';
 
 /**
  * The capture flow: PICTURE → SCAN → SCAN → DONE.
@@ -54,7 +55,6 @@ import { cn } from '@/lib/utils';
  * are not destinations at all.
  */
 
-const TLY_CODE_REGEX = /^TLY-[PACI]-[0-9A-Fa-f]{4,8}$/;
 const DEST_KEY = 'tally-last-container';
 /** How many recent bins to offer at step 3. Three fits one row at 390px. */
 const RECENTS = 3;
@@ -348,10 +348,12 @@ export function Capture() {
     // stateRef at the point of use.
 
     // Rule 1: route by code shape, not by which step we think we're on.
-    if (TLY_CODE_REGEX.test(code)) {
+    // extractTlyCode also unwraps the /s/<code> URL our printed labels encode.
+    const tlyCode = extractTlyCode(code);
+    if (tlyCode) {
       try {
         const entity = await api.get<{ type: string; id: number; name: string; exists: boolean }>(
-          `/api/labels/_x_/resolve/${encodeURIComponent(code)}`,
+          `/api/labels/_x_/resolve/${encodeURIComponent(tlyCode)}`,
         );
         if (!entity?.exists) { toast.error('That label is not in your inventory'); return; }
         // An item or property label is not somewhere an item can go — but the
@@ -359,7 +361,7 @@ export function Capture() {
         // rather than an error. That keeps scan-to-look-up alive inside the
         // flow that now owns the thumb button.
         if (entity.type === 'item' || entity.type === 'property') {
-          navigate(`/s/${encodeURIComponent(code)}`);
+          navigate(`/s/${encodeURIComponent(tlyCode)}`);
           return;
         }
         if (entity.type !== 'container' && entity.type !== 'area') {

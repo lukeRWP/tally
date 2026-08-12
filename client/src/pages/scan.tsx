@@ -5,6 +5,8 @@ import { TagScanner } from '@/components/scanner/tag-scanner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { TitleBar } from '@/components/ui/title-bar';
+import { toast } from '@/components/ui/toast';
+import { extractTlyCode } from '@/lib/tly';
 
 /**
  * Scan a tag.
@@ -26,11 +28,15 @@ export function Scan() {
   const navigate = useNavigate();
   const [typed, setTyped] = useState('');
 
-  // The scanner only decodes QR and only accepts tally's own tags, so by the
-  // time a code arrives here it is a real one — this just goes there.
+  // TagScanner hands over an already-extracted code, but the typed field below
+  // accepts anything a person can paste — including the full label URL, which
+  // is what you get from a phone's share sheet after scanning one. Run it
+  // through the same parser rather than trusting the caller.
   // /s/:code resolves the label and redirects to whatever it is on.
-  const handleCode = useCallback((code: string) => {
-    navigate(`/s/${encodeURIComponent(code.trim().toUpperCase())}`);
+  const handleCode = useCallback((raw: string) => {
+    const code = extractTlyCode(raw);
+    if (!code) { toast('That is not a tally tag'); return; }
+    navigate(`/s/${encodeURIComponent(code)}`);
   }, [navigate]);
 
   return (
