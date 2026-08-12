@@ -19,6 +19,7 @@ import { usePrintQueueStore } from '@/store/print-queue-store';
 import { cn } from '@/lib/utils';
 import { extractTlyCode } from '@/lib/tly';
 import { useVisionPref } from '@/store/vision-store';
+import { decideSuggestion } from '@/lib/vision-decision';
 
 /**
  * The capture flow: PICTURE → SCAN → SCAN → DONE.
@@ -556,26 +557,22 @@ export function Capture() {
         return;
       }
 
-      // A barcode may have matched the catalogue while this was in flight. The
-      // rule is that a real record beats an inference, and it has to hold in
-      // both orders — clearing the guess when the barcode wins only works if
-      // the guess has already arrived.
-      if (catalogueHit.current) return;
-
       const s = data.suggestion;
-      setVision(s);
 
-      // The name is the only field that lands without being asked for, and only
-      // into an empty box. Someone who has already typed owns that field; a
-      // suggestion arriving late must never overwrite their words. Reading `d`
-      // rather than a captured value is what makes that safe under a race.
-      // stateRef is the live draft, kept current by an effect. Deciding from it
-      // rather than from a flag set inside the updater matters: React does not
-      // run updaters synchronously, so a variable assigned in one is still
-      // unset by the time the next line reads it.
-      if (s.name && !stateRef.current.draft.name.trim()) {
-        // The guard is repeated inside the updater as the real safety net —
-        // the ref read above is a decision, this is the invariant.
+      // The rule lives in lib/vision-decision, tested there. Both inputs are
+      // read from refs rather than from values captured when the request
+      // started — the whole point is that either can change mid-flight.
+      const { accept, applyName } = decideSuggestion({
+        catalogueHit: catalogueHit.current,
+        currentName: stateRef.current.draft.name,
+        suggestedName: s.name,
+      });
+      if (!accept) return;
+
+      setVision(s);
+      if (applyName) {
+        // The guard is repeated inside the updater as the last line of defence:
+        // the decision above is a read, this is the invariant.
         setDraft((d) => (d.name.trim() ? d : { ...d, name: s.name as string }));
         setNameIsSuggested(true);
       }
