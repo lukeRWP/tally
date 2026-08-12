@@ -425,3 +425,38 @@ test('a normal request reaches the model with a LIVE signal', async () => {
     server.close();
   }
 });
+
+// ── the output schema ────────────────────────────────────────────────────────
+
+test('no property combines an enum with a union type', () => {
+  // The structured-output validator rejects that combination outright: it
+  // checks each enum member against the declared type and refuses
+  // 'electronics' against ['string','null']. It is a SCHEMA validation error,
+  // so it 400s before the image is read — every call fails identically no
+  // matter what was photographed, which reads as "the model recognised
+  // nothing" rather than as a bug.
+  //
+  // Verified against the live API that this holds whether or not null is a
+  // member of the enum list, so the rule is enum + union, not enum + null.
+  const { SCHEMA } = require('../src/modules/products/lookup/vision-identify');
+  const offenders = [];
+  const walk = (node, path) => {
+    if (!node || typeof node !== 'object') return;
+    if (node.enum && Array.isArray(node.type)) offenders.push(path);
+    for (const [k, v] of Object.entries(node.properties || {})) walk(v, `${path}.${k}`);
+    for (const [i, v] of (node.anyOf || []).entries()) walk(v, `${path}.anyOf[${i}]`);
+  };
+  walk(SCHEMA, 'schema');
+  assert.deepEqual(offenders, [], `enum + union type is rejected by the API: ${offenders.join(', ')}`);
+});
+
+test('category still accepts every enum value and null', () => {
+  const { SCHEMA, CATEGORY_ENUM } = require('../src/modules/products/lookup/vision-identify');
+  const branches = SCHEMA.properties.category.anyOf;
+  assert.ok(branches, 'nullability must be expressed with anyOf, not a union type');
+  const stringBranch = branches.find((b) => b.type === 'string');
+  assert.deepEqual(stringBranch.enum, CATEGORY_ENUM, 'the enum must stay the single source');
+  assert.ok(branches.some((b) => b.type === 'null'),
+    'the model must be able to say it has no category — otherwise "cannot tell" '
+    + 'collapses into the "other" tag and pollutes a hand-curated namespace');
+});

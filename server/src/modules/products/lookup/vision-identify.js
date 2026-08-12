@@ -98,8 +98,21 @@ const SCHEMA = {
       description: 'One or two factual sentences from what is visible. Null at confidence none.',
     },
     category: {
-      type: ['string', 'null'],
-      enum: [...CATEGORY_ENUM, null],
+      // anyOf, NOT `type: ['string','null'] + enum`. The structured-output
+      // validator rejects an enum combined with a union type outright -- it
+      // checks each enum member against the declared type and refuses
+      // 'electronics' against ['string','null']. Verified against the live API:
+      // the union form fails whether or not null is a member of the enum list,
+      // so this is not about null, it is about enum + union. A 400 here happens
+      // during schema validation, before the image is read, so EVERY call fails
+      // in ~250ms regardless of the photo.
+      //
+      // name and description are ['string','null'] with no enum and are fine;
+      // the combination is what breaks.
+      anyOf: [
+        { type: 'string', enum: CATEGORY_ENUM },
+        { type: 'null' },
+      ],
     },
   },
 };
