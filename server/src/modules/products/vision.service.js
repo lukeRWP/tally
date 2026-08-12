@@ -172,6 +172,13 @@ const VisionService = {
           noResultReason: reason,
           inputTokens: usage?.input_tokens ?? null,
           outputTokens: usage?.output_tokens ?? null,
+          // The only evidence prompt caching is working. If cacheRead stays 0
+          // across consecutive calls, something is invalidating the prefix and
+          // every request is paying the 1.25x write premium for nothing --
+          // which is strictly worse than not caching at all, and invisible
+          // without these two numbers.
+          cacheWrite: usage?.cache_creation_input_tokens ?? null,
+          cacheRead: usage?.cache_read_input_tokens ?? null,
         };
         if (anomalous) {
           // Paid for, and produced nothing the user can see. That is an error

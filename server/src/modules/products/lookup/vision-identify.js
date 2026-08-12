@@ -212,7 +212,28 @@ async function identifyImage(buffer, _mimeType, { signal } = {}) {
     // lowering: a truncation returns null, which the user cannot distinguish
     // from an honest "nothing found", and is billed either way.
     max_tokens: 1500,
-    system: SYSTEM,
+    // The system block is byte-identical on every call. MEASURED against the
+    // live API, not estimated: the cached prefix is 2216 tokens, well over
+    // Sonnet 5's 1024-token minimum. (Two earlier guesses here were wrong in
+    // both directions -- ~350 tokens, then ~1300. Both were character counts
+    // divided by a number I made up. The figures below came from a real call.)
+    //
+    // The trade, measured on input tokens:
+    //   no cache      $0.010812
+    //   cached write  $0.012474  (+15.4%)   <- an isolated one-off call
+    //   cached read   $0.004829  (-55.3%)
+    // Break-even is 1.28 calls, so ANY second call inside the 5-minute TTL is
+    // already ahead, and two items within five minutes -- a low bar for
+    // anything resembling cataloguing a shelf -- is 20% cheaper.
+    //
+    // This gets MORE valuable as the prompt grows, not less: the bigger the
+    // system block, the larger the share billed at the 0.1x read rate.
+    //
+    // Prefix match: any byte change here invalidates it. SYSTEM is a module
+    // constant, so nothing per-request can drift into it. Keep it that way --
+    // interpolating anything (a date, a user, a property name) would silently
+    // turn every call into a cache write.
+    system: [{ type: 'text', text: SYSTEM, cache_control: { type: 'ephemeral' } }],
     output_config: {
       // Short, scoped, latency-sensitive — the answer has to beat the user to
       // step 2. Low effort keeps thinking shallow without turning it off.
@@ -238,6 +259,9 @@ async function identifyImage(buffer, _mimeType, { signal } = {}) {
   // A safety decline is a successful HTTP 200 with an empty or partial content
   // array, so reading content[0] first would throw on exactly the responses that
   // need handling. A truncated response is not valid JSON, so it is not a guess.
+  // Whether the cache actually engaged is not observable from the answer -- a
+  // silent invalidator looks exactly like a hit. These two counters are the only
+  // evidence, so they get carried out and logged.
   if (response.stop_reason === 'refusal') {
     return { result: null, usage, noResultReason: NO_RESULT.REFUSAL };
   }

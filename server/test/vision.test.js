@@ -519,3 +519,43 @@ test('ItemsService.create binds CURRENT_VALUE in the right position', async () =
   assert.equal(params[cols.indexOf('PURCHASE_PRICE')], 10, 'PURCHASE_PRICE not shifted');
   assert.equal(params[cols.indexOf('QUANTITY')], 2);
 });
+
+// ── prompt caching ───────────────────────────────────────────────────────────
+
+test('the system prompt is sent as a cacheable block', () => {
+  // Caching is a prefix match on exact bytes. Sending `system` as a bare string
+  // cannot carry cache_control, so this silently reverts to uncached if anyone
+  // simplifies it back.
+  const src = require('fs').readFileSync(
+    require.resolve('../src/modules/products/lookup/vision-identify'), 'utf8');
+  assert.match(src, /system:\s*\[\{\s*type:\s*'text'/,
+    'system must be a block array, not a bare string, to carry cache_control');
+  assert.match(src, /cache_control:\s*\{\s*type:\s*'ephemeral'\s*\}/);
+});
+
+test('nothing per-request can leak into the cached prefix', () => {
+  // Any interpolation in SYSTEM would change the bytes per call and turn every
+  // request into a cache WRITE at 1.25x — worse than not caching, and silent.
+  const { SYSTEM } = require('../src/modules/products/lookup/vision-identify');
+  assert.equal(typeof SYSTEM, 'string');
+  assert.ok(SYSTEM.length > 3000, 'the prompt must stay over the 1024-token minimum to cache at all');
+  // Two reads must be byte-identical — a getter or template would not be.
+  const again = require('../src/modules/products/lookup/vision-identify').SYSTEM;
+  assert.equal(SYSTEM, again, 'SYSTEM must be a constant, not computed per access');
+});
+
+test('cache counters are logged so a silent miss is detectable', async () => {
+  const logged = [];
+  VisionService.init({
+    logger: { ...logger, info: (msg, meta) => logged.push(meta) },
+    config: ON,
+    adapter: adapterReturning({
+      result: { confidence: 'high', name: 'Drill', description: 'd', category: 'tool' },
+      usage: { input_tokens: 1900, output_tokens: 20,
+        cache_creation_input_tokens: 0, cache_read_input_tokens: 1300 },
+    }),
+  });
+  await VisionService.identify(bytes(), 'image/jpeg', 1);
+  assert.equal(logged[0].cacheRead, 1300, 'a cache hit must be visible in the log');
+  assert.equal(logged[0].cacheWrite, 0);
+});
