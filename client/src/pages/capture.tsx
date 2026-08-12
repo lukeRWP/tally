@@ -18,6 +18,7 @@ import { usePrinters, useCreatePrintJob } from '@/hooks/use-print';
 import { usePrintQueueStore } from '@/store/print-queue-store';
 import { cn } from '@/lib/utils';
 import { extractTlyCode } from '@/lib/tly';
+import { useVisionPref } from '@/store/vision-store';
 
 /**
  * The capture flow: PICTURE → SCAN → SCAN → DONE.
@@ -509,6 +510,10 @@ export function Capture() {
    * which cost two sessions of diagnosis.
    */
   async function identifyPhoto(blob: Blob) {
+    // Checked here rather than at the call site so every future caller inherits
+    // it. Switched off means no request, no upload, no spend — not a request
+    // whose answer is discarded.
+    if (!useVisionPref.getState().enabled) return;
     setVisionPending(true);
     setVisionFailed(false);
     setVisionEmpty(false);

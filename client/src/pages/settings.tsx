@@ -14,6 +14,7 @@ import { NotificationPrefs } from '@/components/notifications/notification-prefs
 import { PrinterSettings } from '@/components/print/printer-settings';
 import { useMyShareLinks, useRevokeShareLink } from '@/hooks/use-sharing';
 import { toast } from '@/components/ui/toast';
+import { useVisionPref } from '@/store/vision-store';
 
 function formatDate(dateStr: string) {
   return new Date(dateStr).toLocaleDateString(undefined, {
@@ -94,6 +95,44 @@ function ShareLinksSection() {
 }
 
 // -- Settings Page Main ---------------------------------------------------------
+
+/**
+ * The user-facing off switch for photo identification.
+ *
+ * Deliberately says what it costs. "AI features" as a bare toggle tells someone
+ * nothing about why they might want it off; the reason is money and it is a
+ * small enough number to just print.
+ */
+function PhotoIdentificationSection() {
+  const enabled = useVisionPref((p) => p.enabled);
+  const setEnabled = useVisionPref((p) => p.setEnabled);
+
+  return (
+    <section className="flex flex-col animate-fade-up" style={{ animationDelay: '200ms' }}>
+      <ColHead>Photo identification</ColHead>
+      <div className="flex items-center gap-3 min-h-[44px] py-2">
+        <span className="min-w-0 flex-1">
+          <span className="block text-sm font-semibold text-[var(--color-text)]">
+            Suggest a name from the photo
+          </span>
+          <span className="block font-mono text-[10px] uppercase tracking-[0.06em] text-[var(--color-text-muted)]">
+            {enabled
+              ? 'about half a cent per photo — off means no request is made'
+              : 'off — photos still save with the item'}
+          </span>
+        </span>
+        <Button
+          size="sm"
+          variant={enabled ? 'default' : 'outline'}
+          aria-pressed={enabled}
+          onClick={() => setEnabled(!enabled)}
+        >
+          {enabled ? 'On' : 'Off'}
+        </Button>
+      </div>
+    </section>
+  );
+}
 
 export function SettingsPage() {
   const navigate = useNavigate();
@@ -218,6 +257,10 @@ export function SettingsPage() {
               <PrinterSettings propertyId={selectedPropertyId} />
             </section>
           )}
+
+          {/* Photo identification -- the user-facing off switch. Not gated on a
+              property: it is a per-device preference, not property data. */}
+          <PhotoIdentificationSection />
 
           <ShareLinksSection />
         </div>
