@@ -153,29 +153,53 @@ test('a failure is not cached, so a deliberate retry actually retries', async ()
 
 // ── the truncation detector ──────────────────────────────────────────────────
 
-test('a truncated response is logged with a reason, not as an honest "nothing found"', async () => {
-  const logged = [];
+test('a truncated response is logged at ERROR so it surfaces in production', async () => {
+  // Production's console transport emits at its configured level (default
+  // 'error'). A truncation storm bills on every capture while the user sees
+  // "nothing found", so if this line is below that threshold the detector does
+  // not exist in the only environment that matters.
+  const errors = [];
+  const infos = [];
   VisionService.init({
-    logger: { ...logger, info: (msg, meta) => logged.push(meta) },
+    logger: { ...logger, error: (msg, meta) => errors.push(meta), info: (msg, meta) => infos.push(meta) },
     config: ON,
     adapter: adapterReturning({ result: null, usage: null, noResultReason: NO_RESULT.TRUNCATED }),
   });
   const answer = await VisionService.identify(bytes(), 'image/jpeg', 1);
   assert.deepEqual(answer, { available: true, suggestion: null });
-  assert.equal(logged[0].identified, false);
-  assert.equal(logged[0].noResultReason, 'max_tokens',
-    'a truncation storm must be separable from the model honestly recognising nothing');
+  assert.equal(infos.length, 0, 'must not be logged at info, which prod discards');
+  assert.equal(errors.length, 1);
+  assert.equal(errors[0].noResultReason, 'max_tokens');
+  assert.equal(errors[0].identified, false);
 });
 
-test('a genuine low-confidence null is logged distinctly from a truncation', async () => {
-  const logged = [];
+test('a refusal and an unparseable body also surface at error', async () => {
+  for (const reason of [NO_RESULT.REFUSAL, NO_RESULT.UNPARSEABLE, NO_RESULT.NO_TEXT_BLOCK]) {
+    const errors = [];
+    VisionService.init({
+      logger: { ...logger, error: (msg, meta) => errors.push(meta) },
+      config: ON,
+      adapter: adapterReturning({ result: null, usage: null, noResultReason: reason }),
+    });
+    await VisionService.identify(bytes(), 'image/jpeg', 1);
+    assert.equal(errors.length, 1, `${reason} should surface`);
+    assert.equal(errors[0].noResultReason, reason);
+  }
+});
+
+test('an honest "cannot identify" stays at info and does not cry wolf', async () => {
+  // The model saying it cannot tell is normal operation. Logging it at error
+  // would bury the truncations this is meant to expose.
+  const errors = [];
+  const infos = [];
   VisionService.init({
-    logger: { ...logger, info: (msg, meta) => logged.push(meta) },
+    logger: { ...logger, error: (msg, meta) => errors.push(meta), info: (msg, meta) => infos.push(meta) },
     config: ON,
     adapter: adapterReturning({ result: { confidence: 'none' }, usage: null }),
   });
   await VisionService.identify(bytes(), 'image/jpeg', 1);
-  assert.equal(logged[0].noResultReason, 'low_confidence');
+  assert.equal(errors.length, 0, 'a normal null must not be an error');
+  assert.equal(infos[0].noResultReason, 'low_confidence');
 });
 
 // ── the category gate at the write site ──────────────────────────────────────

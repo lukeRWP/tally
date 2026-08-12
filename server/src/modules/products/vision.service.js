@@ -116,15 +116,33 @@ const VisionService = {
         // deliberate retry -- which sends the identical bytes -- into a replay
         // of the same failure for ten minutes.
         if (suggestion) writeCache(key, answer);
-        _logger?.info?.('Vision identify complete', {
+
+        // Why the level is chosen rather than fixed: production's console
+        // transport only emits at its configured level (default 'error'), so a
+        // line logged at info is invisible in `docker compose logs`. The
+        // detector this reason code exists for -- a run of truncations that
+        // bills on every capture while the user sees "nothing found" -- has to
+        // surface WITHOUT anyone having raised LOG_LEVEL first, or it is not a
+        // detector.
+        //
+        // A model that honestly cannot identify a photo is not an anomaly and
+        // stays at info; it would otherwise drown the real signal.
+        const reason = suggestion ? null : (noResultReason ?? 'low_confidence');
+        const anomalous = !!reason && reason !== 'low_confidence';
+        const meta = {
           userId, bytes: buffer.length, mimeType, ms: Date.now() - started,
           identified: !!suggestion,
-          // Without this a truncation storm is indistinguishable from the model
-          // honestly failing to recognise things, and both are billed.
-          noResultReason: suggestion ? null : (noResultReason ?? 'low_confidence'),
+          noResultReason: reason,
           inputTokens: usage?.input_tokens ?? null,
           outputTokens: usage?.output_tokens ?? null,
-        });
+        };
+        if (anomalous) {
+          // Paid for, and produced nothing the user can see. That is an error
+          // condition even though the request itself succeeded.
+          _logger?.error?.('Vision identify produced no usable result', meta);
+        } else {
+          _logger?.info?.('Vision identify complete', meta);
+        }
         return answer;
       } catch (err) {
         // Destructured, never passed whole: an HTTP client hangs the request
