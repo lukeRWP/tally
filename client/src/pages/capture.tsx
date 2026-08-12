@@ -287,7 +287,9 @@ export function Capture() {
   }
 
   const handleCode = React.useCallback(async (code: string) => {
-    const { draft: curDraft } = stateRef.current;
+    // Deliberately no draft snapshot here. Both branches below await a network
+    // round trip before they use the draft, so each one re-reads it from
+    // stateRef at the point of use.
 
     // Rule 1: route by code shape, not by which step we think we're on.
     if (TLY_CODE_REGEX.test(code)) {
@@ -317,9 +319,13 @@ export function Capture() {
           : { id: entity.id, name: entity.name };
         pinDestination(target);
         toast.success(`Adding to ${target.name}`);
+        // Read the draft fresh: the resolve round trip above is long enough for
+        // the user to have typed a name, and committing the snapshot taken
+        // before the await silently discards whatever they entered.
+        const live = stateRef.current.draft;
         // If a draft is already waiting on a home, this completes it.
-        if (curDraft.name || curDraft.photo || curDraft.barcode) {
-          void commit(curDraft, target);
+        if (live.name || live.photo || live.barcode) {
+          void commit(live, target);
         } else {
           setPhase('photo');
         }
@@ -344,10 +350,13 @@ export function Capture() {
       ]);
       setDupes(dup?.existingItems ?? []);
       const product = result?.product;
+      // Same reason as the label branch above — spreading the pre-await
+      // snapshot would wipe anything typed while the lookup was in flight.
+      const live = stateRef.current.draft;
       const next: Draft = {
-        ...curDraft,
+        ...live,
         barcode: code,
-        name: product?.shortName || product?.name || curDraft.name,
+        name: product?.shortName || product?.name || live.name,
         fullName: product?.id ? undefined : product?.name,
         productId: product?.id,
       };
