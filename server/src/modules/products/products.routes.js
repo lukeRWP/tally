@@ -1,9 +1,43 @@
-module.exports = function productsRoutes({ app, db, logger }) {
+module.exports = function productsRoutes({ app, db, logger, config }) {
   const ProductsService = require('./products.service');
   ProductsService.init({ db, logger });
 
+  const rateLimit = require('express-rate-limit');
+  const { ipKeyGenerator } = require('express-rate-limit');
+  const VisionService = require('./vision.service');
+  // No db: this path owns no rows, so there is nothing for it to scope.
+  VisionService.init({ logger, config });
+  const { photoUpload, makeHandler } = require('./vision.http');
+
   const { createProduct, lookupBarcode } = require('./products.schema');
   const { success, error } = require('../../utils/response');
+
+  // Keyed on the signed-in user, not the IP: a household behind one NAT is one
+  // IP, and one person's capture session must not throttle their partner's. The
+  // ip fallback is unreachable behind requireAuth and exists only so the limiter
+  // can never throw on a malformed request.
+  const perUser = (req) => (req.user?.id ? `u:${req.user.id}` : ipKeyGenerator(req.ip));
+
+  // A per-minute cap bounds a runaway loop; only a long window bounds a bill.
+  const visionBurst = rateLimit({ windowMs: 60 * 1000, max: 20,
+    keyGenerator: perUser, standardHeaders: true, legacyHeaders: false });
+  const visionDaily = rateLimit({ windowMs: 24 * 60 * 60 * 1000, max: config.vision.dailyPerUser,
+    keyGenerator: perUser, standardHeaders: true, legacyHeaders: false });
+
+  // POST /api/products/_y_/identify-photo
+  // requireAuth only, and no property scoping: this route issues zero SQL
+  // statements, so the membership rule is satisfied vacuously — the same
+  // authorization shape as POST /_y_/extract-url below. The limiters sit after
+  // requireAuth so req.user exists, and before photoUpload so a throttled
+  // request is rejected without buffering 6MB into memory.
+  app.post(
+    '/api/products/_y_/identify-photo',
+    app.locals.requireAuth,
+    visionBurst,
+    visionDaily,
+    photoUpload,
+    makeHandler(VisionService),
+  );
 
   // ── Get by Barcode (local only) ───────────────────────────────────────────
   // NOTE: Must be registered before /:productId to avoid "barcode" matching as a param

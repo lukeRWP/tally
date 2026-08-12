@@ -9,7 +9,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ColHead } from '@/components/ui/col-head';
 import { toast } from '@/components/ui/toast';
-import { api } from '@/lib/api';
+import { api, getCsrfToken, parseEnvelope } from '@/lib/api';
 import { findOrCreateLooseContainer } from '@/hooks/use-put-down';
 import { DestinationPicker } from '@/components/inventory/destination-picker';
 import { useCreateItem } from '@/hooks/use-inventory';
@@ -94,6 +94,30 @@ interface Draft {
   productId?: number;
   photo?: Blob;
   photoUrl?: string;
+  /** Free text the user accepted. Only ever set by tapping Keep. */
+  description?: string;
+  /**
+   * Becomes a property-scoped tag on save. Not a column on items. Only ever set
+   * by tapping Keep — a guess must not arrive here on its own.
+   */
+  category?: string;
+}
+
+/**
+ * What the photo-identification endpoint offered.
+ *
+ * Deliberately NOT part of Draft, and deliberately not passed to commit().
+ * commit() takes a Draft and writes what is in it, so a suggestion the user has
+ * not accepted is unreachable from the write path structurally — because the
+ * value is not in the object commit() receives, rather than because a rule says
+ * not to read it. Accepting a field copies it into the Draft; that copy is the
+ * consent.
+ */
+interface Vision {
+  name: string | null;
+  description: string | null;
+  category: string | null;
+  confidence: 'high' | 'medium' | 'low';
 }
 
 /** An item you already own with this barcode — shown before you add another. */
@@ -156,6 +180,31 @@ export function Capture() {
   const [draft, setDraft] = React.useState<Draft>({ name: '' });
   const [receipts, setReceipts] = React.useState<Receipt[]>([]);
   const [busy, setBusy] = React.useState<string | null>(null);
+
+  // See the Vision type: held apart from draft on purpose.
+  const [vision, setVision] = React.useState<Vision | null>(null);
+  const [visionPending, setVisionPending] = React.useState(false);
+  // The name is the one field allowed to pre-fill, so it is the one field that
+  // needs to look unconfirmed until someone has actually looked at it.
+  const [nameIsSuggested, setNameIsSuggested] = React.useState(false);
+  const [reviewOpen, setReviewOpen] = React.useState(false);
+
+  /**
+   * Clear everything belonging to the item just finished (or abandoned).
+   *
+   * A helper rather than three inline resets because the suggestion is the easy
+   * one to forget: leaving it set would offer the previous object's description
+   * on the next photo, which reads as the feature confidently misidentifying
+   * something it never saw.
+   */
+  function resetDraft() {
+    setDraft({ name: '' });
+    setDupes([]);
+    setVision(null);
+    setVisionPending(false);
+    setNameIsSuggested(false);
+    setReviewOpen(false);
+  }
 
   const createItem = useCreateItem();
   const uploadFile = useUploadFile();
@@ -239,13 +288,20 @@ export function Capture() {
       ? [d.fullName && d.fullName !== name ? d.fullName : null,
          d.barcode ? `UPC ${d.barcode}` : null].filter(Boolean).join('\n')
       : '';
+    // An accepted description leads; what the scan salvaged follows it. Both
+    // are already in the draft, so neither can be here without consent.
+    const description = [d.description || null, kept || null].filter(Boolean).join('\n');
     setBusy('Saving…');
     try {
       const res = await createItem.mutateAsync({
         name,
         containerId: destination.id,
         ...(d.productId ? { productId: d.productId } : {}),
-        ...(kept ? { description: kept } : {}),
+        ...(description ? { description } : {}),
+        // Its own field, never folded into the description text. The server
+        // validates it against a closed enum and turns it into a
+        // property-scoped tag.
+        ...(d.category ? { category: d.category } : {}),
       } as Parameters<typeof createItem.mutateAsync>[0]);
       const created = res?.item;
       if (!created) throw new Error('Create returned no item');
@@ -273,10 +329,10 @@ export function Capture() {
       }
 
       setReceipts((prev) => [receipt, ...prev]);
-      setDraft({ name: '' });
-      // The warning belongs to the draft that just landed, not to the next one —
-      // leaving it up would claim you already own something you haven't scanned.
-      setDupes([]);
+      // The warning (and the suggestion) belong to the draft that just landed,
+      // not to the next one — leaving either up would claim something about an
+      // object that has not been photographed yet.
+      resetDraft();
       setPhase('photo');
       toast.success(`${created.name} → ${destination.name}`);
     } catch (err) {
@@ -362,6 +418,13 @@ export function Capture() {
       };
       setDraft(next);
       if (product?.name) {
+        // A catalogue hit is a fact about this exact object; the photo guess is
+        // an inference about what it looks like. Drop the guess rather than
+        // offering the user a choice between a real record and a plausible one.
+        // Anything already accepted stays — it is in the draft, not here.
+        setVision(null);
+        setReviewOpen(false);
+        setNameIsSuggested(false);
         // A barcode says WHAT the thing is, never where it goes. Every item
         // earns its place by being put somewhere on step 3 — a pinned bin is a
         // shortcut for answering that question, not a reason to skip it.
@@ -382,6 +445,49 @@ export function Capture() {
     }
   }, [createItem, uploadFile]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  /**
+   * Ask what the photo shows. Fired unawaited: the answer is a convenience, and
+   * the flow must reach step 2 at the same speed whether or not it arrives — or
+   * ever arrives. Every failure path here is a no-op, never a toast: the user
+   * did not ask for this, so it cannot interrupt them by failing.
+   */
+  async function identifyPhoto(blob: Blob) {
+    setVisionPending(true);
+    try {
+      const form = new FormData();
+      form.append('file', blob, 'photo.jpg');
+      // Raw fetch (FormData) — attach CSRF manually; no Content-Type so the
+      // browser sets the multipart boundary itself.
+      const csrf = getCsrfToken();
+      const res = await fetch('/api/products/_y_/identify-photo', {
+        method: 'POST',
+        credentials: 'include',
+        headers: csrf ? { 'x-csrf-token': csrf } : undefined,
+        body: form,
+      });
+      const data = await parseEnvelope<{ available: boolean; suggestion: Vision | null }>(res);
+      if (!data?.suggestion) return;
+
+      const s = data.suggestion;
+      setVision(s);
+
+      // The name is the only field that lands without being asked for, and only
+      // into an empty box. Someone who has already typed owns that field; a
+      // suggestion arriving late must never overwrite their words.
+      if (s.name) {
+        setDraft((d) => {
+          if (d.name.trim()) return d;
+          setNameIsSuggested(true);
+          return { ...d, name: s.name as string };
+        });
+      }
+    } catch {
+      // Offline, throttled, 415, no key, aborted — all the same to the user.
+    } finally {
+      setVisionPending(false);
+    }
+  }
+
   async function onPhoto(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     e.target.value = '';
@@ -389,6 +495,8 @@ export function Capture() {
     const blob = await downscale(file);
     setDraft((d) => ({ ...d, photo: blob, photoUrl: URL.createObjectURL(blob) }));
     setPhase('identify');
+    // Not awaited: step 2 is already on screen and the camera scanner is live.
+    void identifyPhoto(blob);
   }
 
   const step = phase === 'photo' ? 1 : phase === 'identify' ? 2 : 3;
@@ -438,7 +546,7 @@ export function Capture() {
               </span>
             )}
           </span>
-          <button type="button" aria-label="Discard" onClick={() => { setDraft({ name: '' }); setDupes([]); setPhase('photo'); }}
+          <button type="button" aria-label="Discard" onClick={() => { resetDraft(); setPhase('photo'); }}
             className="min-w-[36px] min-h-[36px] flex items-center justify-center text-[var(--color-text-muted)]">
             <X className="w-4 h-4" />
           </button>
@@ -617,7 +725,16 @@ export function Capture() {
           {phase === 'identify' && (
             <div className="flex gap-2 shrink-0">
               <Input ref={nameField} placeholder="Name it, or search…" value={draft.name}
-                onChange={(e) => setDraft((d) => ({ ...d, name: e.target.value }))}
+                // A suggested name is shown as unconfirmed until it is touched:
+                // the risk this feature carries is a plausible wrong name being
+                // accepted without being read, and a field that looks the same
+                // whether a person or a model filled it invites exactly that.
+                className={cn(nameIsSuggested && 'border-dashed border-[var(--color-primary)]')}
+                onChange={(e) => {
+                  // Editing it makes it theirs.
+                  setNameIsSuggested(false);
+                  setDraft((d) => ({ ...d, name: e.target.value }));
+                }}
                 // Typing a name and pressing enter is one gesture; making the
                 // keyboard's own confirm key do nothing strands anyone who
                 // never looks up from the field.
@@ -639,6 +756,82 @@ export function Capture() {
                 <Check className="w-4 h-4" />
                 Next
               </Button>
+            </div>
+          )}
+
+          {/*
+            The suggestion, offered rather than applied.
+
+            Description and category are never written unless Keep is tapped —
+            they live outside the draft until then. Nothing here blocks the
+            flow: Next works whether this is open, closed, still loading, or
+            never arrives at all.
+          */}
+          {phase === 'identify' && (vision || visionPending) && (
+            <div className="shrink-0 border-t border-[var(--color-border)] pt-2 mt-2">
+              {visionPending && !vision ? (
+                <p className="font-mono text-[10px] uppercase tracking-wide text-[var(--color-text-muted)]">
+                  Looking at the photo…
+                </p>
+              ) : vision ? (
+                <>
+                  <button type="button"
+                    className="flex items-center gap-2 w-full text-left"
+                    onClick={() => setReviewOpen((o) => !o)}>
+                    <span className="font-mono text-[10px] uppercase tracking-wide text-[var(--color-text-muted)]">
+                      From the photo
+                    </span>
+                    {/* The model computes this to calibrate trust. Showing it on
+                        the one screen where trust is decided is the whole point
+                        of computing it. */}
+                    <span className="font-mono text-[10px] uppercase tracking-wide text-[var(--color-primary)]">
+                      {vision.confidence === 'high' ? 'read' : 'guessed'}
+                    </span>
+                    <span className="ml-auto font-mono text-[10px] text-[var(--color-text-muted)]">
+                      {reviewOpen ? 'hide' : 'review'}
+                    </span>
+                  </button>
+
+                  {reviewOpen && (
+                    <div className="mt-2 space-y-2">
+                      {vision.description && !draft.description && (
+                        <div className="flex items-start gap-2">
+                          <p className="flex-1 text-xs text-[var(--color-text-secondary)]">
+                            {vision.description}
+                          </p>
+                          <Button size="sm" variant="outline" className="shrink-0"
+                            onClick={() => setDraft((d) => ({ ...d, description: vision.description || undefined }))}>
+                            Keep
+                          </Button>
+                        </div>
+                      )}
+                      {vision.category && !draft.category && (
+                        <div className="flex items-center gap-2">
+                          <p className="flex-1 font-mono text-xs uppercase tracking-wide">
+                            {vision.category}
+                          </p>
+                          <Button size="sm" variant="outline" className="shrink-0"
+                            onClick={() => setDraft((d) => ({ ...d, category: vision.category || undefined }))}>
+                            Keep
+                          </Button>
+                        </div>
+                      )}
+                      {(draft.description || draft.category) && (
+                        <p className="font-mono text-[10px] uppercase tracking-wide text-[var(--color-text-muted)]">
+                          Kept: {[draft.description ? 'description' : null,
+                                  draft.category ? `category (${draft.category})` : null]
+                                  .filter(Boolean).join(', ')}
+                        </p>
+                      )}
+                      {!vision.description && !vision.category && (
+                        <p className="text-xs text-[var(--color-text-muted)]">
+                          Only a name was offered.
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </>
+              ) : null}
             </div>
           )}
 
@@ -696,7 +889,7 @@ export function Capture() {
               </Button>
             </div>
           ))}
-          <Button className="mt-3" onClick={() => { setDraft({ name: '' }); setDupes([]); setPhase('photo'); }}>
+          <Button className="mt-3" onClick={() => { resetDraft(); setPhase('photo'); }}>
             <Plus className="w-4 h-4" />
             Add another
           </Button>
