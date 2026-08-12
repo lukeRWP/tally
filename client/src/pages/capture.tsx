@@ -188,6 +188,9 @@ export function Capture() {
   // needs to look unconfirmed until someone has actually looked at it.
   const [nameIsSuggested, setNameIsSuggested] = React.useState(false);
   const [reviewOpen, setReviewOpen] = React.useState(false);
+  // A failed identify used to be indistinguishable from a disabled feature and
+  // from an honest 'cannot tell'. All three showed nothing.
+  const [visionFailed, setVisionFailed] = React.useState(false);
 
   /**
    * Clear everything belonging to the item just finished (or abandoned).
@@ -204,6 +207,7 @@ export function Capture() {
     setVisionPending(false);
     setNameIsSuggested(false);
     setReviewOpen(false);
+    setVisionFailed(false);
   }
 
   const createItem = useCreateItem();
@@ -453,11 +457,46 @@ export function Capture() {
    * ever arrives. Every failure path here is a no-op, never a toast: the user
    * did not ask for this, so it cannot interrupt them by failing.
    */
+  /**
+   * The vision route accepts jpeg/png/webp only, and rejects anything else with
+   * a 415 before spending a token. downscale() has three paths that hand back
+   * the ORIGINAL File untouched — bitmap decode failure, the small-image
+   * passthrough, and toBlob returning null — and on iOS `accept="image/*"` can
+   * hand us HEIC. So the blob reaching here is not reliably a jpeg.
+   *
+   * Re-encode when the type is not one the route takes. The item photo upload
+   * is a different route with a different accept list, which is why that path
+   * never surfaced this.
+   */
+  async function asSendableImage(blob: Blob): Promise<Blob> {
+    if (['image/jpeg', 'image/png', 'image/webp'].includes(blob.type)) return blob;
+    const bitmap = await createImageBitmap(blob).catch(() => null);
+    if (!bitmap) return blob;   // let the server reject it and say so
+    const canvas = document.createElement('canvas');
+    canvas.width = bitmap.width;
+    canvas.height = bitmap.height;
+    canvas.getContext('2d')?.drawImage(bitmap, 0, 0);
+    return new Promise((resolve) =>
+      canvas.toBlob((b) => resolve(b ?? blob), 'image/jpeg', 0.82),
+    );
+  }
+
+  /**
+   * Ask what the photo shows. Fired unawaited: the answer is a convenience, and
+   * the flow must reach step 2 at the same speed whether or not it arrives.
+   *
+   * Failures do not interrupt — no toast, nothing blocking — but they are no
+   * longer invisible. Swallowing every error made "feature off", "model
+   * declined", and "request rejected" render identically as nothing at all,
+   * which cost two sessions of diagnosis.
+   */
   async function identifyPhoto(blob: Blob) {
     setVisionPending(true);
+    setVisionFailed(false);
     try {
+      const sendable = await asSendableImage(blob);
       const form = new FormData();
-      form.append('file', blob, 'photo.jpg');
+      form.append('file', sendable, 'photo.jpg');
       // Raw fetch (FormData) — attach CSRF manually; no Content-Type so the
       // browser sets the multipart boundary itself.
       const csrf = getCsrfToken();
@@ -467,6 +506,11 @@ export function Capture() {
         headers: csrf ? { 'x-csrf-token': csrf } : undefined,
         body: form,
       });
+      if (!res.ok) {
+        console.warn('[vision] identify failed', res.status, blob.type, sendable.type);
+        setVisionFailed(true);
+        return;
+      }
       const data = await parseEnvelope<{ available: boolean; suggestion: Vision | null }>(res);
       if (!data?.suggestion) return;
 
@@ -483,8 +527,9 @@ export function Capture() {
           return { ...d, name: s.name as string };
         });
       }
-    } catch {
-      // Offline, throttled, 415, no key, aborted — all the same to the user.
+    } catch (err) {
+      console.warn('[vision] identify threw', err);
+      setVisionFailed(true);
     } finally {
       setVisionPending(false);
     }
@@ -769,11 +814,18 @@ export function Capture() {
             flow: Next works whether this is open, closed, still loading, or
             never arrives at all.
           */}
-          {phase === 'identify' && (vision || visionPending) && (
+          {phase === 'identify' && (vision || visionPending || visionFailed) && (
             <div className="shrink-0 border-t border-[var(--color-border)] pt-2 mt-2">
               {visionPending && !vision ? (
                 <p className="font-mono text-[10px] uppercase tracking-wide text-[var(--color-text-muted)]">
                   Looking at the photo…
+                </p>
+              ) : visionFailed ? (
+                // Says the attempt happened and did not work. Not an error the
+                // user has to act on — the name field is right there — but not
+                // a silence that looks like the feature does not exist.
+                <p className="font-mono text-[10px] uppercase tracking-wide text-[var(--color-text-muted)]">
+                  Couldn't read the photo — name it yourself
                 </p>
               ) : vision ? (
                 <>
