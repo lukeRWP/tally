@@ -199,6 +199,13 @@ export function Capture() {
   // needs to look unconfirmed until someone has actually looked at it.
   const [nameIsSuggested, setNameIsSuggested] = React.useState(false);
   const [reviewOpen, setReviewOpen] = React.useState(false);
+  /**
+   * Set the moment a barcode resolves to a real catalogue product.
+   *
+   * A ref, not state: the vision request is in flight when this flips, and its
+   * callback needs the CURRENT answer, not the value captured when it started.
+   */
+  const catalogueHit = React.useRef(false);
   // A failed identify used to be indistinguishable from a disabled feature and
   // from an honest 'cannot tell'. All three showed nothing.
   const [visionFailed, setVisionFailed] = React.useState(false);
@@ -223,6 +230,7 @@ export function Capture() {
     setReviewOpen(false);
     setVisionFailed(false);
     setVisionEmpty(false);
+    catalogueHit.current = false;
   }
 
   const createItem = useCreateItem();
@@ -447,6 +455,7 @@ export function Capture() {
         // an inference about what it looks like. Drop the guess rather than
         // offering the user a choice between a real record and a plausible one.
         // Anything already accepted stays — it is in the draft, not here.
+        catalogueHit.current = true;
         setVision(null);
         setReviewOpen(false);
         setNameIsSuggested(false);
@@ -547,18 +556,28 @@ export function Capture() {
         return;
       }
 
+      // A barcode may have matched the catalogue while this was in flight. The
+      // rule is that a real record beats an inference, and it has to hold in
+      // both orders — clearing the guess when the barcode wins only works if
+      // the guess has already arrived.
+      if (catalogueHit.current) return;
+
       const s = data.suggestion;
       setVision(s);
 
       // The name is the only field that lands without being asked for, and only
       // into an empty box. Someone who has already typed owns that field; a
-      // suggestion arriving late must never overwrite their words.
-      if (s.name) {
-        setDraft((d) => {
-          if (d.name.trim()) return d;
-          setNameIsSuggested(true);
-          return { ...d, name: s.name as string };
-        });
+      // suggestion arriving late must never overwrite their words. Reading `d`
+      // rather than a captured value is what makes that safe under a race.
+      // stateRef is the live draft, kept current by an effect. Deciding from it
+      // rather than from a flag set inside the updater matters: React does not
+      // run updaters synchronously, so a variable assigned in one is still
+      // unset by the time the next line reads it.
+      if (s.name && !stateRef.current.draft.name.trim()) {
+        // The guard is repeated inside the updater as the real safety net —
+        // the ref read above is a decision, this is the invariant.
+        setDraft((d) => (d.name.trim() ? d : { ...d, name: s.name as string }));
+        setNameIsSuggested(true);
       }
     } catch (err) {
       console.warn('[vision] identify threw', err);
