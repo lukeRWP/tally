@@ -108,6 +108,27 @@ test('a thrown adapter degrades to available:true with no suggestion, never reje
     { available: true, suggestion: null });
 });
 
+test('an upstream failure logs at ERROR, with the model that was attempted', async () => {
+  // This was warn, which prod discards -- so a rejected key and an honest
+  // "cannot identify" produced identical silence in the logs and identical
+  // text on screen. An exception must not be quieter than a null result.
+  const errors = [];
+  VisionService.init({
+    logger: { ...logger, error: (msg, meta) => errors.push(meta) },
+    config: { vision: { enabled: true, model: 'claude-sonnet-5' } },
+    adapter: {
+      identifyImage: async () => {
+        throw Object.assign(new Error('model not found'), { status: 404, type: 'not_found_error' });
+      },
+    },
+  });
+  await VisionService.identify(bytes(), 'image/jpeg', 1);
+  assert.equal(errors.length, 1, 'an upstream throw must reach prod logs');
+  assert.equal(errors[0].status, 404);
+  assert.equal(errors[0].type, 'not_found_error');
+  assert.equal(errors[0].model, 'claude-sonnet-5', 'a 404 is about the id, not the photo');
+});
+
 test('a thrown non-Error still degrades rather than escaping', async () => {
   VisionService.init({
     logger, config: ON,

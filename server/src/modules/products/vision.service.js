@@ -153,12 +153,24 @@ const VisionService = {
         }
         return answer;
       } catch (err) {
+        // ERROR, not warn. The upstream call throwing -- a rejected key, a
+        // model id the account cannot reach, a request shape the API refuses,
+        // a timeout -- is strictly more serious than the model looking and
+        // finding nothing, and it was logged at a LOWER level than that case.
+        // Prod's console emits at 'error', so this was invisible: an API
+        // failure and an honest decline produced the same silence in the logs
+        // AND the same message on screen, which is not a diagnosable state.
+        //
         // Destructured, never passed whole: an HTTP client hangs the request
         // config off its errors and the request config carries the api key,
         // which matches none of error-handler's redaction field names.
-        _logger?.warn?.('Vision identify failed', {
+        _logger?.error?.('Vision identify failed', {
           userId, ms: Date.now() - started,
-          status: err?.status ?? null, name: err?.name ?? null, message: err?.message ?? null,
+          // Which model was attempted: a 404 here means the id or the
+          // account's access to it, not the photo.
+          model: _config?.vision?.model ?? null,
+          status: err?.status ?? null, name: err?.name ?? null,
+          type: err?.type ?? null, message: err?.message ?? null,
         });
         return NOTHING;
       } finally { inFlight.delete(key); }
