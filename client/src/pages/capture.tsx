@@ -589,8 +589,17 @@ export function Capture() {
             {draft.barcode && <span className="block font-mono text-[10px] text-[var(--color-text-muted)]">{draft.barcode}</span>}
             {draft.photo && (
               <span className="block font-mono text-[9px] uppercase tracking-[0.06em] text-[var(--color-text-muted)]">
-                photo held — saves with the item
+                {visionPending ? 'photo held — looking at it…'
+                  : visionFailed ? "photo held — couldn't read it"
+                  : vision ? `photo held — ${vision.confidence === 'high' ? 'read' : 'guessed'} from the photo`
+                  : 'photo held — saves with the item'}
               </span>
+            )}
+            {vision && (vision.description || vision.category) && !reviewOpen && (
+              <button type="button" onClick={() => setReviewOpen(true)}
+                className="block font-mono text-[9px] uppercase tracking-[0.06em] text-[var(--color-primary)] underline">
+                review what it found
+              </button>
             )}
           </span>
           <button type="button" aria-label="Discard" onClick={() => { resetDraft(); setPhase('photo'); }}
@@ -657,7 +666,48 @@ export function Capture() {
               Step 2 reads the maker's barcode, step 3 reads tally's tag — two
               questions, two scanners, and the product one cannot decode a QR,
               so a bin label can no longer be swallowed mid-naming. */}
-          {phase === 'identify' && identifying ? (
+          {phase === 'identify' && reviewOpen && vision ? (
+            // Replaces the camera rather than stacking under it — the rule this
+            // layout is built on, stated in the comment above. Stacking is what
+            // made this invisible: the step is exactly one screen tall and has
+            // no spare rows, so a new block below the controls lands off-screen.
+            <div className="flex flex-col gap-2 border-2 border-[var(--color-text)] rounded-[var(--radius-sm)] p-3 flex-1 min-h-0 overflow-y-auto">
+              <div className="flex items-center justify-between shrink-0">
+                <span className="font-mono text-[10px] uppercase tracking-wide text-[var(--color-text-muted)]">
+                  From the photo — {vision.confidence === 'high' ? 'read' : 'guessed'}
+                </span>
+                <Button size="sm" variant="ghost" onClick={() => setReviewOpen(false)}>Close</Button>
+              </div>
+              {vision.description && !draft.description && (
+                <div className="flex items-start gap-2">
+                  <p className="flex-1 text-xs text-[var(--color-text-secondary)]">{vision.description}</p>
+                  <Button size="sm" variant="outline" className="shrink-0"
+                    onClick={() => setDraft((d) => ({ ...d, description: vision.description || undefined }))}>
+                    Keep
+                  </Button>
+                </div>
+              )}
+              {vision.category && !draft.category && (
+                <div className="flex items-center gap-2">
+                  <p className="flex-1 font-mono text-xs uppercase tracking-wide">{vision.category}</p>
+                  <Button size="sm" variant="outline" className="shrink-0"
+                    onClick={() => setDraft((d) => ({ ...d, category: vision.category || undefined }))}>
+                    Keep
+                  </Button>
+                </div>
+              )}
+              {(draft.description || draft.category) && (
+                <p className="font-mono text-[10px] uppercase tracking-wide text-[var(--color-text-muted)]">
+                  Kept: {[draft.description ? 'description' : null,
+                          draft.category ? `category (${draft.category})` : null]
+                          .filter(Boolean).join(', ')}
+                </p>
+              )}
+              {!vision.description && !vision.category && (
+                <p className="text-xs text-[var(--color-text-muted)]">Only a name was offered.</p>
+              )}
+            </div>
+          ) : phase === 'identify' && identifying ? (
             <div className="flex flex-col gap-2 border-2 border-[var(--color-text)] rounded-[var(--radius-sm)] p-3 flex-1 min-h-0">
               <div className="flex items-center justify-between shrink-0">
                 <span className="font-mono text-[10px] uppercase tracking-[0.1em] font-bold">What is it?</span>
@@ -806,88 +856,6 @@ export function Capture() {
             </div>
           )}
 
-          {/*
-            The suggestion, offered rather than applied.
-
-            Description and category are never written unless Keep is tapped —
-            they live outside the draft until then. Nothing here blocks the
-            flow: Next works whether this is open, closed, still loading, or
-            never arrives at all.
-          */}
-          {phase === 'identify' && (vision || visionPending || visionFailed) && (
-            <div className="shrink-0 border-t border-[var(--color-border)] pt-2 mt-2">
-              {visionPending && !vision ? (
-                <p className="font-mono text-[10px] uppercase tracking-wide text-[var(--color-text-muted)]">
-                  Looking at the photo…
-                </p>
-              ) : visionFailed ? (
-                // Says the attempt happened and did not work. Not an error the
-                // user has to act on — the name field is right there — but not
-                // a silence that looks like the feature does not exist.
-                <p className="font-mono text-[10px] uppercase tracking-wide text-[var(--color-text-muted)]">
-                  Couldn't read the photo — name it yourself
-                </p>
-              ) : vision ? (
-                <>
-                  <button type="button"
-                    className="flex items-center gap-2 w-full text-left"
-                    onClick={() => setReviewOpen((o) => !o)}>
-                    <span className="font-mono text-[10px] uppercase tracking-wide text-[var(--color-text-muted)]">
-                      From the photo
-                    </span>
-                    {/* The model computes this to calibrate trust. Showing it on
-                        the one screen where trust is decided is the whole point
-                        of computing it. */}
-                    <span className="font-mono text-[10px] uppercase tracking-wide text-[var(--color-primary)]">
-                      {vision.confidence === 'high' ? 'read' : 'guessed'}
-                    </span>
-                    <span className="ml-auto font-mono text-[10px] text-[var(--color-text-muted)]">
-                      {reviewOpen ? 'hide' : 'review'}
-                    </span>
-                  </button>
-
-                  {reviewOpen && (
-                    <div className="mt-2 space-y-2">
-                      {vision.description && !draft.description && (
-                        <div className="flex items-start gap-2">
-                          <p className="flex-1 text-xs text-[var(--color-text-secondary)]">
-                            {vision.description}
-                          </p>
-                          <Button size="sm" variant="outline" className="shrink-0"
-                            onClick={() => setDraft((d) => ({ ...d, description: vision.description || undefined }))}>
-                            Keep
-                          </Button>
-                        </div>
-                      )}
-                      {vision.category && !draft.category && (
-                        <div className="flex items-center gap-2">
-                          <p className="flex-1 font-mono text-xs uppercase tracking-wide">
-                            {vision.category}
-                          </p>
-                          <Button size="sm" variant="outline" className="shrink-0"
-                            onClick={() => setDraft((d) => ({ ...d, category: vision.category || undefined }))}>
-                            Keep
-                          </Button>
-                        </div>
-                      )}
-                      {(draft.description || draft.category) && (
-                        <p className="font-mono text-[10px] uppercase tracking-wide text-[var(--color-text-muted)]">
-                          Kept: {[draft.description ? 'description' : null,
-                                  draft.category ? `category (${draft.category})` : null]
-                                  .filter(Boolean).join(', ')}
-                        </p>
-                      )}
-                      {!vision.description && !vision.category && (
-                        <p className="text-xs text-[var(--color-text-muted)]">
-                          Only a name was offered.
-                        </p>
-                      )}
-                    </div>
-                  )}
-                </>
-              ) : null}
-            </div>
-          )}
 
           {phase === 'place' && !picking && (
             <Button variant="outline" size="sm" className="shrink-0" onClick={() => setPicking(true)}>
