@@ -35,6 +35,7 @@ export const queryKeys = {
     byParent: (parentId: number) => [...queryKeys.containers.all, 'byParent', parentId] as const,
     detail: (id: number) => [...queryKeys.containers.all, 'detail', id] as const,
     allItems: (id: number) => [...queryKeys.containers.all, 'allItems', id] as const,
+    tree: (propertyId: number) => [...queryKeys.containers.all, 'tree', propertyId] as const,
   },
   items: {
     all: ['items'] as const,

@@ -74,6 +74,22 @@ export function useDeleteProperty() {
 // Areas
 // ---------------------------------------------------------------------------
 
+/**
+ * Every container in a property, at every depth, in one request.
+ *
+ * The nested view needs the whole shape at once. Fetching it level by level is
+ * one request per expanded node — fine on a demo, unusable on a garage with
+ * forty bins, and it only shows up on real data.
+ */
+export function usePropertyTree(propertyId: number) {
+  return useQuery({
+    queryKey: queryKeys.containers.tree(propertyId),
+    queryFn: () => api.get<{ containers: Container[] }>(`/api/containers/_x_/tree/${propertyId}`),
+    select: (data) => data.containers,
+    enabled: !!propertyId,
+  });
+}
+
 export function useAreas(propertyId: number) {
   return useQuery({
     queryKey: queryKeys.areas.byProperty(propertyId),

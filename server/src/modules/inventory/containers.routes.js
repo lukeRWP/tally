@@ -40,6 +40,21 @@ module.exports = function containersRoutes({ app, db, logger }) {
     }
   );
 
+  // ── Whole-property tree ───────────────────────────────────────────────────
+
+  // GET /api/containers/_x_/tree/:propertyId — every container, every depth
+  // NOTE: registered before /:containerId, or "tree" is matched as an id.
+  app.get(
+    '/api/containers/_x_/tree/:propertyId',
+    app.locals.requireAuth,
+    app.locals.resolvePropertyRole,
+    async (req, res) => {
+      if (!req.propertyRole) return error(res, 'Property not found or access denied', 404);
+      const containers = await ContainersService.getPropertyTree(req.params.propertyId, req.user.id);
+      success(res, { containers });
+    }
+  );
+
   // ── Read ──────────────────────────────────────────────────────────────────
 
   // GET /api/containers/_x_/:containerId — single container detail
