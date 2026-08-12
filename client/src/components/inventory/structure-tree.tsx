@@ -19,13 +19,13 @@ import { cn } from '@/lib/utils';
 /** How far to indent each level. Small — depth reads from the rule, not a gap. */
 const INDENT = 14;
 
-interface TreeNode {
+export interface TreeNode {
   container: Container;
   children: TreeNode[];
 }
 
 /** Assemble the flat rows into a forest, keyed by area. */
-function buildTree(containers: Container[]): Map<number, TreeNode[]> {
+export function buildTree(containers: Container[]): Map<number, TreeNode[]> {
   const nodes = new Map<number, TreeNode>();
   for (const c of containers) nodes.set(c.id, { container: c, children: [] });
 

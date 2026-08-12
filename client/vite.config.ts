@@ -1,3 +1,4 @@
+/// <reference types="vitest" />
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
@@ -18,5 +19,12 @@ export default defineConfig({
   },
   build: {
     outDir: 'dist',
+  },
+  test: {
+    // jsdom only where a test asks for it (@vitest-environment jsdom), so pure
+    // logic tests stay fast and cannot accidentally depend on a DOM.
+    environment: 'node',
+    include: ['src/**/*.test.{ts,tsx}'],
+    globals: true,
   },
 });
