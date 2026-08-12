@@ -380,3 +380,48 @@ test('registering products routes does not disturb the existing endpoints', () =
   assert.ok(!routes.some((x) => x.method === 'PUT' && x.path.includes('products')),
     'no writable catalogue route may reappear');
 });
+
+// ── the abort wiring ─────────────────────────────────────────────────────────
+
+test('a normal request reaches the model with a LIVE signal', async () => {
+  // Regression test for the bug that made this feature look broken for a day.
+  //
+  // The handler used req.on('close') to cancel the upstream call when the
+  // browser hung up. On Node 16+ an IncomingMessage emits 'close' when the
+  // request is COMPLETE, and multer has already drained the body before the
+  // handler runs -- so it fired on the same tick and aborted the model call on
+  // EVERY request. Asserting the signal is live at the point of use is the only
+  // form of this test that would have failed against the old code.
+  const express = require('express');
+  const { photoUpload, makeHandler } = require('../src/modules/products/vision.http');
+
+  let seenAborted = null;
+  const stubService = {
+    isEnabled: () => true,
+    identify: async (_buf, _mime, _userId, signal) => {
+      // Stand in for the round trip: the bug only shows once you await.
+      await new Promise((r) => setTimeout(r, 50));
+      seenAborted = signal.aborted;
+      return { available: true, suggestion: null };
+    },
+  };
+
+  const app = express();
+  app.use((req, _res, next) => { req.user = { id: 1 }; next(); });
+  app.post('/t', photoUpload, makeHandler(stubService));
+
+  const server = app.listen(0);
+  await new Promise((r) => server.once('listening', r));
+  try {
+    const form = new FormData();
+    // A real JPEG magic-byte prefix so sniffMime accepts it.
+    const jpeg = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(2048)]);
+    form.append('file', new Blob([jpeg], { type: 'image/jpeg' }), 'p.jpg');
+    const res = await fetch(`http://127.0.0.1:${server.address().port}/t`, { method: 'POST', body: form });
+    assert.equal(res.status, 200);
+    assert.equal(seenAborted, false,
+      'the signal handed to the model must still be live — req.on("close") aborts it instantly');
+  } finally {
+    server.close();
+  }
+});

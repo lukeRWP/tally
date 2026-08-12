@@ -51,9 +51,21 @@ function makeHandler(VisionService) {
     const { error: verr } = identifyPhoto.validate(req.body || {}, { abortEarly: false });
     if (verr) return error(res, 'Validation failed', 422, verr.details.map((d) => d.message));
 
-    // The browser hanging up means the draft is gone. Nothing left to wait for.
+    // Cancel the upstream call if the browser hangs up -- the draft is gone,
+    // there is nothing left to wait for.
+    //
+    // This listens on RES, not REQ. On Node 16+ an IncomingMessage emits
+    // 'close' when the request is COMPLETE, not only when the peer
+    // disconnects -- and multer has already consumed the body by the time this
+    // handler runs, so req 'close' fires immediately, on the same tick.
+    // Aborting there cancelled the model call the instant it was made, on every
+    // single request. The user saw "nothing recognised"; the log said nothing,
+    // because a cancelled call throws and the throw was logged below error.
+    //
+    // Verified both directions: a normal request is not aborted mid-handler,
+    // and a client that hangs up early does abort the work.
     const controller = new AbortController();
-    req.on('close', () => controller.abort());
+    res.on('close', () => controller.abort());
 
     const result = await VisionService.identify(
       req.file.buffer, sniffed, req.user.id, controller.signal,
