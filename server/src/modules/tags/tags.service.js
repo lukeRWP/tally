@@ -42,6 +42,47 @@ const TagsService = {
     return TagsService._mapTag(rows[0]);
   },
 
+  /**
+   * Get the property's tag with this name, creating it only if absent.
+   *
+   * create() above is a blind INSERT, which is correct for the tag UI (the user
+   * asked for a new tag; a collision is a real error worth showing them). It is
+   * wrong for a category applied automatically at item-commit time: two items
+   * saved back to back with the same new category race uq_tags_name_property,
+   * and the loser's ER_DUP_ENTRY becomes a 409 on an item whose own data was
+   * perfectly valid.
+   *
+   * The re-SELECT on collision is the same pattern addToEntity() already uses.
+   *
+   * NAME and PROPERTY_ID compare under MySQL's default case-insensitive
+   * collation, here and in the unique key, so an approved `kitchen` REUSES an
+   * existing user tag named `Kitchen` instead of creating a second row. That is
+   * deliberate — do not "fix" it into a BINARY comparison.
+   */
+  async findOrCreate({ name, color, propertyId }) {
+    const find = async () => {
+      const rows = await _db.query(
+        'SELECT * FROM TALLY.tags WHERE NAME = ? AND PROPERTY_ID = ? LIMIT 1',
+        [name, propertyId]
+      );
+      return rows[0] ? TagsService._mapTag(rows[0]) : null;
+    };
+
+    const existing = await find();
+    if (existing) return existing;
+
+    try {
+      return await TagsService.create({ name, color, propertyId });
+    } catch (err) {
+      // Someone else inserted the same name between our SELECT and our INSERT.
+      if (err.code === 'ER_DUP_ENTRY') {
+        const winner = await find();
+        if (winner) return winner;
+      }
+      throw err;
+    }
+  },
+
   async update(id, data) {
     const fields = [];
     const values = [];

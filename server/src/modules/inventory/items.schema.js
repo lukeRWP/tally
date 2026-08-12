@@ -1,4 +1,5 @@
 const Joi = require('joi');
+const { CATEGORY_ENUM } = require('../products/lookup/vision-identify');
 
 const createItem = Joi.object({
   name: Joi.string().max(255).required(),
@@ -8,6 +9,13 @@ const createItem = Joi.object({
   quantity: Joi.number().integer().min(1).default(1),
   purchasePrice: Joi.number().precision(2).allow(null),
   condition: Joi.string().valid('new', 'good', 'fair', 'poor').default('good'),
+  // Not a column on items — it is applied as a property-scoped tag after the
+  // row is written (see items.routes.js). The closed enum is the gate: this is
+  // an ordinary authenticated endpoint, reachable without ever calling the
+  // vision route, so the model's own filtering cannot be the only check. Every
+  // value is far under the tags.NAME VARCHAR(50) limit, which under
+  // STRICT_TRANS_TABLES would error the insert rather than truncate.
+  category: Joi.string().valid(...CATEGORY_ENUM).optional(),
 });
 
 const updateItem = Joi.object({

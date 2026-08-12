@@ -43,6 +43,18 @@ if (missing.entra.length > 0 && process.env.BYPASS_AUTH !== 'true') {
   console.warn(`[config] WARNING: Entra vars missing but BYPASS_AUTH=true — skipping auth check`);
 }
 
+// Optional feature keys. These are absent on a fresh install and in local dev,
+// and their absence turns a feature off rather than stopping the server — so
+// this tier warns and never throws, in any environment.
+const optionalFeatureVars = ['ANTHROPIC_API_KEY'];
+const missingOptional = optionalFeatureVars.filter(key => !process.env[key]);
+if (missingOptional.length > 0) {
+  console.warn(
+    `[config] ${missingOptional.join(', ')} not set — photo identification is off. ` +
+    'Capture works exactly as before.'
+  );
+}
+
 const config = Object.freeze({
   port: parseInt(process.env.PORT || '2727', 10),
   nodeEnv: process.env.NODE_ENV || 'development',
@@ -86,6 +98,22 @@ const config = Object.freeze({
     accessKeyId: process.env.S3_ACCESS_KEY,
     secretAccessKey: process.env.S3_SECRET_KEY,
     region: process.env.S3_REGION || 'us-east-1',
+  },
+
+  vision: {
+    apiKey: process.env.ANTHROPIC_API_KEY,
+    model: process.env.VISION_MODEL || 'claude-sonnet-5',
+    // Two independent ways off. The key is the fresh-install and local-dev
+    // default; the flag is the switch you reach for at 2am when the bill is
+    // wrong, because it does not require touching the vault.
+    enabled: !!process.env.ANTHROPIC_API_KEY && process.env.VISION_ENABLED !== 'false',
+    timeoutMs: parseInt(process.env.VISION_TIMEOUT_MS || '12000', 10),
+    // The long edge the model actually sees. 1024 is enough to read a product
+    // name off a box and roughly halves the bill against full resolution. The
+    // accepted cost is small print — a model number on a housing, "20V MAX" —
+    // which is the first thing to go at this size.
+    maxEdge: parseInt(process.env.VISION_MAX_EDGE || '1024', 10),
+    dailyPerUser: parseInt(process.env.VISION_DAILY_PER_USER || '250', 10),
   },
 
   logging: {

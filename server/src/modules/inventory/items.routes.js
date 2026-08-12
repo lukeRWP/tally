@@ -3,6 +3,18 @@ module.exports = function itemsRoutes({ app, db, logger }) {
   ItemsService.init({ db, logger });
 
   const ContainersService = require('./containers.service');
+  // Initialised here as well as in tags.routes.js. init() only assigns db and
+  // logger, so the second call is a no-op — but tags.routes.js registers AFTER
+  // this module, and relying on "the write only happens at request time, by
+  // which point everything is registered" is an ordering assumption nobody
+  // would think to preserve.
+  const TagsService = require('../tags/tags.service');
+  TagsService.init({ db, logger });
+
+  // Categories arrive from photo identification, not from a person choosing a
+  // colour, so they get one neutral from the thermal palette. Never
+  // client-supplied: tags.COLOR is NOT NULL with no default.
+  const CATEGORY_TAG_COLOR = '#8A8578';
 
   const { createItem, updateItem, moveItem, searchItems, recentItems } = require('./items.schema');
   const { success, error } = require('../../utils/response');
@@ -166,7 +178,34 @@ module.exports = function itemsRoutes({ app, db, logger }) {
     app.locals.requireRole('owner', 'editor'),
     async (req, res) => {
       const value = req.validatedBody;
-      const item = await ItemsService.create(value, req.user.id);
+      const { category, ...itemFields } = value;
+      const item = await ItemsService.create(itemFields, req.user.id);
+
+      // An approved category becomes a property-scoped tag. This lives here, in
+      // the handler that already resolved propertyId FROM THE CONTAINER and
+      // already passed requireRole('owner','editor'), so scoping and
+      // authorization are structural rather than re-derived — a second endpoint
+      // would be a fresh place to get the privacy invariant wrong.
+      //
+      // A tag failure must never fail the item: the row is written, the user's
+      // own data was valid, and a collision on shared property vocabulary must
+      // not surface to them as "Could not save the item".
+      if (category) {
+        try {
+          const tag = await TagsService.findOrCreate({
+            name: category,
+            color: CATEGORY_TAG_COLOR,
+            propertyId: req.params.propertyId,
+          });
+          await TagsService.addToEntity(tag.id, 'item', item.id);
+        } catch (err) {
+          logger.warn('Category tag write failed; item kept', {
+            itemId: item.id, propertyId: req.params.propertyId,
+            category, code: err?.code ?? null, message: err?.message ?? null,
+          });
+        }
+      }
+
       success(res, { item }, 'Item created', 201);
     }
   );
