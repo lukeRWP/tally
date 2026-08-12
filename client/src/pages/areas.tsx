@@ -7,9 +7,9 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { TitleBar } from '@/components/ui/title-bar';
 import { toast } from '@/components/ui/toast';
 import { PropertyCard } from '@/components/inventory/property-card';
-import { AreaCard } from '@/components/inventory/area-card';
 import { EntityForm } from '@/components/inventory/entity-form';
-import { useProperties, useAreas, useCreateProperty, useCreateArea } from '@/hooks/use-inventory';
+import { useProperties, useAreas, usePropertyTree, useCreateProperty, useCreateArea } from '@/hooks/use-inventory';
+import { StructureTree } from '@/components/inventory/structure-tree';
 
 /**
  * The top of the place hierarchy, and the screen you build the house on.
@@ -35,6 +35,9 @@ export function AreasPage() {
   // multi-property path costs nothing.
   const only = properties && properties.length === 1 ? properties[0] : null;
   const { data: areas, isLoading: areasLoading } = useAreas(only?.id ?? 0);
+  // The whole property's containers, every depth, in one request — expanding a
+  // node is then pure state rather than a fetch per level.
+  const { data: treeContainers, isLoading: treeLoading } = usePropertyTree(only?.id ?? 0);
 
   const totalAreas = properties?.reduce((sum, p) => sum + p.areaCount, 0) ?? 0;
   const totalContainers = properties?.reduce((sum, p) => sum + p.containerCount, 0) ?? 0;
@@ -135,9 +138,14 @@ export function AreasPage() {
             </div>
           )}
 
-          {areas?.map((area) => (
-            <AreaCard key={area.id} area={area} />
-          ))}
+          {/* The nested view replaces the flat area list: the point of this tab
+              is the shape of the place, and a list of area names never showed
+              it. AreaCard is still used on the property detail page. */}
+          {areas && areas.length > 0 && (
+            treeLoading
+              ? <Skeleton className="h-24 w-full mt-2" />
+              : <StructureTree areas={areas} containers={treeContainers ?? []} />
+          )}
         </section>
       )}
 

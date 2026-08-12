@@ -71,6 +71,40 @@ const ContainersService = {
     return rows.map(ContainersService._mapContainer);
   },
 
+  /**
+   * Every container in a property, at every depth, in one query.
+   *
+   * The nested view needs the whole shape at once. Walking it level by level
+   * would be one request per node — fine for a demo, unusable for a garage with
+   * forty bins, and the kind of thing that only shows up on real data.
+   *
+   * Scoped by USER_ID here rather than relying on the route's role middleware.
+   * The middleware is present and correct, but this returns a whole property's
+   * structure in one payload, so it is worth the join being visible in the
+   * query that produces it.
+   *
+   * Returns a FLAT list; the caller assembles the tree from AREA_ID and
+   * PARENT_CONTAINER_ID. Building it here would mean sorting a recursive
+   * structure through the API layer for no gain.
+   */
+  async getPropertyTree(propertyId, userId) {
+    const rows = await _db.query(
+      `SELECT
+         c.*,
+         (SELECT COUNT(*) FROM TALLY.containers ch
+           WHERE ch.PARENT_CONTAINER_ID = c.ID AND ch.DELETED_AT IS NULL) AS CONTAINER_COUNT,
+         (SELECT COUNT(*) FROM TALLY.items i
+           WHERE i.CONTAINER_ID = c.ID AND i.DELETED_AT IS NULL) AS ITEM_COUNT
+       FROM TALLY.containers c
+       JOIN TALLY.areas a ON c.AREA_ID = a.ID AND a.DELETED_AT IS NULL
+       JOIN TALLY.property_members pm ON a.PROPERTY_ID = pm.PROPERTY_ID
+       WHERE a.PROPERTY_ID = ? AND pm.USER_ID = ? AND c.DELETED_AT IS NULL
+       ORDER BY c.NAME`,
+      [propertyId, userId]
+    );
+    return rows.map(ContainersService._mapContainer);
+  },
+
   async getByParent(parentContainerId) {
     const rows = await _db.query(
       `SELECT
