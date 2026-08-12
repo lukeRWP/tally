@@ -22,14 +22,19 @@ const bytes = () => Buffer.from(`photo-${n++}-${Math.random()}`);
 
 // ── normalise: what may reach the user ───────────────────────────────────────
 
-test('a low-confidence name is dropped; description and category survive', () => {
+test('a low-confidence name is KEPT — a generic name beats no name', () => {
+  // This asserted the opposite until it met a real mug. Nulling low-confidence
+  // names conflated "invented specificity" (bad) with "named generically"
+  // (which is most of a household inventory). The item was landing as
+  // "Unnamed", which is strictly worse than the plain truth.
   const s = VisionService.normalise({
-    confidence: 'low', name: 'DeWalt Impact Driver',
-    description: 'A yellow power tool.', category: 'tool',
+    confidence: 'low', name: 'White Ceramic Mug',
+    description: 'A plain white mug.', category: 'kitchen',
   });
-  assert.equal(s.name, null, 'the one field that pre-fills an input must not be a guess');
-  assert.equal(s.description, 'A yellow power tool.');
-  assert.equal(s.category, 'tool');
+  assert.equal(s.name, 'White Ceramic Mug');
+  assert.equal(s.description, 'A plain white mug.');
+  assert.equal(s.category, 'kitchen');
+  assert.equal(s.confidence, 'low', 'the panel still labels it a guess');
 });
 
 test('confidence none yields no suggestion at all', () => {

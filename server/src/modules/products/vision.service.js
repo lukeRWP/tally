@@ -42,11 +42,19 @@ function normalise(raw) {
   if (confidence === 'none') return null;
 
   const suggestion = {
-    // A low-confidence NAME is the worst thing this feature can produce: it is
-    // the one field that pre-fills an input, and a plausible wrong name is
-    // accepted without reading. Category and description are only ever seen on
-    // a panel the user opened, so they survive at low confidence.
-    name: confidence === 'low' ? null : clean(raw.name, NAME_MAX),
+    // Low-confidence names are KEPT.
+    //
+    // This used to null them, on the reasoning that a plausible wrong name gets
+    // accepted without being read. That conflated two different risks: inventing
+    // specificity ("DeWalt 20V Impact Driver" for an unbranded drill) and naming
+    // an object generically ("Mug"). Only the first is wrong. The second is what
+    // a household inventory is mostly made of, and dropping it left the item
+    // called "Unnamed" — strictly worse than the plain truth.
+    //
+    // The guard against invented detail lives in the prompt, which forbids a
+    // brand, model or measurement that cannot be read. The guard against a name
+    // being accepted unexamined is the dashed border on the field.
+    name: clean(raw.name, NAME_MAX),
     description: clean(raw.description, DESCRIPTION_MAX),
     category: typeof raw.category === 'string' && CATEGORIES.has(raw.category)
       ? raw.category : null,
