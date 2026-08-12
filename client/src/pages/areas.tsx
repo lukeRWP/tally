@@ -10,6 +10,7 @@ import { PropertyCard } from '@/components/inventory/property-card';
 import { EntityForm } from '@/components/inventory/entity-form';
 import { useProperties, useAreas, usePropertyTree, useCreateProperty, useCreateArea } from '@/hooks/use-inventory';
 import { StructureTree } from '@/components/inventory/structure-tree';
+import { PropertyChips } from '@/components/inventory/property-chips';
 
 /**
  * The top of the place hierarchy, and the screen you build the house on.
@@ -33,7 +34,24 @@ export function AreasPage() {
   // them because its page is the only route to the address, the description and
   // the delete action. `useAreas` is disabled on a falsy id, so the
   // multi-property path costs nothing.
-  const only = properties && properties.length === 1 ? properties[0] : null;
+  /**
+   * Which property's structure is on screen.
+   *
+   * This used to be `properties.length === 1 ? properties[0] : null` — so with
+   * two properties the areas section, and now the whole nested view, simply did
+   * not render. The structure was reachable only by drilling into a property,
+   * which is the thing this tab exists to save you.
+   *
+   * PropertyChips renders nothing below two properties, so the single-property
+   * case looks exactly as it did.
+   */
+  const [selectedPropertyId, setSelectedPropertyId] = React.useState<number>(0);
+  React.useEffect(() => {
+    if (!selectedPropertyId && properties && properties.length > 0) {
+      setSelectedPropertyId(properties[0].id);
+    }
+  }, [properties, selectedPropertyId]);
+  const only = properties?.find((p) => p.id === selectedPropertyId) ?? null;
   const { data: areas, isLoading: areasLoading } = useAreas(only?.id ?? 0);
   // The whole property's containers, every depth, in one request — expanding a
   // node is then pure state rather than a fetch per level.
@@ -116,7 +134,15 @@ export function AreasPage() {
       </section>
 
       {only && (
-        <section className="flex flex-col">
+        <section className="flex flex-col gap-2">
+          {properties && properties.length > 1 && (
+            <PropertyChips
+              properties={properties}
+              value={selectedPropertyId}
+              onChange={setSelectedPropertyId}
+            />
+          )}
+
           <ColHead action="+ Add" onAction={() => setCreateAreaOpen(true)}>
             Areas · {areas?.length ?? 0}
           </ColHead>
