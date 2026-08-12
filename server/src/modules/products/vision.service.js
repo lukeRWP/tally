@@ -2,6 +2,12 @@ const crypto = require('crypto');
 
 const NAME_MAX = 64;          // 48 is the print budget; 64 leaves editing room
 const DESCRIPTION_MAX = 300;
+const BRAND_MAX = 64;
+// Bounds, not just types. These values land in a DECIMAL(10,2) money column and
+// an INT quantity, and a model is perfectly capable of returning 1e9 or 0.
+// STRICT_TRANS_TABLES turns an out-of-range write into an error, not a clamp.
+const VALUE_MAX = 100000;     // a household item worth more than this gets typed by hand
+const QUANTITY_MAX = 999;
 const CACHE_TTL_MS = 10 * 60 * 1000;
 const CACHE_MAX_ENTRIES = 200;
 
@@ -36,6 +42,20 @@ function clean(value, max) {
  * it must not be able to arrive there by accident - the surest guarantee is for
  * the object not to carry the fields that route would recognise.
  */
+/** A finite positive number inside bounds, rounded to cents. Null otherwise. */
+function money(value, max) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return null;
+  if (value <= 0 || value > max) return null;
+  return Math.round(value * 100) / 100;
+}
+
+/** A positive whole count inside bounds. Null otherwise. */
+function count(value, max) {
+  if (typeof value !== 'number' || !Number.isInteger(value)) return null;
+  if (value < 1 || value > max) return null;
+  return value;
+}
+
 function normalise(raw) {
   if (!raw || typeof raw !== 'object') return null;
   const confidence = CONFIDENCE.includes(raw.confidence) ? raw.confidence : 'none';
@@ -58,12 +78,21 @@ function normalise(raw) {
     description: clean(raw.description, DESCRIPTION_MAX),
     category: typeof raw.category === 'string' && CATEGORIES.has(raw.category)
       ? raw.category : null,
+    brand: clean(raw.brand, BRAND_MAX),
+    // Never auto-applied. It reaches CURRENT_VALUE, which reports.service.js
+    // reads straight into the insurance report — a wrong number there looks
+    // authoritative in a way a wrong name never does, so it requires an
+    // explicit Keep and is labelled an estimate wherever it is shown.
+    estimatedValue: money(raw.estimatedValue, VALUE_MAX),
+    quantity: count(raw.quantity, QUANTITY_MAX),
     // Carried so the review panel can say "read" vs "guessed". Computed to
     // calibrate trust, and previously discarded before the one screen where
     // trust is actually decided.
     confidence,
   };
-  if (!suggestion.name && !suggestion.description && !suggestion.category) return null;
+  if (!suggestion.name && !suggestion.description && !suggestion.category
+      && !suggestion.brand && suggestion.estimatedValue == null
+      && suggestion.quantity == null) return null;
   return suggestion;
 }
 

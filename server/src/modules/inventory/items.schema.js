@@ -8,6 +8,11 @@ const createItem = Joi.object({
   productId: Joi.number().integer().allow(null),
   quantity: Joi.number().integer().min(1).default(1),
   purchasePrice: Joi.number().precision(2).allow(null),
+  // The column existed and create() never wrote to it. Bounded here as well as
+  // in the vision layer, because this is an ordinary authenticated endpoint —
+  // the model's own filtering cannot be the only gate on a value that
+  // reports.service.js reads into the insurance report.
+  currentValue: Joi.number().precision(2).positive().max(100000).allow(null),
   condition: Joi.string().valid('new', 'good', 'fair', 'poor').default('good'),
   // Not a column on items — it is applied as a property-scoped tag after the
   // row is written (see items.routes.js). The closed enum is the gate: this is
