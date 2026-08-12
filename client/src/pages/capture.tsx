@@ -101,6 +101,12 @@ interface Draft {
    * by tapping Keep — a guess must not arrive here on its own.
    */
   category?: string;
+  /**
+   * Reaches items.CURRENT_VALUE, which the insurance report reads. Only ever
+   * set by tapping Keep, and always shown as an estimate.
+   */
+  currentValue?: number;
+  quantity?: number;
 }
 
 /**
@@ -117,6 +123,10 @@ interface Vision {
   name: string | null;
   description: string | null;
   category: string | null;
+  brand: string | null;
+  quantity: number | null;
+  /** Rough replacement cost. Never auto-applied — see the review panel. */
+  estimatedValue: number | null;
   confidence: 'high' | 'medium' | 'low';
 }
 
@@ -310,6 +320,10 @@ export function Capture() {
         // validates it against a closed enum and turns it into a
         // property-scoped tag.
         ...(d.category ? { category: d.category } : {}),
+        ...(d.quantity != null ? { quantity: d.quantity } : {}),
+        // An estimate the user explicitly accepted. It is the only AI-derived
+        // number that reaches a money column, so it travels only when kept.
+        ...(d.currentValue != null ? { currentValue: d.currentValue } : {}),
       } as Parameters<typeof createItem.mutateAsync>[0]);
       const created = res?.item;
       if (!created) throw new Error('Create returned no item');
@@ -610,7 +624,8 @@ export function Capture() {
                   : 'photo held — saves with the item'}
               </span>
             )}
-            {vision && (vision.description || vision.category) && !reviewOpen && (
+            {vision && (vision.description || vision.category || vision.brand
+              || vision.estimatedValue != null || (vision.quantity ?? 0) > 1) && !reviewOpen && (
               <button type="button" onClick={() => setReviewOpen(true)}
                 className="block font-mono text-[9px] uppercase tracking-[0.06em] text-[var(--color-primary)] underline">
                 review what it found
@@ -711,14 +726,57 @@ export function Capture() {
                   </Button>
                 </div>
               )}
-              {(draft.description || draft.category) && (
+              {vision.brand && !draft.name.toLowerCase().includes(vision.brand.toLowerCase()) && (
+                <div className="flex items-center gap-2">
+                  <p className="flex-1 text-xs">
+                    <span className="text-[var(--color-text-muted)]">Brand: </span>{vision.brand}
+                  </p>
+                  {/* items has no BRAND column — products does. For an item with
+                      no catalogue match the name is where brand lives, so
+                      keeping it means putting it there. */}
+                  <Button size="sm" variant="outline" className="shrink-0"
+                    onClick={() => setDraft((d) => ({ ...d, name: `${vision.brand} ${d.name}`.trim() }))}>
+                    Add to name
+                  </Button>
+                </div>
+              )}
+              {vision.quantity != null && vision.quantity > 1 && draft.quantity == null && (
+                <div className="flex items-center gap-2">
+                  <p className="flex-1 text-xs">
+                    <span className="text-[var(--color-text-muted)]">Quantity: </span>{vision.quantity}
+                  </p>
+                  <Button size="sm" variant="outline" className="shrink-0"
+                    onClick={() => setDraft((d) => ({ ...d, quantity: vision.quantity || undefined }))}>
+                    Keep
+                  </Button>
+                </div>
+              )}
+              {vision.estimatedValue != null && draft.currentValue == null && (
+                <div className="flex items-center gap-2">
+                  <p className="flex-1 text-xs">
+                    <span className="text-[var(--color-text-muted)]">Est. value: </span>
+                    ~${vision.estimatedValue}
+                    <span className="block font-mono text-[9px] uppercase tracking-wide text-[var(--color-text-muted)]">
+                      a guess from the photo — appears in insurance reports
+                    </span>
+                  </p>
+                  <Button size="sm" variant="outline" className="shrink-0"
+                    onClick={() => setDraft((d) => ({ ...d, currentValue: vision.estimatedValue || undefined }))}>
+                    Keep
+                  </Button>
+                </div>
+              )}
+              {(draft.description || draft.category || draft.currentValue != null || draft.quantity != null) && (
                 <p className="font-mono text-[10px] uppercase tracking-wide text-[var(--color-text-muted)]">
                   Kept: {[draft.description ? 'description' : null,
-                          draft.category ? `category (${draft.category})` : null]
+                          draft.category ? `category (${draft.category})` : null,
+                          draft.quantity != null ? `qty ${draft.quantity}` : null,
+                          draft.currentValue != null ? `value ~$${draft.currentValue}` : null]
                           .filter(Boolean).join(', ')}
                 </p>
               )}
-              {!vision.description && !vision.category && (
+              {!vision.description && !vision.category && !vision.brand
+                && vision.estimatedValue == null && (vision.quantity ?? 0) <= 1 && (
                 <p className="text-xs text-[var(--color-text-muted)]">Only a name was offered.</p>
               )}
             </div>

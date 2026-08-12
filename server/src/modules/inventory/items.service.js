@@ -192,8 +192,8 @@ const ItemsService = {
     try {
       const result = await _db.query(
         `INSERT INTO TALLY.items
-           (CONTAINER_ID, PRODUCT_ID, NAME, DESCRIPTION, QUANTITY, QR_CODE, PURCHASE_PRICE, \`CONDITION\`, STATUS)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active')`,
+           (CONTAINER_ID, PRODUCT_ID, NAME, DESCRIPTION, QUANTITY, QR_CODE, PURCHASE_PRICE, CURRENT_VALUE, \`CONDITION\`, STATUS)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')`,
         [
           data.containerId,
           data.productId || null,
@@ -202,6 +202,7 @@ const ItemsService = {
           data.quantity != null ? data.quantity : 1,
           qrCode,
           data.purchasePrice != null ? data.purchasePrice : null,
+          data.currentValue != null ? data.currentValue : null,
           data.condition || 'good',
         ]
       );

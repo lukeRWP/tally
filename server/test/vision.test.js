@@ -460,3 +460,62 @@ test('category still accepts every enum value and null', () => {
     'the model must be able to say it has no category — otherwise "cannot tell" '
     + 'collapses into the "other" tag and pollutes a hand-curated namespace');
 });
+
+// ── the extra extracted fields ───────────────────────────────────────────────
+
+test('value and quantity are bounded, not merely typed', () => {
+  // These land in a DECIMAL(10,2) and an INT under STRICT_TRANS_TABLES, where
+  // an out-of-range write errors rather than clamping. A model returning 1e9,
+  // a negative, or a fraction must be rejected here, not by MySQL.
+  const base = { confidence: 'high', name: 'Mug', description: 'd', category: 'kitchen' };
+  const v = (extra) => VisionService.normalise({ ...base, ...extra });
+  assert.equal(v({ estimatedValue: 24.99 }).estimatedValue, 24.99);
+  assert.equal(v({ estimatedValue: 24.999 }).estimatedValue, 25, 'rounded to cents');
+  for (const bad of [0, -5, 1e9, Infinity, NaN, '25', null]) {
+    assert.equal(v({ estimatedValue: bad }).estimatedValue, null, `value ${bad} must be rejected`);
+  }
+  assert.equal(v({ quantity: 4 }).quantity, 4);
+  for (const bad of [0, -1, 2.5, 100000, '4']) {
+    assert.equal(v({ quantity: bad }).quantity, null, `quantity ${bad} must be rejected`);
+  }
+});
+
+test('createItem bounds currentValue independently of the model', () => {
+  // An ordinary authenticated endpoint: the vision layer's filtering cannot be
+  // the only gate on a number reports.service.js reads into the insurance report.
+  assert.equal(createItem.validate({ name: 'X', containerId: 1, currentValue: 25.5 }).error, undefined);
+  for (const bad of [-1, 0, 1000001]) {
+    assert.ok(createItem.validate({ name: 'X', containerId: 1, currentValue: bad }).error,
+      `currentValue ${bad} must be rejected at the route`);
+  }
+});
+
+test('ItemsService.create binds CURRENT_VALUE in the right position', async () => {
+  // The column list, the placeholders and the params array are three things
+  // that must agree. They silently disagreed when this field was added — the
+  // SQL edit failed while the params edit applied, which binds every value one
+  // position off rather than erroring cleanly.
+  const ItemsService = require('../src/modules/inventory/items.service');
+  // create() fires AuditService.logChange without awaiting it; an uninitialised
+  // audit service throws on a later tick and fails the test from outside it.
+  const AuditService = require('../src/modules/audit/audit.service');
+  AuditService.init({ db: { query: async () => [] }, logger });
+  let sql = '', params = null;
+  ItemsService.init({
+    db: { query: async (s, p) => {
+      if (/INSERT INTO TALLY\.items/.test(s)) { sql = s; params = p; return { insertId: 1 }; }
+      return [];
+    } },
+    logger,
+  });
+  await ItemsService.create(
+    { containerId: 3, name: 'Mug', quantity: 2, purchasePrice: 10, currentValue: 25.5 }, 1,
+  );
+  const cols = sql.match(/\(CONTAINER_ID[^)]*\)/)[0].split(',').map((c) => c.trim().replace(/`/g, ''));
+  const placeholders = (sql.match(/VALUES \(([^)]*)\)/)[1].match(/\?/g) || []).length;
+  assert.equal(cols.length, placeholders + 1, 'columns must equal placeholders + the STATUS literal');
+  assert.equal(params.length, placeholders, 'params must equal placeholders');
+  assert.equal(params[cols.indexOf('CURRENT_VALUE')], 25.5, 'CURRENT_VALUE bound to its own column');
+  assert.equal(params[cols.indexOf('PURCHASE_PRICE')], 10, 'PURCHASE_PRICE not shifted');
+  assert.equal(params[cols.indexOf('QUANTITY')], 2);
+});
