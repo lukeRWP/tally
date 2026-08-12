@@ -33,11 +33,18 @@ if (!isProduction) {
     })
   );
 } else {
-  // In production also log errors to console so container logs capture them
+  // In production also log errors to console so container logs capture them.
+  //
+  // The default stays 'error' — but it now honours LOG_LEVEL, which the comment
+  // above has always claimed and the code did not do: `level: 'error'` ignored
+  // the LOG_LEVEL computed on line 5, so there was no way to raise console
+  // verbosity in prod short of enabling file logging. That cost a debugging
+  // session: every info/warn the app emits was invisible in `docker compose
+  // logs`, so "no log line" and "the code never ran" looked identical.
   transports.push(
     new winston.transports.Console({
       format: structuredFormat,
-      level: 'error',
+      level: process.env.LOG_LEVEL || 'error',
     })
   );
 }
