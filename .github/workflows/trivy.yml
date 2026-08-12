@@ -23,7 +23,7 @@ jobs:
       contents: read
       security-events: write   # for SARIF upload to Code Scanning tab
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v4.x
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4.x
 
       # GATE: this is the pass/fail check. Use table output, which honors the
       # `severity` filter AND `.trivyignore` correctly. (The sarif format path
