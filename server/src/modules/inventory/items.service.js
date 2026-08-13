@@ -31,6 +31,11 @@ const ItemsService = {
       quantity: row.QUANTITY != null ? Number(row.QUANTITY) : 1,
       qrCode: row.QR_CODE || null,
       purchasePrice: row.PURCHASE_PRICE != null ? Number(row.PURCHASE_PRICE) : null,
+      // create() wrote CURRENT_VALUE and no read path ever returned it, so the
+      // column was write-only from the API's side: the item page could not show
+      // a value it had just saved, let alone that it was an estimate.
+      currentValue: row.CURRENT_VALUE != null ? Number(row.CURRENT_VALUE) : null,
+      currentValueIsEstimate: Boolean(row.CURRENT_VALUE_IS_ESTIMATE),
       condition: row.CONDITION || null,
       status: row.STATUS || null,
       depreciationEnabled: row.DEPRECIATION_ENABLED != null ? Boolean(row.DEPRECIATION_ENABLED) : false,
@@ -188,52 +193,51 @@ const ItemsService = {
   },
 
   async create(data, userId) {
-    let qrCode = generateCode('item');
+    // ONE statement, two call sites.
+    //
+    // The QR-collision retry used to carry its own copy of this INSERT, and the
+    // two had drifted: the retry's column list omitted CURRENT_VALUE, so an
+    // item created on a colliding code silently lost its value. Nothing failed
+    // and nothing logged — the item just appeared worth nothing.
+    //
+    // Duplicating a column list is how that happens, so there is now only one
+    // to keep in step. Adding CURRENT_VALUE_IS_ESTIMATE to a divergent pair
+    // would have reproduced the same bug with the provenance flag.
+    const insert = (qrCode) => _db.query(
+      `INSERT INTO TALLY.items
+         (CONTAINER_ID, PRODUCT_ID, NAME, DESCRIPTION, QUANTITY, QR_CODE, PURCHASE_PRICE, CURRENT_VALUE, CURRENT_VALUE_IS_ESTIMATE, \`CONDITION\`, STATUS)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')`,
+      [
+        data.containerId,
+        data.productId || null,
+        data.name,
+        data.description || null,
+        data.quantity != null ? data.quantity : 1,
+        qrCode,
+        data.purchasePrice != null ? data.purchasePrice : null,
+        data.currentValue != null ? data.currentValue : null,
+        // Only meaningful alongside a value. A flag with no number would claim
+        // provenance for something that does not exist.
+        data.currentValue != null && data.currentValueIsEstimate ? 1 : 0,
+        data.condition || 'good',
+      ]
+    );
+
+    let result;
     try {
-      const result = await _db.query(
-        `INSERT INTO TALLY.items
-           (CONTAINER_ID, PRODUCT_ID, NAME, DESCRIPTION, QUANTITY, QR_CODE, PURCHASE_PRICE, CURRENT_VALUE, \`CONDITION\`, STATUS)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')`,
-        [
-          data.containerId,
-          data.productId || null,
-          data.name,
-          data.description || null,
-          data.quantity != null ? data.quantity : 1,
-          qrCode,
-          data.purchasePrice != null ? data.purchasePrice : null,
-          data.currentValue != null ? data.currentValue : null,
-          data.condition || 'good',
-        ]
-      );
-      const propertyId = await ItemsService.getPropertyIdForItem(result.insertId);
-      AuditService.logChange(userId, 'item', result.insertId, 'created', data, propertyId);
-      return ItemsService.getById(result.insertId);
+      result = await insert(generateCode('item'));
     } catch (err) {
       // Duplicate QR code — retry once with a new code
       if (err.code === 'ER_DUP_ENTRY' && err.message.includes('qr_code')) {
-        qrCode = generateCode('item');
-        const result = await _db.query(
-          `INSERT INTO TALLY.items
-             (CONTAINER_ID, PRODUCT_ID, NAME, DESCRIPTION, QUANTITY, QR_CODE, PURCHASE_PRICE, \`CONDITION\`, STATUS)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active')`,
-          [
-            data.containerId,
-            data.productId || null,
-            data.name,
-            data.description || null,
-            data.quantity != null ? data.quantity : 1,
-            qrCode,
-            data.purchasePrice != null ? data.purchasePrice : null,
-            data.condition || 'good',
-          ]
-        );
-        const propertyId = await ItemsService.getPropertyIdForItem(result.insertId);
-        AuditService.logChange(userId, 'item', result.insertId, 'created', data, propertyId);
-        return ItemsService.getById(result.insertId);
+        result = await insert(generateCode('item'));
+      } else {
+        throw err;
       }
-      throw err;
     }
+
+    const propertyId = await ItemsService.getPropertyIdForItem(result.insertId);
+    AuditService.logChange(userId, 'item', result.insertId, 'created', data, propertyId);
+    return ItemsService.getById(result.insertId);
   },
 
   async update(id, data, userId) {
@@ -244,6 +248,16 @@ const ItemsService = {
     if (data.description !== undefined) { fields.push('DESCRIPTION = ?'); values.push(data.description); }
     if (data.quantity !== undefined) { fields.push('QUANTITY = ?'); values.push(data.quantity); }
     if (data.purchasePrice !== undefined) { fields.push('PURCHASE_PRICE = ?'); values.push(data.purchasePrice); }
+    // Editing the value ALWAYS clears the estimate flag, and the flag is not
+    // settable here on purpose. A number arriving through this route was typed
+    // by a person, which is the definition of declared — so provenance is
+    // derived from which path wrote it rather than asserted by the caller, and
+    // no client can mark its own guess as declared or vice versa.
+    if (data.currentValue !== undefined) {
+      fields.push('CURRENT_VALUE = ?');
+      values.push(data.currentValue);
+      fields.push('CURRENT_VALUE_IS_ESTIMATE = 0');
+    }
     if (data.condition !== undefined) { fields.push('`CONDITION` = ?'); values.push(data.condition); }
     if (data.depreciationEnabled !== undefined) { fields.push('DEPRECIATION_ENABLED = ?'); values.push(data.depreciationEnabled ? 1 : 0); }
     if (data.depreciationRate !== undefined) { fields.push('DEPRECIATION_RATE = ?'); values.push(data.depreciationRate); }

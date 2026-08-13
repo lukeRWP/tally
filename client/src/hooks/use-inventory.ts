@@ -226,6 +226,13 @@ export function useCreateItem() {
       quantity?: number;
       purchasePrice?: number;
       condition?: string;
+      // These two were sent by the capture flow and absent from this type, so
+      // the caller needed a cast to compile — which is exactly why a money
+      // field could travel to the server with nothing checking its shape.
+      currentValue?: number;
+      currentValueIsEstimate?: boolean;
+      /** Not a column — the server turns it into a property-scoped tag. */
+      category?: string;
     }) => api.post<{ item: Item }>('/api/items/_y_/create', data),
     // Same reason as useMoveItem: container and area rows carry itemCount, so
     // adding an item without invalidating them leaves those counts stale.

@@ -43,6 +43,8 @@ export interface Item {
   quantity: number;
   purchasePrice: number | null;
   currentValue: number | null;
+  /** True when currentValue came from photo identification rather than the user. */
+  currentValueIsEstimate: boolean;
   condition: 'new' | 'good' | 'fair' | 'poor';
   qrCode: string;
   status: 'active' | 'removed' | 'lent';

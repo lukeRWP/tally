@@ -8,6 +8,18 @@ let _config = null;
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
+// Suffix printed after a value in the insurance PDF to show where it came from.
+// 'declared' is deliberately unmarked: it is the expected case, and marking the
+// norm would bury the exceptions. Indexed by valueBasis, including null (an item
+// with no price at all), so a missing key can never print "undefined".
+const BASIS_MARK = Object.freeze({
+  declared: '',
+  estimated: ' e',
+  depreciated: ' d',
+  purchase: ' p',
+  null: '',
+});
+
 // Neutralize CSV/formula injection: a cell beginning with = + - @ tab or CR can be
 // executed as a formula by Excel/Sheets. Prefix any such value with a single quote.
 function _csvSafeValue(value) {
@@ -58,6 +70,7 @@ const ReportsService = {
          i.NAME AS ITEM_NAME,
          i.PURCHASE_PRICE,
          i.CURRENT_VALUE,
+         i.CURRENT_VALUE_IS_ESTIMATE,
          i.DEPRECIATION_ENABLED,
          i.DEPRECIATION_RATE AS ITEM_DEPRECIATION_RATE,
          i.CONDITION,
@@ -102,11 +115,26 @@ const ReportsService = {
       const purchaseDate = row.PURCHASE_DATE || row.ITEM_CREATED_AT;
       const purchasePrice = row.PURCHASE_PRICE ? parseFloat(row.PURCHASE_PRICE) : null;
 
+      // The "Current Value" column has FOUR possible provenances and used to
+      // print all of them as identical currency. On the one document where a
+      // number's origin decides whether a claim is honest, that is the whole
+      // problem — most sharply in the last branch, where an item with no
+      // current value at all reports its PURCHASE PRICE as its current value,
+      // silently overstating the total.
+      //
+      // The number itself is unchanged; what is new is that it now says where
+      // it came from. Only 'estimated' needs a stored fact — the rest are
+      // derivable, so the boolean column is the minimum added state.
       let currentValue = purchasePrice;
+      let valueBasis = purchasePrice != null ? 'purchase' : null;
       if (row.DEPRECIATION_ENABLED && purchasePrice && depRate) {
         currentValue = _calcDepreciatedValue(purchasePrice, parseFloat(depRate), purchaseDate);
+        valueBasis = 'depreciated';
       } else if (row.CURRENT_VALUE != null) {
+        // Note the precedence, which predates this change: an item with
+        // depreciation enabled never consults CURRENT_VALUE at all.
         currentValue = parseFloat(row.CURRENT_VALUE);
+        valueBasis = row.CURRENT_VALUE_IS_ESTIMATE ? 'estimated' : 'declared';
       }
 
       // (Removed a per-item presigned-URL call here — neither the PDF nor the
@@ -120,6 +148,7 @@ const ReportsService = {
         brand: row.PRODUCT_BRAND || null,
         purchasePrice,
         currentValue,
+        valueBasis,
         condition: row.LATEST_CONDITION || row.CONDITION || null,
         areaName: row.AREA_NAME,
         containerName: row.CONTAINER_NAME,
@@ -593,7 +622,9 @@ const ReportsService = {
       doc.text(item.itemName || '-', cols[0].x, rowY, { width: cols[0].w, lineBreak: false, ellipsis: true });
       doc.text(item.brand || '-', cols[1].x, rowY, { width: cols[1].w, lineBreak: false, ellipsis: true });
       doc.text(_fmtCurrency(item.purchasePrice), cols[2].x, rowY, { width: cols[2].w, lineBreak: false });
-      doc.text(_fmtCurrency(item.currentValue), cols[3].x, rowY, { width: cols[3].w, lineBreak: false });
+      // `|| ''` rather than trusting the lookup: an unmapped basis would
+      // otherwise print the literal "undefined" beside a currency figure.
+      doc.text(_fmtCurrency(item.currentValue) + (BASIS_MARK[item.valueBasis] || ''), cols[3].x, rowY, { width: cols[3].w, lineBreak: false });
       doc.text(item.condition || '-', cols[4].x, rowY, { width: cols[4].w, lineBreak: false });
       doc.text(`${item.areaName || ''} > ${item.containerName || ''}`, cols[5].x, rowY, { width: cols[5].w, lineBreak: false, ellipsis: true });
       doc.moveDown(0.5);
@@ -605,6 +636,29 @@ const ReportsService = {
     const totalCurrent = items.reduce((s, i) => s + (i.currentValue || 0), 0);
     doc.font('Helvetica-Bold').fontSize(9);
     doc.text(`Total Items: ${items.length}    |    Purchase Total: ${_fmtCurrency(totalPurchase)}    |    Current Total: ${_fmtCurrency(totalCurrent)}`);
+
+    // How much of that total is actually asserted, and how much is inferred.
+    // A reader cannot weigh the number above without it, and counting marks by
+    // hand across four pages is not a reasonable thing to ask of them.
+    const basisCount = (b) => items.filter(i => i.valueBasis === b).length;
+    const estimated = basisCount('estimated');
+    const depreciated = basisCount('depreciated');
+    const fromPurchase = basisCount('purchase');
+    doc.moveDown(0.4);
+    doc.font('Helvetica').fontSize(7.5);
+    doc.text(
+      `Value basis — declared: ${basisCount('declared')}    ` +
+      `estimated (e): ${estimated}    depreciated (d): ${depreciated}    ` +
+      `from purchase price (p): ${fromPurchase}`
+    );
+    if (estimated || fromPurchase) {
+      doc.moveDown(0.2);
+      doc.font('Helvetica-Oblique').fontSize(7);
+      doc.text(
+        'e = value suggested by photo identification and kept, not declared.    ' +
+        'p = no current value recorded; the purchase price is shown in its place.'
+      );
+    }
   },
 
   _renderTotalValuePdf(doc, groups) {
@@ -773,6 +827,10 @@ const ReportsService = {
             { id: 'productName', title: 'Product' },
             { id: 'purchasePrice', title: 'Purchase Price' },
             { id: 'currentValue', title: 'Current Value' },
+            // A spreadsheet is where these numbers get summed and pasted into a
+            // claim, so provenance has to survive the export as its own column —
+            // the PDF's letter suffix would just corrupt the figure here.
+            { id: 'valueBasis', title: 'Value Basis' },
             { id: 'condition', title: 'Condition' },
             { id: 'areaName', title: 'Area' },
             { id: 'containerName', title: 'Container' },
@@ -782,6 +840,7 @@ const ReportsService = {
           ...i,
           purchasePrice: i.purchasePrice != null ? i.purchasePrice : '',
           currentValue: i.currentValue != null ? i.currentValue : '',
+          valueBasis: i.valueBasis || '',
           condition: i.condition || '',
           brand: i.brand || '',
           productName: i.productName || '',
