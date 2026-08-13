@@ -13,6 +13,10 @@ const createItem = Joi.object({
   // the model's own filtering cannot be the only gate on a value that
   // reports.service.js reads into the insurance report.
   currentValue: Joi.number().precision(2).positive().max(100000).allow(null),
+  // Set by the capture flow when the user Keeps the model's estimate. Defaults
+  // to false, so every other caller writes a declared value without opting in —
+  // the risky direction (a guess passing as declared) needs the explicit flag.
+  currentValueIsEstimate: Joi.boolean().default(false),
   condition: Joi.string().valid('new', 'good', 'fair', 'poor').default('good'),
   // Not a column on items — it is applied as a property-scoped tag after the
   // row is written (see items.routes.js). The closed enum is the gate: this is
@@ -28,6 +32,11 @@ const updateItem = Joi.object({
   description: Joi.string().allow('', null),
   quantity: Joi.number().integer().min(1),
   purchasePrice: Joi.number().precision(2).allow(null),
+  // create() wrote CURRENT_VALUE and update() had no branch for it, so a value
+  // could be set once and never corrected — including one the AI estimated.
+  // Marking a number as a guess is only useful if there is a way to replace it.
+  // Same bounds as create: this reaches the insurance report either way.
+  currentValue: Joi.number().precision(2).positive().max(100000).allow(null),
   condition: Joi.string().valid('new', 'good', 'fair', 'poor'),
   depreciationEnabled: Joi.boolean(),
   depreciationRate: Joi.number().precision(4).min(0).max(1).allow(null),

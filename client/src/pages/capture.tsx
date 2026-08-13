@@ -333,8 +333,15 @@ export function Capture() {
         ...(d.quantity != null ? { quantity: d.quantity } : {}),
         // An estimate the user explicitly accepted. It is the only AI-derived
         // number that reaches a money column, so it travels only when kept.
-        ...(d.currentValue != null ? { currentValue: d.currentValue } : {}),
-      } as Parameters<typeof createItem.mutateAsync>[0]);
+        //
+        // The flag is unconditional because this screen has exactly one way to
+        // set currentValue — the Keep button on the model's guess. If a
+        // hand-entry value field is ever added here, this MUST become
+        // conditional, or a typed number will be filed as an estimate.
+        ...(d.currentValue != null
+          ? { currentValue: d.currentValue, currentValueIsEstimate: true }
+          : {}),
+      });
       const created = res?.item;
       if (!created) throw new Error('Create returned no item');
 
