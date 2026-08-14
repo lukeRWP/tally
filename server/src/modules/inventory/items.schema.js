@@ -1,6 +1,12 @@
 const Joi = require('joi');
 const { CATEGORY_ENUM } = require('../products/lookup/vision-identify');
 
+// Mirrors the items.COMPLETENESS enum (migration 006). Exported so the reports
+// layer decides what to exclude from a total by name rather than by literal.
+const COMPLETENESS = ['complete', 'box_only', 'accessories_only'];
+/** The values that mean "the thing itself is not here" — excluded from value totals. */
+const PARTIAL = COMPLETENESS.filter(c => c !== 'complete');
+
 const createItem = Joi.object({
   name: Joi.string().max(255).required(),
   description: Joi.string().allow('', null),
@@ -18,6 +24,9 @@ const createItem = Joi.object({
   // the risky direction (a guess passing as declared) needs the explicit flag.
   currentValueIsEstimate: Joi.boolean().default(false),
   condition: Joi.string().valid('new', 'good', 'fair', 'poor').default('good'),
+  // Whether the thing itself is here, or only its packaging/spares. Scanning a
+  // retail box otherwise files the product's full price against an empty box.
+  completeness: Joi.string().valid(...COMPLETENESS).default('complete'),
   // Not a column on items — it is applied as a property-scoped tag after the
   // row is written (see items.routes.js). The closed enum is the gate: this is
   // an ordinary authenticated endpoint, reachable without ever calling the
@@ -38,6 +47,7 @@ const updateItem = Joi.object({
   // Same bounds as create: this reaches the insurance report either way.
   currentValue: Joi.number().precision(2).positive().max(100000).allow(null),
   condition: Joi.string().valid('new', 'good', 'fair', 'poor'),
+  completeness: Joi.string().valid(...COMPLETENESS),
   depreciationEnabled: Joi.boolean(),
   depreciationRate: Joi.number().precision(4).min(0).max(1).allow(null),
 }).min(1);
@@ -61,4 +71,4 @@ const recentItems = Joi.object({
   limit: Joi.number().integer().min(1).max(100).default(25),
 });
 
-module.exports = { createItem, updateItem, moveItem, searchItems, recentItems };
+module.exports = { createItem, updateItem, moveItem, searchItems, recentItems, COMPLETENESS, PARTIAL };

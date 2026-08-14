@@ -62,8 +62,16 @@ interface FieldDef {
   label: string;
   required?: boolean;
   type?: string;
-  /** Present = render a dropdown of these plus "Other…" instead of a text box. */
+  /** Present = render a dropdown of these instead of a text box. */
   options?: readonly string[];
+  /** Display text per option, where the stored value is not what to show. */
+  optionLabels?: Record<string, string>;
+  /**
+   * The server validates this against a closed enum, so suppress "Other…".
+   * Offering free text into an enum column just produces a 422 the user
+   * cannot act on.
+   */
+  closed?: boolean;
 }
 
 const fieldsByType: Record<EntityType, FieldDef[]> = {
@@ -87,6 +95,17 @@ const fieldsByType: Record<EntityType, FieldDef[]> = {
     { name: 'quantity', label: 'Quantity', type: 'number' },
     { name: 'purchasePrice', label: 'Purchase Price', type: 'number' },
     { name: 'condition', label: 'Condition (new, good, fair, poor)' },
+    {
+      name: 'completeness',
+      label: "What's here",
+      options: ['complete', 'box_only', 'accessories_only'],
+      optionLabels: {
+        complete: 'The whole thing',
+        box_only: 'Box only — item is elsewhere',
+        accessories_only: 'Spares only — item is elsewhere',
+      },
+      closed: true,
+    },
   ],
 };
 
@@ -198,9 +217,9 @@ export function EntityForm({
                 >
                   <option value="">Select…</option>
                   {optionsFor(field).map((o) => (
-                    <option key={o} value={o}>{o}</option>
+                    <option key={o} value={o}>{field.optionLabels?.[o] ?? o}</option>
                   ))}
-                  <option value={OTHER}>Other…</option>
+                  {!field.closed && <option value={OTHER}>Other…</option>}
                 </Select>
               ) : field.options ? (
                 <>
