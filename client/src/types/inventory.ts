@@ -46,6 +46,8 @@ export interface Item {
   /** True when currentValue came from photo identification rather than the user. */
   currentValueIsEstimate: boolean;
   condition: 'new' | 'good' | 'fair' | 'poor';
+  /** Whether the thing itself is here, or only its packaging / spares. */
+  completeness: 'complete' | 'box_only' | 'accessories_only';
   qrCode: string;
   status: 'active' | 'removed' | 'lent';
   createdAt: string;

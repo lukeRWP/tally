@@ -57,6 +57,19 @@ import { decideSuggestion } from '@/lib/vision-decision';
  * are not destinations at all.
  */
 
+/**
+ * The exceptions to "the whole thing is here".
+ *
+ * A retail box scans as its product, so without this a kept computer box files
+ * itself under the computer's name AND its catalogue price, while the computer
+ * is in use somewhere else. The insurance report excludes these rows from its
+ * totals — see reports.service.js.
+ */
+const PARTIAL_OPTIONS = [
+  { value: 'box_only' as const, label: 'box only' },
+  { value: 'accessories_only' as const, label: 'spares only' },
+];
+
 const DEST_KEY = 'tally-last-container';
 /** How many recent bins to offer at step 3. Three fits one row at 390px. */
 const RECENTS = 3;
@@ -109,6 +122,12 @@ interface Draft {
    */
   currentValue?: number;
   quantity?: number;
+  /**
+   * Set only when the thing itself is NOT in the bin — its box or its spares
+   * are. Undefined means complete, which is the overwhelming majority, so the
+   * server's default carries it and nothing is sent.
+   */
+  completeness?: 'box_only' | 'accessories_only';
 }
 
 /**
@@ -341,6 +360,9 @@ export function Capture() {
         ...(d.currentValue != null
           ? { currentValue: d.currentValue, currentValueIsEstimate: true }
           : {}),
+        // Omitted when complete — the column defaults, so sending it would only
+        // be restating the norm.
+        ...(d.completeness ? { completeness: d.completeness } : {}),
       });
       const created = res?.item;
       if (!created) throw new Error('Create returned no item');
@@ -659,6 +681,37 @@ export function Capture() {
                 review what it found
               </button>
             )}
+
+            {/*
+              Two toggles rather than a three-way picker: 'complete' is the
+              default and needs no control, so the only thing to express is the
+              exception. Tapping the active one returns to complete.
+
+              It lives in the draft strip because the strip is shrink-0 and
+              always visible — step 2 is exactly one screen tall, and a control
+              below the fold is a control nobody uses.
+            */}
+            <span className="mt-1 flex gap-1">
+              {PARTIAL_OPTIONS.map(({ value, label }) => (
+                <button
+                  key={value}
+                  type="button"
+                  aria-pressed={draft.completeness === value}
+                  onClick={() => setDraft((d) => ({
+                    ...d,
+                    completeness: d.completeness === value ? undefined : value,
+                  }))}
+                  className={cn(
+                    'font-mono text-[9px] uppercase tracking-[0.06em] px-1.5 py-0.5 rounded-full border',
+                    draft.completeness === value
+                      ? 'bg-[var(--color-text)] text-[var(--color-bg)] border-[var(--color-text)]'
+                      : 'border-[var(--color-rule)] text-[var(--color-text-muted)]',
+                  )}
+                >
+                  {label}
+                </button>
+              ))}
+            </span>
           </span>
           <button type="button" aria-label="Discard" onClick={() => { resetDraft(); setPhase('photo'); }}
             className="min-w-[36px] min-h-[36px] flex items-center justify-center text-[var(--color-text-muted)]">

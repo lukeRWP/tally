@@ -233,6 +233,7 @@ export function useCreateItem() {
       currentValueIsEstimate?: boolean;
       /** Not a column — the server turns it into a property-scoped tag. */
       category?: string;
+      completeness?: 'complete' | 'box_only' | 'accessories_only';
     }) => api.post<{ item: Item }>('/api/items/_y_/create', data),
     // Same reason as useMoveItem: container and area rows carry itemCount, so
     // adding an item without invalidating them leaves those counts stale.

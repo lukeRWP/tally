@@ -20,6 +20,17 @@ const BASIS_MARK = Object.freeze({
   null: '',
 });
 
+// What prints in the Current Value column when the thing itself is not here.
+const PARTIAL_LABEL = Object.freeze({
+  box_only: '— box only',
+  accessories_only: '— spares only',
+});
+
+// Imported rather than re-listed: the enum lives with the Joi schema that
+// validates it, so a value added there cannot be silently counted here.
+const { PARTIAL } = require('../inventory/items.schema');
+const _isPartial = (item) => PARTIAL.includes(item.completeness);
+
 // Neutralize CSV/formula injection: a cell beginning with = + - @ tab or CR can be
 // executed as a formula by Excel/Sheets. Prefix any such value with a single quote.
 function _csvSafeValue(value) {
@@ -74,6 +85,7 @@ const ReportsService = {
          i.DEPRECIATION_ENABLED,
          i.DEPRECIATION_RATE AS ITEM_DEPRECIATION_RATE,
          i.CONDITION,
+         i.COMPLETENESS,
          i.CREATED_AT AS ITEM_CREATED_AT,
          p.NAME AS PRODUCT_NAME,
          p.BRAND AS PRODUCT_BRAND,
@@ -149,6 +161,9 @@ const ReportsService = {
         purchasePrice,
         currentValue,
         valueBasis,
+        // 'box_only'/'accessories_only' mean the thing itself is elsewhere, so
+        // this row's money describes an object that is not in the bin.
+        completeness: row.COMPLETENESS || 'complete',
         condition: row.LATEST_CONDITION || row.CONDITION || null,
         areaName: row.AREA_NAME,
         containerName: row.CONTAINER_NAME,
@@ -622,20 +637,46 @@ const ReportsService = {
       doc.text(item.itemName || '-', cols[0].x, rowY, { width: cols[0].w, lineBreak: false, ellipsis: true });
       doc.text(item.brand || '-', cols[1].x, rowY, { width: cols[1].w, lineBreak: false, ellipsis: true });
       doc.text(_fmtCurrency(item.purchasePrice), cols[2].x, rowY, { width: cols[2].w, lineBreak: false });
-      // `|| ''` rather than trusting the lookup: an unmapped basis would
-      // otherwise print the literal "undefined" beside a currency figure.
-      doc.text(_fmtCurrency(item.currentValue) + (BASIS_MARK[item.valueBasis] || ''), cols[3].x, rowY, { width: cols[3].w, lineBreak: false });
+      // A row for a box or a bag of spares still PRINTS — you want to know the
+      // box is in that tote — but it must not show the absent thing's value as
+      // though the thing were there. The figure is replaced by what is actually
+      // in the bin, and the totals below skip it.
+      doc.text(
+        _isPartial(item)
+          ? PARTIAL_LABEL[item.completeness]
+          : _fmtCurrency(item.currentValue) + (BASIS_MARK[item.valueBasis] || ''),
+        cols[3].x, rowY, { width: cols[3].w, lineBreak: false });
       doc.text(item.condition || '-', cols[4].x, rowY, { width: cols[4].w, lineBreak: false });
       doc.text(`${item.areaName || ''} > ${item.containerName || ''}`, cols[5].x, rowY, { width: cols[5].w, lineBreak: false, ellipsis: true });
       doc.moveDown(0.5);
     }
 
     // Summary
+    //
+    // Both totals skip box/spares rows. Their money describes the object the
+    // packaging came from, not the packaging — a scanned computer box carries
+    // the computer's catalogue price, and the computer is in use elsewhere.
+    // Counting it would overstate the claim by the price of a whole machine.
     doc.moveDown(1);
-    const totalPurchase = items.reduce((s, i) => s + (i.purchasePrice || 0), 0);
-    const totalCurrent = items.reduce((s, i) => s + (i.currentValue || 0), 0);
+    const counted = items.filter(i => !_isPartial(i));
+    const partial = items.filter(_isPartial);
+    const totalPurchase = counted.reduce((s, i) => s + (i.purchasePrice || 0), 0);
+    const totalCurrent = counted.reduce((s, i) => s + (i.currentValue || 0), 0);
     doc.font('Helvetica-Bold').fontSize(9);
     doc.text(`Total Items: ${items.length}    |    Purchase Total: ${_fmtCurrency(totalPurchase)}    |    Current Total: ${_fmtCurrency(totalCurrent)}`);
+
+    // What was left out, and what it would have added. An exclusion nobody can
+    // see is indistinguishable from data that was never entered.
+    if (partial.length) {
+      const withheld = partial.reduce((s, i) => s + (i.currentValue || 0), 0);
+      doc.moveDown(0.3);
+      doc.font('Helvetica').fontSize(8);
+      doc.text(
+        `Excluded from the totals — packaging or spares only: ${partial.length} ` +
+        `(${_fmtCurrency(withheld)} of recorded value not counted). ` +
+        `These rows are listed above; the item itself is not in this property.`
+      );
+    }
 
     // How much of that total is actually asserted, and how much is inferred.
     // A reader cannot weigh the number above without it, and counting marks by
@@ -831,6 +872,9 @@ const ReportsService = {
             // claim, so provenance has to survive the export as its own column —
             // the PDF's letter suffix would just corrupt the figure here.
             { id: 'valueBasis', title: 'Value Basis' },
+            // Whether this row is the thing or only its box/spares. Without it
+            // a spreadsheet total silently re-includes what the PDF excluded.
+            { id: 'completeness', title: 'Completeness' },
             { id: 'condition', title: 'Condition' },
             { id: 'areaName', title: 'Area' },
             { id: 'containerName', title: 'Container' },
@@ -841,6 +885,7 @@ const ReportsService = {
           purchasePrice: i.purchasePrice != null ? i.purchasePrice : '',
           currentValue: i.currentValue != null ? i.currentValue : '',
           valueBasis: i.valueBasis || '',
+          completeness: i.completeness || 'complete',
           condition: i.condition || '',
           brand: i.brand || '',
           productName: i.productName || '',

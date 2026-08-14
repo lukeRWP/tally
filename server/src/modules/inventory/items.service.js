@@ -37,6 +37,7 @@ const ItemsService = {
       currentValue: row.CURRENT_VALUE != null ? Number(row.CURRENT_VALUE) : null,
       currentValueIsEstimate: Boolean(row.CURRENT_VALUE_IS_ESTIMATE),
       condition: row.CONDITION || null,
+      completeness: row.COMPLETENESS || 'complete',
       status: row.STATUS || null,
       depreciationEnabled: row.DEPRECIATION_ENABLED != null ? Boolean(row.DEPRECIATION_ENABLED) : false,
       depreciationRate: row.DEPRECIATION_RATE != null ? Number(row.DEPRECIATION_RATE) : null,
@@ -205,8 +206,8 @@ const ItemsService = {
     // would have reproduced the same bug with the provenance flag.
     const insert = (qrCode) => _db.query(
       `INSERT INTO TALLY.items
-         (CONTAINER_ID, PRODUCT_ID, NAME, DESCRIPTION, QUANTITY, QR_CODE, PURCHASE_PRICE, CURRENT_VALUE, CURRENT_VALUE_IS_ESTIMATE, \`CONDITION\`, STATUS)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')`,
+         (CONTAINER_ID, PRODUCT_ID, NAME, DESCRIPTION, QUANTITY, QR_CODE, PURCHASE_PRICE, CURRENT_VALUE, CURRENT_VALUE_IS_ESTIMATE, \`CONDITION\`, COMPLETENESS, STATUS)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')`,
       [
         data.containerId,
         data.productId || null,
@@ -220,6 +221,7 @@ const ItemsService = {
         // provenance for something that does not exist.
         data.currentValue != null && data.currentValueIsEstimate ? 1 : 0,
         data.condition || 'good',
+        data.completeness || 'complete',
       ]
     );
 
@@ -259,6 +261,7 @@ const ItemsService = {
       fields.push('CURRENT_VALUE_IS_ESTIMATE = 0');
     }
     if (data.condition !== undefined) { fields.push('`CONDITION` = ?'); values.push(data.condition); }
+    if (data.completeness !== undefined) { fields.push('COMPLETENESS = ?'); values.push(data.completeness); }
     if (data.depreciationEnabled !== undefined) { fields.push('DEPRECIATION_ENABLED = ?'); values.push(data.depreciationEnabled ? 1 : 0); }
     if (data.depreciationRate !== undefined) { fields.push('DEPRECIATION_RATE = ?'); values.push(data.depreciationRate); }
 

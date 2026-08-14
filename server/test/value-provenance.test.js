@@ -206,3 +206,89 @@ test('the insurance CSV carries provenance as its own column', () => {
   assert.match(csv.split('\n')[0], /Value Basis/);
   assert.match(csv, /estimated/);
 });
+
+// ── completeness: box / spares only ───────────────────────────────────────
+
+/**
+ * Scanning a retail box files it under the product's name AND its catalogue
+ * price, while the thing itself is in use elsewhere. These hold the line that
+ * such a row never counts toward an insured total.
+ */
+
+test('create stores what is actually in the bin', async () => {
+  const { sql, params } = await captureInsert({ completeness: 'box_only' });
+  const i = sql.split(',').findIndex(c => /COMPLETENESS/.test(c));
+  assert.ok(i >= 0, 'COMPLETENESS not in the column list');
+  assert.equal(params[i], 'box_only');
+});
+
+test('create defaults to the whole thing being present', async () => {
+  const { sql, params } = await captureInsert({});
+  const i = sql.split(',').findIndex(c => /COMPLETENESS/.test(c));
+  assert.equal(params[i], 'complete');
+});
+
+test('an item can be corrected back to complete', async () => {
+  const { sql, params } = await captureUpdate({ completeness: 'complete' });
+  assert.match(sql, /COMPLETENESS = \?/);
+  assert.ok(params.includes('complete'));
+});
+
+test('the enum is closed — a typo cannot reach the column', () => {
+  const { createItem } = require('../src/modules/inventory/items.schema');
+  assert.ok(createItem.validate({ containerId: 1, name: 'x', completeness: 'box' }).error);
+  assert.ok(createItem.validate({ containerId: 1, name: 'x', completeness: 'boxes_only' }).error);
+});
+
+test('a box is reported, but its value is not counted', async () => {
+  Reports.init({
+    db: {
+      query: async () => [
+        { ITEM_ID: 1, ITEM_NAME: 'Cordless Drill', AREA_NAME: 'A', CONTAINER_NAME: 'C',
+          PURCHASE_PRICE: '189.00', CURRENT_VALUE: '142.00', COMPLETENESS: 'complete' },
+        { ITEM_ID: 2, ITEM_NAME: 'Dell XPS 15', AREA_NAME: 'A', CONTAINER_NAME: 'C',
+          PURCHASE_PRICE: '1400.00', CURRENT_VALUE: '1400.00', COMPLETENESS: 'box_only' },
+      ],
+    },
+    logger: noop,
+    config: {},
+  });
+  const items = await Reports.insuranceSummary(1);
+
+  // The box is still listed — you want to know it is in that tote.
+  assert.equal(items.length, 2);
+  assert.equal(items[1].completeness, 'box_only');
+
+  // But a total built from this data must skip it. This mirrors the filter in
+  // _renderInsurancePdf; if that filter is dropped the assertion below is what
+  // catches a claim overstated by the price of a whole machine.
+  const { PARTIAL } = require('../src/modules/inventory/items.schema');
+  const counted = items.filter(i => !PARTIAL.includes(i.completeness));
+  assert.equal(counted.length, 1);
+  assert.equal(counted.reduce((s, i) => s + (i.currentValue || 0), 0), 142);
+});
+
+test('the PDF renderer excludes partial rows from both totals', () => {
+  const src = fs.readFileSync(path.join(__dirname, '../src/modules/reports/reports.service.js'), 'utf8');
+  const body = src.slice(src.indexOf('_renderInsurancePdf'));
+  assert.match(body, /const counted = items\.filter\(i => !_isPartial\(i\)\)/,
+    'totals are no longer computed from a filtered list');
+  for (const total of ['totalPurchase', 'totalCurrent']) {
+    assert.match(body, new RegExp(`const ${total} = counted\\.reduce`),
+      `${total} is summed over every row, including boxes`);
+  }
+});
+
+test('PARTIAL never silently includes complete', () => {
+  const { COMPLETENESS, PARTIAL } = require('../src/modules/inventory/items.schema');
+  assert.ok(!PARTIAL.includes('complete'), 'every whole item would drop out of the totals');
+  assert.equal(PARTIAL.length, COMPLETENESS.length - 1);
+});
+
+test('the insurance CSV carries completeness, so a spreadsheet total agrees', () => {
+  const csv = Reports.generateCsv('insurance', [
+    { itemName: 'Dell XPS 15', currentValue: 1400, completeness: 'box_only' },
+  ]);
+  assert.match(csv.split('\n')[0], /Completeness/);
+  assert.match(csv, /box_only/);
+});

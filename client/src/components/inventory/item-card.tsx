@@ -3,6 +3,7 @@ import { Badge } from '@/components/ui/badge';
 import { RuledRow } from '@/components/ui/ruled-row';
 import { getItemIcon } from '@/lib/item-icons';
 import type { Item } from '@/types/inventory';
+import { COMPLETENESS_LABEL, isPartial } from '@/lib/completeness';
 
 interface ItemCardProps {
   item: Item;
@@ -60,6 +61,13 @@ export function ItemCard({ item, selectable, selected, onToggle }: ItemCardProps
       title={item.name}
       titleTrailing={
         <>
+          {/* First, and the loudest variant available: it changes what the row
+              IS. Everything else describes the thing; this says the thing is
+              not here. Reading "Dell XPS 15" in a tote and finding a box is the
+              failure this exists to prevent. */}
+          {isPartial(item) && (
+            <Badge variant="warning">{COMPLETENESS_LABEL[item.completeness]}</Badge>
+          )}
           <Badge variant={conditionVariant[item.condition]}>{item.condition}</Badge>
           <Badge variant={statusVariant[item.status]}>{item.status}</Badge>
         </>
