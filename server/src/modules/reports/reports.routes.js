@@ -40,7 +40,15 @@ module.exports = function reportsRoutes({ app, db, logger, config }) {
       }
 
       // Default: PDF
-      const buffer = await ReportsService.generatePdf(reportType, data);
+      //
+      // The header names the property and what was asked for, so a printed
+      // report is self-describing once it leaves the screen that generated it.
+      const scope = reportType === 'total_value' ? `by ${groupBy}`
+        : reportType === 'activity_log' && (startDate || endDate)
+          ? [startDate, endDate].filter(Boolean).join(' – ')
+          : null;
+      const propertyName = await ReportsService.getPropertyName(propertyId, req.user.id);
+      const buffer = await ReportsService.generatePdf(reportType, data, { propertyName, scope });
       res.setHeader('Content-Type', 'application/pdf');
       res.setHeader('Content-Disposition', `attachment; filename="tally-${reportType}-report.pdf"`);
       return res.send(buffer);
