@@ -54,13 +54,207 @@ function _calcDepreciatedValue(purchasePrice, depreciationRate, purchaseDate) {
 }
 
 function _fmtCurrency(val) {
-  if (val == null) return '-';
-  return `$${Number(val).toFixed(2)}`;
+  if (val == null) return '—';
+  // Grouped, because these are read as money on a claim form: "$22,590.00" is
+  // a number you can check at a glance and "$22590.00" is one you have to count
+  // digits on. PDF-only — every CSV column emits the raw number, so a
+  // spreadsheet still gets something it can sum.
+  return `$${Number(val).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
 function _fmtDate(d) {
   if (!d) return '-';
   return new Date(d).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+}
+
+// ── PDF layout ───────────────────────────────────────────────────────────────
+//
+// Shared chrome for the six report renderers, so they read as one family rather
+// than six documents that happen to come from the same app.
+
+const INK = '#111214';
+const MUTED = '#5c5f64';
+const ZEBRA = '#f4f4f5';
+const HAIR = '#c9cbcf';
+
+const M = 50;                        // page margin
+const PAGE_W = 612, PAGE_H = 792;    // US Letter, portrait
+const W = PAGE_W - M * 2;            // 512pt of usable width
+const RIGHT = M + W;
+const FOOTER_Y = PAGE_H - M - 16;
+/** Rows stop here so the page footer always has room of its own. */
+const BODY_BOTTOM = FOOTER_Y - 10;
+
+/** Matches reports.schema's limit — printed on the page when it bites. */
+const ACTIVITY_CAP = 500;
+
+const REPORT_NAMES = Object.freeze({
+  insurance: 'Insurance Summary',
+  total_value: 'Total Value',
+  items_by_location: 'Items by Location',
+  lending: 'Lending',
+  activity_log: 'Activity Log',
+  tag: 'Tag Report',
+});
+
+/** The inverted title bar — the same device as the app and the printed labels. */
+function _titleBar(doc, title) {
+  const h = 24, y = doc.y;
+  doc.save().rect(M, y, W, h).fill(INK).restore();
+  doc.fillColor('#FFFFFF').font('Helvetica-Bold').fontSize(13)
+    .text(String(title).toUpperCase(), M + 8, y + 7,
+      { width: W - 16, characterSpacing: 1.1, lineBreak: false, ellipsis: true });
+  doc.fillColor(INK);
+  doc.y = y + h;
+}
+
+/** Property and date, closed by the heavy rule the body hangs from. */
+function _metaLine(doc, left, right) {
+  const y = doc.y + 5;
+  doc.font('Courier').fontSize(7).fillColor(MUTED)
+    .text(String(left || '').toUpperCase(), M, y, { width: W * 0.66, lineBreak: false, ellipsis: true })
+    .text(String(right || '').toUpperCase(), M, y, { width: W, align: 'right', lineBreak: false });
+  const ruleY = y + 10;
+  doc.save().moveTo(M, ruleY).lineTo(RIGHT, ruleY).lineWidth(1.5).strokeColor(INK).stroke().restore();
+  doc.fillColor(INK);
+  doc.y = ruleY;
+}
+
+/**
+ * The black summary band: the two to four numbers the report exists to produce,
+ * directly under the header. Every total used to live at the bottom, after the
+ * rows — the last place anyone looks on a nine-page document.
+ */
+function _band(doc, entries) {
+  const list = entries.filter(Boolean);
+  if (!list.length) return;
+  const h = 30, y = doc.y + 7;
+  doc.save().rect(M, y, W, h).fill(INK).restore();
+  const cell = W / list.length;
+  list.forEach((e, i) => {
+    const x = M + i * cell + 7, w = cell - 11;
+    doc.font('Courier').fontSize(5.6).fillColor('#B9BCC2')
+      .text(String(e.k).toUpperCase(), x, y + 6,
+        { width: w, characterSpacing: 0.7, lineBreak: false, ellipsis: true });
+    doc.font('Courier-Bold').fontSize(10.5).fillColor('#FFFFFF')
+      .text(String(e.v), x, y + 15, { width: w, lineBreak: false, ellipsis: true });
+  });
+  doc.fillColor(INK);
+  doc.y = y + h;
+}
+
+/** Mono uppercase column heads over a hairline. Re-run after every addPage. */
+function _colHeads(doc, cols) {
+  const y = doc.y + 9;
+  doc.font('Courier').fontSize(5.8).fillColor(MUTED);
+  for (const c of cols) {
+    doc.text(String(c.label).toUpperCase(), c.x, y,
+      { width: c.w, align: c.align || 'left', characterSpacing: 0.7, lineBreak: false });
+  }
+  const ruleY = y + 8;
+  doc.save().moveTo(M, ruleY).lineTo(RIGHT, ruleY).lineWidth(0.7).strokeColor(HAIR).stroke().restore();
+  doc.fillColor(INK);
+  doc.y = ruleY + 2;
+}
+
+/**
+ * Break to a new page when `need` points will not fit, redrawing whatever
+ * chrome the body needs. A table whose headers appear only on page one stops
+ * being a table on page two.
+ */
+function _ensureRoom(doc, need, redraw) {
+  if (doc.y + need <= BODY_BOTTOM) return false;
+  doc.addPage();
+  doc.y = M;
+  if (redraw) redraw();
+  return true;
+}
+
+/** Paint a row's zebra stripe and return the y its cells draw at. */
+function _rowTop(doc, h, zebra) {
+  const y = doc.y;
+  if (zebra) doc.save().rect(M, y, W, h).fill(ZEBRA).restore();
+  doc.fillColor(INK);
+  return y;
+}
+
+/** Close a row with its hairline and advance. */
+function _rowEnd(doc, y, h) {
+  const ruleY = y + h;
+  doc.save().moveTo(M, ruleY).lineTo(RIGHT, ruleY).lineWidth(0.3).strokeColor('#e6e7ea').stroke().restore();
+  doc.fillColor(INK);
+  doc.y = ruleY;
+}
+
+/** A small outlined (or solid) pill. Returns the width it drew. */
+function _pill(doc, text, x, y, { solid = false, size = 5.6 } = {}) {
+  const label = String(text).toUpperCase();
+  doc.font('Helvetica-Bold').fontSize(size);
+  const padX = 3.2, w = doc.widthOfString(label) + padX * 2, h = size + 4.5;
+  doc.save().roundedRect(x, y, w, h, h / 2).lineWidth(0.7);
+  if (solid) doc.fill(INK); else doc.strokeColor(INK).stroke();
+  doc.restore();
+  doc.fillColor(solid ? '#FFFFFF' : INK)
+    .text(label, x + padX, y + 2.6, { width: w - padX * 2, lineBreak: false });
+  doc.fillColor(INK);
+  return w;
+}
+
+/**
+ * A right-aligned figure in Courier.
+ *
+ * Money and counts have to line up on the decimal to be comparable down a
+ * column, and proportional Helvetica — what every report used — cannot do that.
+ */
+function _num(doc, text, col, y, { bold = false, muted = false, size = 7 } = {}) {
+  doc.font(bold ? 'Courier-Bold' : 'Courier').fontSize(size)
+    .fillColor(muted ? MUTED : INK)
+    .text(String(text), col.x, y, { width: col.w, align: 'right', lineBreak: false });
+  doc.fillColor(INK);
+}
+
+/** An empty report says so in its own voice rather than printing a bare page. */
+function _empty(doc, message) {
+  doc.font('Helvetica-Oblique').fontSize(9).fillColor(MUTED)
+    .text(message, M, doc.y + 16, { width: W });
+  doc.fillColor(INK);
+  return 'NOTHING TO REPORT';
+}
+
+/** "1 ITEM" / "2 ITEMS" — the count is a fact on the page, not a template. */
+function _plural(n, word) {
+  return `${n} ${word}${n === 1 ? '' : 'S'}`;
+}
+
+/** Items in a container subtree, at any depth. */
+function _countItems(containers) {
+  return (containers || []).reduce(
+    (s, c) => s + (c.items || []).length + _countItems(c.children), 0);
+}
+
+/** Containers in a subtree, at any depth. */
+function _countContainers(containers) {
+  return (containers || []).reduce((s, c) => s + 1 + _countContainers(c.children), 0);
+}
+
+/**
+ * Page x of y, stamped once the body is laid out.
+ *
+ * Requires bufferPages: the count is not known until the last row is drawn, and
+ * a report that silently runs to nine pages is one a reader cannot tell they
+ * have only half of.
+ */
+function _stampFooters(doc, note) {
+  const range = doc.bufferedPageRange();
+  for (let i = 0; i < range.count; i++) {
+    doc.switchToPage(range.start + i);
+    doc.save().moveTo(M, FOOTER_Y - 5).lineTo(RIGHT, FOOTER_Y - 5)
+      .lineWidth(1).strokeColor(INK).stroke().restore();
+    doc.font('Courier').fontSize(6).fillColor(MUTED)
+      .text(String(note || ''), M, FOOTER_Y, { width: W * 0.7, lineBreak: false, ellipsis: true })
+      .text(`PAGE ${i + 1} OF ${range.count}`, M, FOOTER_Y, { width: W, align: 'right', lineBreak: false });
+  }
+  doc.fillColor(INK);
 }
 
 // ── Service ──────────────────────────────────────────────────────────────────
@@ -549,56 +743,70 @@ const ReportsService = {
     }
   },
 
-  // ── PDF Generation ───────────────────────────────────────────────────────
+  /**
+   * The property's name, for the report header.
+   *
+   * Scoped through property_members like every other read: the route's
+   * resolvePropertyRole has already established membership, but a query that
+   * enforces it independently cannot be broken by a change to the route.
+   */
+  async getPropertyName(propertyId, userId) {
+    const rows = await _db.query(
+      `SELECT p.NAME
+         FROM TALLY.properties p
+         INNER JOIN TALLY.property_members pm ON pm.PROPERTY_ID = p.ID AND pm.USER_ID = ?
+        WHERE p.ID = ?`,
+      [userId, propertyId],
+    );
+    return rows[0]?.NAME || null;
+  },
 
-  async generatePdf(reportType, data) {
+  // ── PDF Generation ───────────────────────────────────────────────────────
+  //
+  // Every report used to print as a centred Helvetica title over an unruled
+  // column grid — the pdfkit default, sharing nothing with the app or the
+  // printed labels. These renderers use the devices tally already has: an
+  // inverted title bar, mono figures, ruled rows, and the report's answer in a
+  // black band at the TOP. The totals used to sit alone at the bottom of page
+  // four, which is the last place anyone looks.
+
+  async generatePdf(reportType, data, context = {}) {
     return new Promise((resolve, reject) => {
       try {
-        const doc = new PDFDocument({ size: 'LETTER', margin: 50 });
+        // bufferPages so the footer can say "page 3 of 9" — the count is not
+        // known until the last row is drawn, and a report that silently runs
+        // to nine pages is one a reader cannot tell they have half of.
+        const doc = new PDFDocument({ size: 'LETTER', margin: M, bufferPages: true });
         const buffers = [];
         doc.on('data', buf => buffers.push(buf));
         doc.on('end', () => resolve(Buffer.concat(buffers)));
         doc.on('error', reject);
 
-        const reportNames = {
-          insurance: 'Insurance Summary',
-          total_value: 'Total Value',
-          items_by_location: 'Items by Location',
-          lending: 'Lending',
-          activity_log: 'Activity Log',
-          tag: 'Tag Report',
+        const renderers = {
+          insurance: ReportsService._renderInsurancePdf,
+          total_value: ReportsService._renderTotalValuePdf,
+          items_by_location: ReportsService._renderLocationPdf,
+          lending: ReportsService._renderLendingPdf,
+          activity_log: ReportsService._renderActivityPdf,
+          tag: ReportsService._renderTagPdf,
         };
 
-        // Title
-        doc.fontSize(20).font('Helvetica-Bold')
-          .text(`Tally — ${reportNames[reportType] || 'Report'}`, { align: 'center' });
-        doc.fontSize(10).font('Helvetica')
-          .text(_fmtDate(new Date()), { align: 'center' });
-        doc.moveDown(1.5);
+        _titleBar(doc, REPORT_NAMES[reportType] || 'Report');
+        _metaLine(
+          doc,
+          [context.propertyName, context.scope].filter(Boolean).join(' · ') || 'Tally',
+          _fmtDate(new Date()),
+        );
 
-        switch (reportType) {
-          case 'insurance':
-            ReportsService._renderInsurancePdf(doc, data);
-            break;
-          case 'total_value':
-            ReportsService._renderTotalValuePdf(doc, data);
-            break;
-          case 'items_by_location':
-            ReportsService._renderLocationPdf(doc, data);
-            break;
-          case 'lending':
-            ReportsService._renderLendingPdf(doc, data);
-            break;
-          case 'activity_log':
-            ReportsService._renderActivityPdf(doc, data);
-            break;
-          case 'tag':
-            ReportsService._renderTagPdf(doc, data);
-            break;
-          default:
-            doc.text('Unknown report type.');
+        const render = renderers[reportType];
+        let note = '';
+        if (render) {
+          note = render.call(ReportsService, doc, data) || '';
+        } else {
+          doc.font('Helvetica').fontSize(10).text('Unknown report type.', M, doc.y + 10);
         }
 
+        _stampFooters(doc, note);
         doc.end();
       } catch (err) {
         reject(err);
@@ -607,250 +815,398 @@ const ReportsService = {
   },
 
   _renderInsurancePdf(doc, items) {
-    // Column headers
     const cols = [
-      { label: 'Item', x: 50, w: 130 },
-      { label: 'Brand', x: 180, w: 80 },
-      { label: 'Purchase Price', x: 260, w: 85 },
-      { label: 'Current Value', x: 345, w: 85 },
-      { label: 'Condition', x: 430, w: 70 },
-      { label: 'Location', x: 500, w: 70 },
+      { label: 'Item',     x: M,       w: 150 },
+      { label: 'Brand',    x: M + 152, w: 78 },
+      { label: 'Paid',     x: M + 232, w: 62, align: 'right' },
+      { label: 'Value',    x: M + 296, w: 74, align: 'right' },
+      { label: 'Cond',     x: M + 372, w: 44, align: 'center' },
+      { label: 'Location', x: M + 418, w: 94 },
     ];
 
-    doc.fontSize(8).font('Helvetica-Bold');
-    for (const col of cols) {
-      doc.text(col.label, col.x, doc.y, { width: col.w, continued: false });
-    }
-
-    // Reset y to after header row
-    const headerY = doc.y;
-    doc.moveTo(50, headerY).lineTo(562, headerY).stroke();
-    doc.moveDown(0.3);
-
-    doc.font('Helvetica').fontSize(7);
-    for (const item of items) {
-      if (doc.y > 720) {
-        doc.addPage();
-        doc.y = 50;
-      }
-      const rowY = doc.y;
-      doc.text(item.itemName || '-', cols[0].x, rowY, { width: cols[0].w, lineBreak: false, ellipsis: true });
-      doc.text(item.brand || '-', cols[1].x, rowY, { width: cols[1].w, lineBreak: false, ellipsis: true });
-      doc.text(_fmtCurrency(item.purchasePrice), cols[2].x, rowY, { width: cols[2].w, lineBreak: false });
-      // A row for a box or a bag of spares still PRINTS — you want to know the
-      // box is in that tote — but it must not show the absent thing's value as
-      // though the thing were there. The figure is replaced by what is actually
-      // in the bin, and the totals below skip it.
-      doc.text(
-        _isPartial(item)
-          ? PARTIAL_LABEL[item.completeness]
-          : _fmtCurrency(item.currentValue) + (BASIS_MARK[item.valueBasis] || ''),
-        cols[3].x, rowY, { width: cols[3].w, lineBreak: false });
-      doc.text(item.condition || '-', cols[4].x, rowY, { width: cols[4].w, lineBreak: false });
-      doc.text(`${item.areaName || ''} > ${item.containerName || ''}`, cols[5].x, rowY, { width: cols[5].w, lineBreak: false, ellipsis: true });
-      doc.moveDown(0.5);
-    }
-
-    // Summary
-    //
     // Both totals skip box/spares rows. Their money describes the object the
     // packaging came from, not the packaging — a scanned computer box carries
     // the computer's catalogue price, and the computer is in use elsewhere.
-    // Counting it would overstate the claim by the price of a whole machine.
-    doc.moveDown(1);
     const counted = items.filter(i => !_isPartial(i));
     const partial = items.filter(_isPartial);
     const totalPurchase = counted.reduce((s, i) => s + (i.purchasePrice || 0), 0);
     const totalCurrent = counted.reduce((s, i) => s + (i.currentValue || 0), 0);
-    doc.font('Helvetica-Bold').fontSize(9);
-    doc.text(`Total Items: ${items.length}    |    Purchase Total: ${_fmtCurrency(totalPurchase)}    |    Current Total: ${_fmtCurrency(totalCurrent)}`);
-
-    // What was left out, and what it would have added. An exclusion nobody can
-    // see is indistinguishable from data that was never entered.
-    if (partial.length) {
-      const withheld = partial.reduce((s, i) => s + (i.currentValue || 0), 0);
-      doc.moveDown(0.3);
-      doc.font('Helvetica').fontSize(8);
-      doc.text(
-        `Excluded from the totals — packaging or spares only: ${partial.length} ` +
-        `(${_fmtCurrency(withheld)} of recorded value not counted). ` +
-        `These rows are listed above; the item itself is not in this property.`
-      );
-    }
-
-    // How much of that total is actually asserted, and how much is inferred.
-    // A reader cannot weigh the number above without it, and counting marks by
-    // hand across four pages is not a reasonable thing to ask of them.
     const basisCount = (b) => items.filter(i => i.valueBasis === b).length;
     const estimated = basisCount('estimated');
-    const depreciated = basisCount('depreciated');
     const fromPurchase = basisCount('purchase');
-    doc.moveDown(0.4);
-    doc.font('Helvetica').fontSize(7.5);
-    doc.text(
-      `Value basis — declared: ${basisCount('declared')}    ` +
-      `estimated (e): ${estimated}    depreciated (d): ${depreciated}    ` +
-      `from purchase price (p): ${fromPurchase}`
-    );
-    if (estimated || fromPurchase) {
-      doc.moveDown(0.2);
-      doc.font('Helvetica-Oblique').fontSize(7);
-      doc.text(
-        'e = value suggested by photo identification and kept, not declared.    ' +
-        'p = no current value recorded; the purchase price is shown in its place.'
+
+    _band(doc, [
+      { k: 'Items', v: String(items.length) },
+      { k: 'Purchase total', v: _fmtCurrency(totalPurchase) },
+      { k: 'Current total', v: _fmtCurrency(totalCurrent) },
+      estimated ? { k: 'Estimated', v: String(estimated) } : null,
+      partial.length ? { k: 'Excluded', v: String(partial.length) } : null,
+    ]);
+
+    if (!items.length) return _empty(doc, 'No insured items in this property.');
+
+    const heads = () => _colHeads(doc, cols);
+    heads();
+
+    const H = 12;
+    items.forEach((item, i) => {
+      _ensureRoom(doc, H, heads);
+      const y = _rowTop(doc, H, i % 2 === 1);
+      doc.font('Helvetica').fontSize(7).fillColor(INK)
+        .text(item.itemName || '-', cols[0].x, y + 2.5, { width: cols[0].w, lineBreak: false, ellipsis: true });
+      doc.fillColor(MUTED)
+        .text(item.brand || '—', cols[1].x, y + 2.5, { width: cols[1].w, lineBreak: false, ellipsis: true });
+      _num(doc, _fmtCurrency(item.purchasePrice), cols[2], y + 2.5, { muted: true });
+
+      // A box or a bag of spares still PRINTS — you want to know the box is in
+      // that tote — but it must not show the absent thing's value as though the
+      // thing were there.
+      if (_isPartial(item)) {
+        doc.font('Helvetica-Oblique').fontSize(6.2).fillColor(MUTED)
+          .text(PARTIAL_LABEL[item.completeness], cols[3].x, y + 3, { width: cols[3].w, align: 'right', lineBreak: false });
+      } else {
+        _num(doc, _fmtCurrency(item.currentValue) + (BASIS_MARK[item.valueBasis] || ''), cols[3], y + 2.5, { bold: true });
+      }
+
+      doc.font('Helvetica').fontSize(6.5).fillColor(MUTED)
+        .text(item.condition || '—', cols[4].x, y + 3, { width: cols[4].w, align: 'center', lineBreak: false })
+        .text([item.areaName, item.containerName].filter(Boolean).join(' › '), cols[5].x, y + 3, { width: cols[5].w, lineBreak: false, ellipsis: true });
+      doc.fillColor(INK);
+      _rowEnd(doc, y, H);
+    });
+
+    // Where the value in the totals actually came from. A reader cannot weigh
+    // the number in the band without it, and counting marks by hand across four
+    // pages is not a reasonable thing to ask.
+    _ensureRoom(doc, 46);
+    doc.y += 8;
+    doc.font('Courier').fontSize(6.5).fillColor(MUTED)
+      .text(
+        `VALUE BASIS — DECLARED ${basisCount('declared')}   ESTIMATED (e) ${estimated}   ` +
+        `DEPRECIATED (d) ${basisCount('depreciated')}   FROM PURCHASE PRICE (p) ${fromPurchase}`,
+        M, doc.y, { width: W, characterSpacing: 0.4 },
       );
+    if (estimated || fromPurchase) {
+      doc.font('Helvetica-Oblique').fontSize(7)
+        .text(
+          'e = value suggested by photo identification and kept, not declared.    ' +
+          'p = no current value recorded; the purchase price is shown in its place.',
+          M, doc.y + 3, { width: W },
+        );
     }
+    // An exclusion nobody can see is indistinguishable from data never entered.
+    if (partial.length) {
+      const withheld = partial.reduce((s, i) => s + (i.currentValue || 0), 0);
+      doc.font('Helvetica').fontSize(7.5).fillColor(INK)
+        .text(
+          `Excluded from the totals — packaging or spares only: ${partial.length} ` +
+          `(${_fmtCurrency(withheld)} of recorded value not counted). These rows are ` +
+          'listed above; the item itself is not in this property.',
+          M, doc.y + 5, { width: W },
+        );
+    }
+    doc.fillColor(INK);
+
+    return `${_plural(items.length, 'ITEM')} · ${counted.length} COUNTED`;
   },
 
   _renderTotalValuePdf(doc, groups) {
     const cols = [
-      { label: 'Group', x: 50, w: 200 },
-      { label: 'Items', x: 250, w: 60 },
-      { label: 'Purchase Total', x: 310, w: 110 },
-      { label: 'Current Total', x: 420, w: 110 },
+      { label: 'Group',    x: M,       w: 230 },
+      { label: 'Items',    x: M + 236, w: 50, align: 'right' },
+      { label: 'Paid',     x: M + 292, w: 100, align: 'right' },
+      { label: 'Value',    x: M + 398, w: 114, align: 'right' },
     ];
 
-    doc.fontSize(9).font('Helvetica-Bold');
-    const headerY = doc.y;
-    for (const col of cols) {
-      doc.text(col.label, col.x, headerY, { width: col.w, continued: false });
-    }
-    doc.moveTo(50, doc.y).lineTo(562, doc.y).stroke();
-    doc.moveDown(0.3);
+    // Sorted, because the question this report answers is "where is the money"
+    // and the answer should be the first row rather than something you find by
+    // comparing four-figure numbers by eye.
+    const sorted = [...groups].sort((a, b) => (b.currentTotal || 0) - (a.currentTotal || 0));
+    const items = sorted.reduce((s, g) => s + (g.itemCount || 0), 0);
+    const paid = sorted.reduce((s, g) => s + (g.purchaseTotal || 0), 0);
+    const value = sorted.reduce((s, g) => s + (g.currentTotal || 0), 0);
+    const max = Math.max(1, ...sorted.map(g => g.currentTotal || 0));
 
-    doc.font('Helvetica').fontSize(8);
-    for (const g of groups) {
-      const rowY = doc.y;
-      doc.text(g.group, cols[0].x, rowY, { width: cols[0].w, lineBreak: false, ellipsis: true });
-      doc.text(String(g.itemCount), cols[1].x, rowY, { width: cols[1].w, lineBreak: false });
-      doc.text(_fmtCurrency(g.purchaseTotal), cols[2].x, rowY, { width: cols[2].w, lineBreak: false });
-      doc.text(_fmtCurrency(g.currentTotal), cols[3].x, rowY, { width: cols[3].w, lineBreak: false });
-      doc.moveDown(0.5);
-    }
+    _band(doc, [
+      { k: 'Groups', v: String(sorted.length) },
+      { k: 'Items', v: String(items) },
+      { k: 'Purchase total', v: _fmtCurrency(paid) },
+      { k: 'Current total', v: _fmtCurrency(value) },
+    ]);
+
+    if (!sorted.length) return _empty(doc, 'Nothing to total in this property.');
+
+    const heads = () => _colHeads(doc, cols);
+    heads();
+
+    const H = 21;
+    sorted.forEach((g, i) => {
+      _ensureRoom(doc, H, heads);
+      const y = _rowTop(doc, H, i % 2 === 1);
+      doc.font('Helvetica-Bold').fontSize(8).fillColor(INK)
+        .text(g.group || '-', cols[0].x, y + 2.5, { width: cols[0].w, lineBreak: false, ellipsis: true });
+      _num(doc, String(g.itemCount ?? 0), cols[1], y + 3);
+      _num(doc, _fmtCurrency(g.purchaseTotal), cols[2], y + 3, { muted: true });
+      _num(doc, _fmtCurrency(g.currentTotal), cols[3], y + 3, { bold: true });
+
+      // Proportion, not just magnitude — six rows can show their shape.
+      //
+      // Two things this got wrong first. Centred in the row, the bar read as
+      // belonging to the NEXT group's name, so it now sits tight under its own.
+      // Full-width, the largest group's bar was 100% and therefore
+      // indistinguishable from a divider rule — so it spans the label column
+      // only, where even a full bar visibly stops before the figures.
+      const barY = y + 12, barW = cols[0].w;
+      doc.save().rect(M, barY, barW, 3.5).fill('#e6e7ea').restore();
+      doc.save().rect(M, barY, Math.max(1, barW * ((g.currentTotal || 0) / max)), 3.5).fill(INK).restore();
+      doc.fillColor(INK);
+      _rowEnd(doc, y, H);
+    });
+
+    return 'BAR = SHARE OF THE LARGEST GROUP';
   },
 
   _renderLocationPdf(doc, areas) {
-    doc.fontSize(9).font('Helvetica');
+    const totals = areas.reduce((acc, a) => {
+      acc.items += _countItems(a.containers);
+      acc.containers += _countContainers(a.containers);
+      return acc;
+    }, { items: 0, containers: 0 });
+
+    _band(doc, [
+      { k: 'Areas', v: String(areas.length) },
+      { k: 'Containers', v: String(totals.containers) },
+      { k: 'Items', v: String(totals.items) },
+    ]);
+
+    if (!areas.length) return _empty(doc, 'This property has no areas yet.');
 
     for (const area of areas) {
-      if (doc.y > 700) doc.addPage();
-
-      doc.font('Helvetica-Bold').fontSize(12)
-        .text(area.areaName, 50);
-      doc.moveDown(0.3);
+      // Keep an area heading with at least its first container, or a page can
+      // end on a heading that promises contents overleaf.
+      _ensureRoom(doc, 46);
+      doc.y += 8;
+      const y = doc.y;
+      doc.save().rect(M, y, W, 15).fill(INK).restore();
+      doc.font('Helvetica-Bold').fontSize(8.5).fillColor('#FFFFFF')
+        .text(String(area.areaName || '—').toUpperCase(), M + 6, y + 4,
+          { width: W - 120, characterSpacing: 0.8, lineBreak: false, ellipsis: true });
+      doc.font('Courier').fontSize(6.5)
+        .text(_plural(_countItems(area.containers), 'ITEM'), M, y + 4.5, { width: W - 6, align: 'right', lineBreak: false });
+      doc.fillColor(INK);
+      doc.y = y + 15;
 
       for (const container of area.containers) {
-        ReportsService._renderContainerPdf(doc, container, 1);
+        ReportsService._renderContainerPdf(doc, container, 0);
       }
-      doc.moveDown(0.5);
     }
+
+    return [_plural(totals.items, 'ITEM'), _plural(areas.length, 'AREA'), _plural(totals.containers, 'CONTAINER')].join(' · ');
   },
 
   _renderContainerPdf(doc, container, depth) {
-    if (doc.y > 720) doc.addPage();
+    // Depth reads from an indent rule rather than font size alone, so a bin
+    // three levels down is still legible as a bin.
+    //
+    // The marker is a guillemet, not the box-drawing character this first
+    // used. pdfkit's built-in Helvetica is WinAnsi-encoded and has no glyph
+    // for U+2514, so it printed as a stray '%' — no error, just a wrong page,
+    // and only a rendered PNG showed it. Guarded by the encoding test in
+    // reports.pdf.test.js.
+    const indent = M + depth * 14;
+    _ensureRoom(doc, 24);
+    doc.y += 4;
+    const hy = doc.y;
+    doc.font('Helvetica-Bold').fontSize(7.5).fillColor(INK)
+      .text(`${depth ? '» ' : ''}${container.containerName || '—'}`, indent, hy,
+        { width: W - (indent - M) - 60, lineBreak: false, ellipsis: true });
+    doc.font('Courier').fontSize(6).fillColor(MUTED)
+      .text(_plural((container.items || []).length, 'ITEM'), M, hy + 0.5, { width: W, align: 'right', lineBreak: false });
+    const ruleY = hy + 9;
+    doc.save().moveTo(indent, ruleY).lineTo(RIGHT, ruleY).lineWidth(0.8).strokeColor(INK).stroke().restore();
+    doc.fillColor(INK);
+    doc.y = ruleY + 1.5;
 
-    const indent = 50 + depth * 20;
-    doc.font('Helvetica-Bold').fontSize(10)
-      .text(`${container.containerName}`, indent);
-    doc.moveDown(0.2);
+    const H = 11;
+    (container.items || []).forEach((item, i) => {
+      _ensureRoom(doc, H);
+      const y = _rowTop(doc, H, i % 2 === 1);
+      doc.font('Helvetica').fontSize(7).fillColor(INK)
+        .text(item.itemName || '-', indent + 8, y + 2, { width: W - (indent - M) - 150, lineBreak: false, ellipsis: true });
+      _num(doc, _fmtCurrency(item.purchasePrice), { x: RIGHT - 150, w: 60 }, y + 2, { muted: true });
+      // A lent or missing item carries a pill rather than a bare word — on a
+      // moving-day checklist "it is not in the box" is the fact that matters.
+      if (item.status && item.status !== 'active') {
+        _pill(doc, item.status, RIGHT - 78, y + 1.5, { solid: true });
+      } else {
+        doc.font('Helvetica').fontSize(6.5).fillColor(MUTED)
+          .text(item.condition || '—', RIGHT - 78, y + 2.5, { width: 78, lineBreak: false });
+      }
+      doc.fillColor(INK);
+      _rowEnd(doc, y, H);
+    });
 
-    doc.font('Helvetica').fontSize(8);
-    for (const item of container.items) {
-      if (doc.y > 730) doc.addPage();
-      doc.text(`- ${item.itemName}${item.purchasePrice ? '  (' + _fmtCurrency(item.purchasePrice) + ')' : ''}`, indent + 15);
-    }
-
-    for (const child of container.children) {
+    for (const child of (container.children || [])) {
       ReportsService._renderContainerPdf(doc, child, depth + 1);
     }
   },
 
   _renderLendingPdf(doc, loans) {
     const cols = [
-      { label: 'Item', x: 50, w: 120 },
-      { label: 'Lent To', x: 170, w: 100 },
-      { label: 'Date', x: 270, w: 80 },
-      { label: 'Due', x: 350, w: 80 },
-      { label: 'Overdue?', x: 430, w: 60 },
-      { label: 'Location', x: 490, w: 72 },
+      { label: 'Item',     x: M + 8,   w: 152 },
+      { label: 'Lent to',  x: M + 164, w: 96 },
+      { label: 'Lent',     x: M + 262, w: 66, align: 'right' },
+      { label: 'Due',      x: M + 330, w: 66, align: 'right' },
+      { label: 'Location', x: M + 402, w: 110 },
     ];
 
-    doc.fontSize(9).font('Helvetica-Bold');
-    const headerY = doc.y;
-    for (const col of cols) {
-      doc.text(col.label, col.x, headerY, { width: col.w, continued: false });
-    }
-    doc.moveTo(50, doc.y).lineTo(562, doc.y).stroke();
-    doc.moveDown(0.3);
+    const overdue = loans.filter(l => l.overdue);
+    const oldest = loans.reduce((max, l) => {
+      const days = l.lentAt ? Math.floor((Date.now() - new Date(l.lentAt)) / 86400000) : 0;
+      return days > max ? days : max;
+    }, 0);
 
-    doc.font('Helvetica').fontSize(7);
-    for (const loan of loans) {
-      if (doc.y > 720) doc.addPage();
-      const rowY = doc.y;
-      doc.text(loan.itemName || '-', cols[0].x, rowY, { width: cols[0].w, lineBreak: false, ellipsis: true });
-      doc.text(loan.lentTo || '-', cols[1].x, rowY, { width: cols[1].w, lineBreak: false, ellipsis: true });
-      doc.text(_fmtDate(loan.lentAt), cols[2].x, rowY, { width: cols[2].w, lineBreak: false });
-      doc.text(loan.dueAt ? _fmtDate(loan.dueAt) : '-', cols[3].x, rowY, { width: cols[3].w, lineBreak: false });
-      doc.text(loan.overdue ? 'YES' : 'No', cols[4].x, rowY, { width: cols[4].w, lineBreak: false });
-      doc.text(`${loan.areaName || ''} > ${loan.containerName || ''}`, cols[5].x, rowY, { width: cols[5].w, lineBreak: false, ellipsis: true });
-      doc.moveDown(0.5);
-    }
+    _band(doc, [
+      { k: 'On loan', v: String(loans.length) },
+      { k: 'Overdue', v: String(overdue.length) },
+      { k: 'Longest out', v: loans.length ? `${oldest}d` : '—' },
+    ]);
 
-    if (loans.length === 0) {
-      doc.text('No items currently lent out.', 50);
-    }
+    if (!loans.length) return _empty(doc, 'Nothing is lent out right now.');
+
+    // Overdue first: the only question this report answers on sight is which
+    // ones are late, so they must not be scattered through the list.
+    const sorted = [...loans].sort((a, b) => {
+      if (!!a.overdue !== !!b.overdue) return a.overdue ? -1 : 1;
+      return new Date(a.dueAt || 0) - new Date(b.dueAt || 0);
+    });
+
+    const heads = () => _colHeads(doc, cols);
+    heads();
+
+    const H = 13;
+    sorted.forEach((loan, i) => {
+      _ensureRoom(doc, H, heads);
+      const y = _rowTop(doc, H, i % 2 === 1);
+      // A solid rule in the margin. Visible down the edge of the page without
+      // reading a single word, which "Yes" in the fifth column never was.
+      if (loan.overdue) doc.save().rect(M, y, 3, H - 2).fill(INK).restore();
+
+      doc.font(loan.overdue ? 'Helvetica-Bold' : 'Helvetica').fontSize(7).fillColor(INK)
+        .text(loan.itemName || '-', cols[0].x, y + 3, { width: cols[0].w - (loan.overdue ? 42 : 0), lineBreak: false, ellipsis: true });
+      if (loan.overdue) {
+        _pill(doc, 'overdue', cols[0].x + cols[0].w - 40, y + 2);
+      }
+      doc.font('Helvetica').fontSize(7).fillColor(MUTED)
+        .text(loan.lentTo || '-', cols[1].x, y + 3, { width: cols[1].w, lineBreak: false, ellipsis: true });
+      _num(doc, loan.lentAt ? _fmtDate(loan.lentAt) : '—', cols[2], y + 3, { muted: true, size: 6.5 });
+      _num(doc, loan.dueAt ? _fmtDate(loan.dueAt) : '—', cols[3], y + 3, { bold: !!loan.overdue, size: 6.5 });
+      doc.font('Helvetica').fontSize(6.5).fillColor(MUTED)
+        .text([loan.areaName, loan.containerName].filter(Boolean).join(' › '), cols[4].x, y + 3.5, { width: cols[4].w, lineBreak: false, ellipsis: true });
+      doc.fillColor(INK);
+      _rowEnd(doc, y, H);
+    });
+
+    return overdue.length ? `${overdue.length} OVERDUE — LISTED FIRST` : 'NONE OVERDUE';
   },
 
   _renderActivityPdf(doc, entries) {
     const cols = [
-      { label: 'Date', x: 50, w: 100 },
-      { label: 'User', x: 150, w: 110 },
-      { label: 'Action', x: 260, w: 70 },
-      { label: 'Entity Type', x: 330, w: 80 },
-      { label: 'Entity ID', x: 410, w: 60 },
+      { label: 'When',   x: M,       w: 104 },
+      { label: 'Who',    x: M + 110, w: 86 },
+      { label: 'Action', x: M + 200, w: 56 },
+      { label: 'Entity', x: M + 262, w: 250 },
     ];
 
-    doc.fontSize(9).font('Helvetica-Bold');
-    const headerY = doc.y;
-    for (const col of cols) {
-      doc.text(col.label, col.x, headerY, { width: col.w, continued: false });
-    }
-    doc.moveTo(50, doc.y).lineTo(562, doc.y).stroke();
-    doc.moveDown(0.3);
+    const people = new Set(entries.map(e => e.displayName).filter(Boolean));
+    _band(doc, [
+      { k: 'Entries', v: String(entries.length) },
+      { k: 'People', v: String(people.size) },
+      { k: 'First', v: entries.length ? _fmtDate(entries[0].createdAt) : '—' },
+      { k: 'Last', v: entries.length ? _fmtDate(entries[entries.length - 1].createdAt) : '—' },
+    ]);
 
-    doc.font('Helvetica').fontSize(7);
-    for (const entry of entries) {
-      if (doc.y > 720) doc.addPage();
-      const rowY = doc.y;
-      doc.text(_fmtDate(entry.createdAt), cols[0].x, rowY, { width: cols[0].w, lineBreak: false });
-      doc.text(entry.displayName || '-', cols[1].x, rowY, { width: cols[1].w, lineBreak: false, ellipsis: true });
-      doc.text(entry.action || '-', cols[2].x, rowY, { width: cols[2].w, lineBreak: false });
-      doc.text(entry.entityType || '-', cols[3].x, rowY, { width: cols[3].w, lineBreak: false });
-      doc.text(String(entry.entityId || '-'), cols[4].x, rowY, { width: cols[4].w, lineBreak: false });
-      doc.moveDown(0.5);
-    }
+    if (!entries.length) return _empty(doc, 'No activity in this window.');
+
+    const heads = () => _colHeads(doc, cols);
+    heads();
+
+    const H = 12;
+    entries.forEach((entry, i) => {
+      _ensureRoom(doc, H, heads);
+      const y = _rowTop(doc, H, i % 2 === 1);
+      doc.font('Courier').fontSize(6.5).fillColor(MUTED)
+        .text(entry.createdAt ? _fmtDate(entry.createdAt) : '—', cols[0].x, y + 3, { width: cols[0].w, lineBreak: false });
+      doc.font('Helvetica').fontSize(7).fillColor(INK)
+        .text(entry.displayName || '—', cols[1].x, y + 2.5, { width: cols[1].w, lineBreak: false, ellipsis: true });
+      // The action is what you scan a column for, so it is the anchor. Deleted
+      // is solid because it is the one you go looking for.
+      if (entry.action) {
+        _pill(doc, entry.action, cols[2].x, y + 1.8, { solid: /delet|remov|purge/i.test(entry.action) });
+      }
+      // One readable reference instead of a type column and an id column that
+      // only mean something when read together.
+      doc.font('Helvetica').fontSize(7).fillColor(MUTED)
+        .text(
+          [entry.entityType, entry.entityId != null ? `#${entry.entityId}` : null].filter(Boolean).join(' '),
+          cols[3].x, y + 2.5, { width: cols[3].w, lineBreak: false, ellipsis: true },
+        );
+      doc.fillColor(INK);
+      _rowEnd(doc, y, H);
+    });
+
+    // Stated, because the cap truncates silently and a reader has no way to
+    // tell a quiet fortnight from a list that stopped early.
+    return entries.length >= ACTIVITY_CAP
+      ? `SHOWING THE FIRST ${ACTIVITY_CAP} ENTRIES — OLDER ACTIVITY IS NOT SHOWN`
+      : _plural(entries.length, 'ENTRY').replace('ENTRYS', 'ENTRIES');
   },
 
   _renderTagPdf(doc, tagGroups) {
+    const items = tagGroups.reduce((s, g) => s + (g.items || []).length, 0);
+    const value = tagGroups.reduce(
+      (s, g) => s + (g.items || []).reduce((t, i) => t + (i.purchasePrice || 0), 0), 0);
+
+    _band(doc, [
+      { k: 'Tags', v: String(tagGroups.length) },
+      { k: 'Items', v: String(items) },
+      { k: 'Purchase total', v: _fmtCurrency(value) },
+    ]);
+
+    if (!tagGroups.length) return _empty(doc, 'No tagged items found.');
+
     for (const group of tagGroups) {
-      if (doc.y > 700) doc.addPage();
+      _ensureRoom(doc, 40);
+      doc.y += 8;
+      const hy = doc.y;
+      // The same outlined chip that prints on the physical label — a tag should
+      // look like itself wherever it appears.
+      _pill(doc, group.tagName || '—', M, hy, { size: 7.5 });
+      const subtotal = (group.items || []).reduce((s, i) => s + (i.purchasePrice || 0), 0);
+      doc.font('Courier').fontSize(6.5).fillColor(MUTED)
+        .text(`${_plural((group.items || []).length, 'ITEM')} · ${_fmtCurrency(subtotal)}`,
+          M, hy + 3, { width: W, align: 'right', lineBreak: false });
+      const ruleY = hy + 14;
+      doc.save().moveTo(M, ruleY).lineTo(RIGHT, ruleY).lineWidth(1.2).strokeColor(INK).stroke().restore();
+      doc.fillColor(INK);
+      doc.y = ruleY + 1.5;
 
-      doc.font('Helvetica-Bold').fontSize(12)
-        .text(`Tag: ${group.tagName}`, 50);
-      doc.moveDown(0.3);
-
-      doc.font('Helvetica').fontSize(8);
-      for (const item of group.items) {
-        if (doc.y > 730) doc.addPage();
-        const price = item.purchasePrice ? `  (${_fmtCurrency(item.purchasePrice)})` : '';
-        doc.text(`- ${item.itemName}${price}  |  ${item.areaName} > ${item.containerName}`, 70);
-      }
-      doc.moveDown(0.8);
+      const H = 11;
+      (group.items || []).forEach((item, i) => {
+        _ensureRoom(doc, H);
+        const y = _rowTop(doc, H, i % 2 === 1);
+        doc.font('Helvetica').fontSize(7).fillColor(INK)
+          .text(item.itemName || '-', M + 6, y + 2, { width: 230, lineBreak: false, ellipsis: true });
+        _num(doc, _fmtCurrency(item.purchasePrice), { x: M + 242, w: 60 }, y + 2, { muted: true });
+        doc.font('Helvetica').fontSize(6.5).fillColor(MUTED)
+          .text([item.areaName, item.containerName].filter(Boolean).join(' › '),
+            M + 310, y + 2.5, { width: W - 310, lineBreak: false, ellipsis: true });
+        doc.fillColor(INK);
+        _rowEnd(doc, y, H);
+      });
     }
 
-    if (tagGroups.length === 0) {
-      doc.text('No tagged items found.', 50);
-    }
+    return `${_plural(items, 'ITEM')} ACROSS ${_plural(tagGroups.length, 'TAG')}`;
   },
 
   // ── CSV Generation ───────────────────────────────────────────────────────
