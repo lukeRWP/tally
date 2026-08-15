@@ -290,6 +290,21 @@ function Section({
 }
 
 /**
+ * The drop area that lives inside the Files panel.
+ *
+ * Attach used to be its own collapsed section below Files, so adding a file
+ * meant finding a second heading for a thing the first one was already about.
+ * One panel: what is attached, and the box you attach with.
+ */
+function FilesBox({ id }: { id: number }) {
+  return (
+    <div className="pt-2 pb-1">
+      <FileUpload itemId={id} />
+    </div>
+  );
+}
+
+/**
  * One line of the ledger: a label, and either the fact or an invitation to
  * supply it. Keeping absent facts VISIBLE is the whole idea of this design —
  * the page is a list of what it knows and what it could know, on one rule.
@@ -756,7 +771,7 @@ export function ItemDetail() {
       </div>
 
       {propertyId > 0 && (
-        <Section title="Tags">
+        <Section title="Tags" defaultOpen>
           <div className="py-2">
             <TagPicker entityType="item" entityId={item.id} propertyId={propertyId} />
           </div>
@@ -769,10 +784,28 @@ export function ItemDetail() {
         containerName={breadcrumb?.filter((b) => b.type === 'container').at(-1)?.name ?? null}
       />
 
-      {/* Below the ledger: only things that are genuinely LISTS, and only when
-          they have contents. Single column — the ledger design is one rule top
-          to bottom, so a desktop sidebar would cut that rule in half. Anything
-          with no rows is already represented in the ledger as "+ add". */}
+      </div>
+
+      {/*
+        The records, spanning the full width below both columns.
+        
+        These were stacked under the ledger, which left the page taller than it
+        needed to be and the whole area beside the identity column empty. They
+        are not part of the ledger's rule — they are separate lists of separate
+        things — so they belong out of that column, in the space the two-column
+        layout leaves at the bottom.
+
+        auto-fill rather than a fixed count: an item with one file and no loans
+        gets one card, not one card and three gaps.
+      */}
+      <div className={cn(
+        split && 'lg:col-span-2 grid grid-cols-[repeat(auto-fill,minmax(320px,1fr))] items-start gap-4',
+        !split && 'flex flex-col gap-4',
+      )}>
+
+      {/* Only things that are genuinely LISTS, and only when they have
+          contents. Anything with no rows is already represented in the ledger
+          as "+ add". */}
 
 
       {/* The soonest date is a ledger row; this is the rest of them. */}
@@ -805,14 +838,18 @@ export function ItemDetail() {
       {hasFilesAny && (
         <Section card={split} defaultOpen title="Files" count={itemFiles?.length}>
           <FileList itemId={id} />
+          <FilesBox id={id} />
         </Section>
       )}
 
-      <Section card={split} title="Attach">
-        <div className="py-2">
-          <FileUpload itemId={id} />
-        </div>
-      </Section>
+      {/* With nothing attached yet the panel is just the box — a "Files · 0"
+          header over an empty list, followed by a separate "Attach" header, was
+          two headings and no content. */}
+      {!hasFilesAny && (
+        <Section card={split} defaultOpen title="Files">
+          <FilesBox id={id} />
+        </Section>
+      )}
 
       {/* Last on the page: everything above describes THIS object — where it
           is, what it cost, what has happened to it. This describes the product
@@ -880,6 +917,7 @@ export function ItemDetail() {
           });
         }}
       />
+      </div>
 
       <LabelPrintDialog
         entities={[{
@@ -1018,7 +1056,6 @@ export function ItemDetail() {
           );
         }}
       />
-      </div>
     </div>
   );
 }
