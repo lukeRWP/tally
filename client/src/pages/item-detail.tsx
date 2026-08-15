@@ -35,6 +35,7 @@ import { useItemFiles, useUploadFile, useConditionHistory } from '@/hooks/use-fi
 import { useAccessories } from '@/hooks/use-accessories';
 import { useLendingHistory } from '@/hooks/use-lending';
 import { ShareDialog } from '@/components/sharing/share-dialog';
+import { FieldDialog, type FieldKind } from '@/components/inventory/field-dialog';
 import { safeExternalUrl, cn } from '@/lib/utils';
 import { useLayoutMode } from '@/hooks/use-layout-mode';
 
@@ -235,6 +236,7 @@ function Section({
   action,
   onAction,
   defaultOpen = false,
+  card = false,
   children,
 }: {
   title: string;
@@ -242,11 +244,22 @@ function Section({
   action?: React.ReactNode;
   onAction?: () => void;
   defaultOpen?: boolean;
+  /** Draw as a bordered card — the desk treatment. */
+  card?: boolean;
   children: React.ReactNode;
 }) {
   const [open, setOpen] = React.useState(defaultOpen);
   return (
-    <div className="flex flex-col">
+    // A card at a desk, a bare ruled block on a phone.
+    //
+    // These sections are each a different KIND of record — what is attached,
+    // what has happened, what the catalogue says — and on a wide page a run of
+    // undifferentiated rules gives no sign of where one ends and the next
+    // begins. A border does that without adding a word.
+    <div className={cn(
+      'flex flex-col',
+      card && 'rounded-[var(--radius-sm)] border border-[var(--color-rule)] px-3 pb-2 pt-1.5',
+    )}>
       <div className="flex items-baseline justify-between gap-2 border-b-2 border-[var(--color-rule)] pb-1.5 font-mono text-[11px] uppercase tracking-[0.1em] text-[var(--color-text-muted)]">
         <button
           type="button"
@@ -351,6 +364,14 @@ export function ItemDetail() {
   // states, and a hook called after one of those runs on some renders and not
   // others — React counts hooks per render and throws when the count changes.
   const split = useLayoutMode() === 'sidebar';
+  /**
+   * The ledger row currently being edited, if any. One dialog serves all of
+   * them — the alternative is a boolean per field, which drifts the moment a
+   * row is added.
+   */
+  const [field, setField] = React.useState<
+    null | { key: 'quantity' | 'purchasePrice' | 'description'; label: string; kind: FieldKind; hint?: string }
+  >(null);
   const { itemId } = useParams<{ itemId: string }>();
   const id = Number(itemId);
 
@@ -575,16 +596,22 @@ export function ItemDetail() {
         </div>
       </div>
 
-      {/* Actions, in the mockup's order. */}
-      <div className="flex gap-2 animate-fade-up" style={{ animationDelay: '50ms' }}>
-        <Button variant="outline" size="sm" className="flex-1 text-xs" onClick={() => setEditOpen(true)}>
+      {/*
+        Actions, in the mockup's order.
+        At a desk they all show. The "…" exists because a phone has room for two
+        buttons and a menu; a 340px column under the photograph has room for six,
+        and hiding Lend, Share, Print and Delete behind a dot menu makes you
+        hunt for things the page could simply offer.
+      */}
+      <div className={cn('gap-2 animate-fade-up', split ? 'grid grid-cols-2' : 'flex')} style={{ animationDelay: '50ms' }}>
+        <Button variant="outline" size="sm" className={cn('text-xs', !split && 'flex-1')} onClick={() => setEditOpen(true)}>
           <Pencil className="w-3.5 h-3.5" />
           Edit
         </Button>
         <Button
           variant="outline"
           size="sm"
-          className="flex-1 text-xs"
+          className={cn('text-xs', !split && 'flex-1')}
           onClick={() => {
             // Move picks the item UP; the carry banner follows you and any
             // container label you scan puts it down.
@@ -608,13 +635,35 @@ export function ItemDetail() {
           <ArrowRightLeft className="w-3.5 h-3.5" />
           Move
         </Button>
-        <OverflowMenu
-          onLend={() => setLendFormOpen(true)}
-          lendLabel={item.status === 'lent' ? 'Return' : 'Lend'}
-          onShare={() => setShareOpen(true)}
-          onPrint={() => setPrintOpen(true)}
-          onDelete={() => setDeleteOpen(true)}
-        />
+        {split ? (
+          <>
+            <Button variant="outline" size="sm" className="text-xs" onClick={() => setLendFormOpen(true)}>
+              <HandCoins className="w-3.5 h-3.5" />
+              {item.status === 'lent' ? 'Return' : 'Lend'}
+            </Button>
+            <Button variant="outline" size="sm" className="text-xs" onClick={() => setPrintOpen(true)}>
+              <Printer className="w-3.5 h-3.5" />
+              Label
+            </Button>
+            <Button variant="outline" size="sm" className="text-xs" onClick={() => setShareOpen(true)}>
+              <Share2 className="w-3.5 h-3.5" />
+              Share
+            </Button>
+            {/* Destructive, so it is last and it is the only one that is red. */}
+            <Button variant="outline" size="sm" className="text-xs text-[var(--color-red)] border-[var(--color-red)]" onClick={() => setDeleteOpen(true)}>
+              <Trash2 className="w-3.5 h-3.5" />
+              Delete
+            </Button>
+          </>
+        ) : (
+          <OverflowMenu
+            onLend={() => setLendFormOpen(true)}
+            lendLabel={item.status === 'lent' ? 'Return' : 'Lend'}
+            onShare={() => setShareOpen(true)}
+            onPrint={() => setPrintOpen(true)}
+            onDelete={() => setDeleteOpen(true)}
+          />
+        )}
       </div>
       </div>
 
@@ -631,7 +680,7 @@ export function ItemDetail() {
 
         {/* 0 is a real answer ("none left"), not a missing one — and QUANTITY
             is NOT NULL in the schema, so this row is never an invitation. */}
-        <LedgerRow label="Quantity" value={item.quantity} onEdit={() => setEditOpen(true)} />
+        <LedgerRow label="Quantity" value={item.quantity} onEdit={() => setField({ key: 'quantity', label: 'Quantity', kind: 'number' })} />
 
         <LedgerRow
           label="Condition"
@@ -643,8 +692,8 @@ export function ItemDetail() {
         <LedgerRow
           label="Value"
           value={item.purchasePrice != null ? `$${item.purchasePrice.toFixed(2)}` : null}
-          onEdit={() => setEditOpen(true)}
-          onAdd={() => setEditOpen(true)}
+          onEdit={() => setField({ key: 'purchasePrice', label: 'Value', kind: 'money', hint: 'What you paid for it.' })}
+          onAdd={() => setField({ key: 'purchasePrice', label: 'Value', kind: 'money', hint: 'What you paid for it.' })}
         />
 
         {/* The catalogue's price is a different fact from what YOU paid, so it
@@ -666,7 +715,9 @@ export function ItemDetail() {
           <LedgerRow
             label="Now worth"
             value={`$${depreciation.currentValue.toFixed(2)} · ${depreciation.ratePercent}%/yr`}
-            onEdit={() => setEditOpen(true)}
+            // Derived from the purchase price and the rate, so editing it means
+            // editing what it is derived FROM.
+            onEdit={() => setField({ key: 'purchasePrice', label: 'Value', kind: 'money', hint: 'What you paid — the depreciated figure follows from it.' })}
           />
         )}
 
@@ -675,8 +726,8 @@ export function ItemDetail() {
           value={item.description ?? item.productDescription ?? null}
           inherited={item.description == null && item.productDescription ? 'product' : undefined}
           wrap
-          onEdit={() => { setAdoptDesc(true); setEditOpen(true); }}
-          onAdd={() => { setAdoptDesc(true); setEditOpen(true); }}
+          onEdit={() => setField({ key: 'description', label: 'Description', kind: 'multiline' })}
+          onAdd={() => setField({ key: 'description', label: 'Description', kind: 'multiline' })}
         />
 
         {/* Already selected, mapped and typed by getById, so these rows cost
@@ -723,8 +774,52 @@ export function ItemDetail() {
           to bottom, so a desktop sidebar would cut that rule in half. Anything
           with no rows is already represented in the ledger as "+ add". */}
 
+
+      {/* The soonest date is a ledger row; this is the rest of them. */}
+      {(itemDates?.length ?? 0) > 0 && (
+        <Section card={split} defaultOpen title="Dates" count={itemDates?.length} action="Add date" onAction={() => setDateFormOpen(true)}>
+          <DateList itemId={id} />
+        </Section>
+      )}
+
+      {hasAccessories && (
+        <Section card={split} defaultOpen title="Accessories" count={accessories?.length} action="Link" onAction={() => setAccessoryPickerOpen(true)}>
+          <AccessoryList itemId={id} />
+        </Section>
+      )}
+
+      {/* The OPEN loan is a ledger row ("Lent to"); this is the record. */}
+      {hasLending && (
+        <Section card={split} defaultOpen title="Lending history" count={lendingHistory?.length}>
+          <LendingList itemId={id} itemName={item.name} />
+        </Section>
+      )}
+
+      {hasConditions && (
+        <Section card={split} defaultOpen title="Condition history" count={conditions?.length} action="Record" onAction={() => setConditionFormOpen(true)}>
+          <ConditionTimeline itemId={id} />
+        </Section>
+      )}
+
+      {/* Photos live in the ledger row, so this is receipts, manuals, warranties. */}
+      {hasFilesAny && (
+        <Section card={split} defaultOpen title="Files" count={itemFiles?.length}>
+          <FileList itemId={id} />
+        </Section>
+      )}
+
+      <Section card={split} title="Attach">
+        <div className="py-2">
+          <FileUpload itemId={id} />
+        </div>
+      </Section>
+
+      {/* Last on the page: everything above describes THIS object — where it
+          is, what it cost, what has happened to it. This describes the product
+          it happens to be an instance of, which is the least specific thing
+          the page knows and the least often what you came for. */}
       {(item.productName || item.productImageUrl) && (
-        <Section title="Product" defaultOpen>
+        <Section card={split} title="Product" defaultOpen>
           <div className="flex items-start gap-3 py-3">
             {item.productImageUrl && (
               <img
@@ -758,44 +853,33 @@ export function ItemDetail() {
         </Section>
       )}
 
-      {/* The soonest date is a ledger row; this is the rest of them. */}
-      {(itemDates?.length ?? 0) > 0 && (
-        <Section title="Dates" count={itemDates?.length} action="Add date" onAction={() => setDateFormOpen(true)}>
-          <DateList itemId={id} />
-        </Section>
-      )}
-
-      {hasAccessories && (
-        <Section title="Accessories" count={accessories?.length} action="Link" onAction={() => setAccessoryPickerOpen(true)}>
-          <AccessoryList itemId={id} />
-        </Section>
-      )}
-
-      {/* The OPEN loan is a ledger row ("Lent to"); this is the record. */}
-      {hasLending && (
-        <Section title="Lending history" count={lendingHistory?.length}>
-          <LendingList itemId={id} itemName={item.name} />
-        </Section>
-      )}
-
-      {hasConditions && (
-        <Section title="Condition history" count={conditions?.length} action="Record" onAction={() => setConditionFormOpen(true)}>
-          <ConditionTimeline itemId={id} />
-        </Section>
-      )}
-
-      {/* Photos live in the ledger row, so this is receipts, manuals, warranties. */}
-      {hasFilesAny && (
-        <Section title="Files" count={itemFiles?.length}>
-          <FileList itemId={id} />
-        </Section>
-      )}
-
-      <Section title="Attach">
-        <div className="py-2">
-          <FileUpload itemId={id} />
-        </div>
-      </Section>
+      {/* One row, one field. The combined form is still behind the page's own
+          Edit button, which is where "change several things" belongs. */}
+      <FieldDialog
+        open={field !== null}
+        onOpenChange={(v) => { if (!v) setField(null); }}
+        label={field?.label ?? ''}
+        kind={field?.kind}
+        hint={field?.hint}
+        pending={updateItem.isPending}
+        value={
+          field?.key === 'quantity' ? item.quantity
+            : field?.key === 'purchasePrice' ? item.purchasePrice
+            : field?.key === 'description' ? (item.description ?? '')
+            : ''
+        }
+        onSave={(next) => {
+          if (!field) return;
+          const patch =
+            field.key === 'quantity' ? { quantity: Math.max(1, Number(next) || 1) }
+              : field.key === 'purchasePrice' ? { purchasePrice: next == null ? null : Number(next) }
+              : { description: next };
+          updateItem.mutate({ id, ...patch }, {
+            onSuccess: () => { setField(null); toast.success(`${field.label} saved`); },
+            onError: (e: Error) => toast.error(e.message || 'Could not save it'),
+          });
+        }}
+      />
 
       <LabelPrintDialog
         entities={[{

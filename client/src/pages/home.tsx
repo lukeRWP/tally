@@ -9,6 +9,7 @@ import type { Property } from '@/types/inventory';
 import { ErrorState } from '@/components/ui/error-state';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ItemCard } from '@/components/inventory/item-card';
+import { ItemTile } from '@/components/inventory/item-tile';
 import { TagBadge } from '@/components/tags/tag-badge';
 import { useProperties, useRecentItems, useSearchItems, type SearchFilters } from '@/hooks/use-inventory';
 import { usePropertyTags, type Tag } from '@/hooks/use-tags';
@@ -429,13 +430,21 @@ export function Home() {
             )
           )}
 
-          {/* Two columns at a desk: ten ruled rows across 1400px is a lot of
-              empty middle and a lot of scrolling for a list this short. */}
-          <div className={cn(wide && 'grid grid-cols-2 gap-x-6')}>
-            {!recentError && recentItems?.map((item) => (
+          {/* A grid of tiles at a desk. "Recently added" is a browsable set, not
+              a list you work down — the question is "which of these?", and a
+              picture answers that faster than a name on a rule. Rows stay on
+              the phone, where a 390px tile shows less than the row it replaced. */}
+          {wide ? (
+            <div className="mt-2 grid grid-cols-[repeat(auto-fill,minmax(200px,1fr))] gap-3">
+              {!recentError && recentItems?.map((item) => (
+                <ItemTile key={item.id} item={item} />
+              ))}
+            </div>
+          ) : (
+            !recentError && recentItems?.map((item) => (
               <ItemCard key={item.id} item={item} />
-            ))}
-          </div>
+            ))
+          )}
         </section>
       )}
     </div>
