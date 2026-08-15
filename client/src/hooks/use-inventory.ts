@@ -2,6 +2,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { queryKeys } from '@/lib/query-client';
 import type { Property, Area, Container, Item, BreadcrumbItem } from '@/types/inventory';
+import { asList } from '@/lib/list';
 
 // Helper: API responses wrap data in named keys like { properties: [...] }
 // These select functions unwrap them for the components.
@@ -28,7 +29,7 @@ function invalidateTree(qc: ReturnType<typeof useQueryClient>) {
 export function useProperties() {
   return useQuery({
     queryKey: queryKeys.properties.list(),
-    queryFn: () => api.get<{ properties: Property[] }>('/api/properties/_x_/list'),
+    queryFn: () => api.get<{ properties: Property[] }>('/api/properties/_x_/list').then(r => ({ properties: asList<Property>(r?.properties) })),
     select: (data) => data.properties,
   });
 }
@@ -84,7 +85,7 @@ export function useDeleteProperty() {
 export function usePropertyTree(propertyId: number) {
   return useQuery({
     queryKey: queryKeys.containers.tree(propertyId),
-    queryFn: () => api.get<{ containers: Container[] }>(`/api/containers/_x_/tree/${propertyId}`),
+    queryFn: () => api.get<{ containers: Container[] }>(`/api/containers/_x_/tree/${propertyId}`).then(r => ({ containers: asList<Container>(r?.containers) })),
     select: (data) => data.containers,
     enabled: !!propertyId,
   });
@@ -93,7 +94,7 @@ export function usePropertyTree(propertyId: number) {
 export function useAreas(propertyId: number) {
   return useQuery({
     queryKey: queryKeys.areas.byProperty(propertyId),
-    queryFn: () => api.get<{ areas: Area[] }>(`/api/areas/_x_/property/${propertyId}`),
+    queryFn: () => api.get<{ areas: Area[] }>(`/api/areas/_x_/property/${propertyId}`).then(r => ({ areas: asList<Area>(r?.areas) })),
     select: (data) => data.areas,
     enabled: !!propertyId,
   });
@@ -141,7 +142,7 @@ export function useCreateArea() {
 export function useContainers(areaId: number) {
   return useQuery({
     queryKey: queryKeys.containers.byArea(areaId),
-    queryFn: () => api.get<{ containers: Container[] }>(`/api/containers/_x_/area/${areaId}`),
+    queryFn: () => api.get<{ containers: Container[] }>(`/api/containers/_x_/area/${areaId}`).then(r => ({ containers: asList<Container>(r?.containers) })),
     select: (data) => data.containers,
     enabled: !!areaId,
   });
@@ -150,7 +151,7 @@ export function useContainers(areaId: number) {
 export function useContainerChildren(containerId: number) {
   return useQuery({
     queryKey: queryKeys.containers.byParent(containerId),
-    queryFn: () => api.get<{ containers: Container[] }>(`/api/containers/_x_/${containerId}/children`),
+    queryFn: () => api.get<{ containers: Container[] }>(`/api/containers/_x_/${containerId}/children`).then(r => ({ containers: asList<Container>(r?.containers) })),
     select: (data) => data.containers,
     enabled: !!containerId,
   });
@@ -188,7 +189,7 @@ export function useCreateContainer() {
 export function useItems(containerId: number) {
   return useQuery({
     queryKey: queryKeys.items.byContainer(containerId),
-    queryFn: () => api.get<{ items: Item[] }>(`/api/items/_x_/container/${containerId}`),
+    queryFn: () => api.get<{ items: Item[] }>(`/api/items/_x_/container/${containerId}`).then(r => ({ items: asList<Item>(r?.items) })),
     select: (data) => data.items,
     enabled: !!containerId,
   });
@@ -210,7 +211,7 @@ export function useItem(id: number) {
 export function useRecentItems(limit = 25) {
   return useQuery({
     queryKey: queryKeys.items.recent(limit),
-    queryFn: () => api.get<{ items: Item[] }>(`/api/items/_x_/recent?limit=${limit}`),
+    queryFn: () => api.get<{ items: Item[] }>(`/api/items/_x_/recent?limit=${limit}`).then(r => ({ items: asList<Item>(r?.items) })),
     select: (data) => data.items,
   });
 }

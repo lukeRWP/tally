@@ -1,3 +1,4 @@
+import * as React from 'react';
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ScanLine, Printer, Share2, Plus, Package, Box, CheckSquare, Camera, MoveRight, Trash2 } from 'lucide-react';
@@ -78,11 +79,40 @@ export function ContainerDetail() {
     });
   }, [selecting, children, items]);
 
-  function toggleSelected(key: string) {
+  /**
+   * The last row toggled ON, which is what a shift-click measures from.
+   * Cleared when selection is emptied so a stale anchor cannot select a range
+   * across a list the user has since left.
+   */
+  const anchor = React.useRef<string | null>(null);
+
+  function toggleSelected(key: string, shift = false) {
     setSelected((prev) => {
       const next = new Set(prev);
+
+      // Shift-click selects everything between the anchor and here, in the
+      // order the rows are DRAWN — bins then items, exactly as on screen.
+      // Without that order a range would jump around the page.
+      if (shift && anchor.current && anchor.current !== key) {
+        const order = [
+          ...(children ?? []).map((c) => `container:${c.id}`),
+          ...(items ?? []).map((i) => `item:${i.id}`),
+        ];
+        const from = order.indexOf(anchor.current);
+        const to = order.indexOf(key);
+        if (from !== -1 && to !== -1) {
+          const [lo, hi] = from < to ? [from, to] : [to, from];
+          // Additive, never subtractive: shift-clicking is how you GROW a
+          // selection, and silently dropping rows you had already picked is
+          // the behaviour people find out about by losing work.
+          for (let i = lo; i <= hi; i++) next.add(order[i]);
+          return next;
+        }
+      }
+
       if (next.has(key)) next.delete(key);
-      else next.add(key);
+      else { next.add(key); anchor.current = key; }
+      if (next.size === 0) anchor.current = null;
       return next;
     });
   }
@@ -370,7 +400,7 @@ export function ContainerDetail() {
             container={child}
             selectable={selecting}
             selected={selected.has(`container:${child.id}`)}
-            onToggle={() => toggleSelected(`container:${child.id}`)}
+            onToggle={(shift) => toggleSelected(`container:${child.id}`, shift)}
           />
         ))}
         </div>
@@ -395,7 +425,7 @@ export function ContainerDetail() {
             item={item}
             selectable={selecting}
             selected={selected.has(`item:${item.id}`)}
-            onToggle={() => toggleSelected(`item:${item.id}`)}
+            onToggle={(shift) => toggleSelected(`item:${item.id}`, shift)}
           />
         ))}
         </div>
