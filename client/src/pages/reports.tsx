@@ -12,6 +12,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { TitleBar } from '@/components/ui/title-bar';
 import { ColHead } from '@/components/ui/col-head';
+import { useLayoutMode } from '@/hooks/use-layout-mode';
 import { PropertyChips } from '@/components/inventory/property-chips';
 import { useProperties } from '@/hooks/use-inventory';
 import { usePropertyTags } from '@/hooks/use-tags';
@@ -216,6 +217,8 @@ function ReportOptionsPanel({
 }
 
 export function Reports() {
+  // Above every early return — hooks must run on each render.
+  const wide = useLayoutMode() === 'sidebar';
   const { data: properties = [] } = useProperties();
 
   const [propertyId, setPropertyId] = React.useState<number>(0);
@@ -273,6 +276,11 @@ export function Reports() {
       <section className="flex flex-col">
         <ColHead>Reports · {REPORT_TYPES.length}</ColHead>
 
+        {/* Two columns at a desk. Six rows is a MENU, not a list, and stretching
+            a menu to 1400px puts the chevron a screen away from the label it
+            belongs to. Each report still expands in place — its options panel
+            stays inside its own column rather than spanning both. */}
+        <div className={cn(wide && 'grid grid-cols-2 gap-x-6 items-start')}>
         {REPORT_TYPES.map((report, idx) => {
           const Icon = report.icon;
           const isExpanded = expandedReport === report.id;
@@ -327,6 +335,7 @@ export function Reports() {
             </div>
           );
         })}
+        </div>
       </section>
     </div>
   );
