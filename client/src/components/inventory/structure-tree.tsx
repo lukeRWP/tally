@@ -46,11 +46,13 @@ export function buildTree(containers: Container[]): Map<number, TreeNode[]> {
   return byArea;
 }
 
-function ContainerRow({ node, depth, expanded, onToggle }: {
+function ContainerRow({ node, depth, expanded, onToggle, onSelect, selectedId }: {
   node: TreeNode;
   depth: number;
   expanded: Set<number>;
   onToggle: (id: number) => void;
+  onSelect?: (containerId: number) => void;
+  selectedId?: number | null;
 }) {
   const navigate = useNavigate();
   const { container } = node;
@@ -78,11 +80,20 @@ function ContainerRow({ node, depth, expanded, onToggle }: {
 
         <button
           type="button"
-          onClick={() => navigate(`/container/${container.id}`)}
-          className="min-w-0 flex-1 text-left py-2"
+          // Selecting keeps the tree on screen beside the contents; navigating
+          // replaces it. Which one happens is the page's call, not this row's.
+          onClick={() => (onSelect ? onSelect(container.id) : navigate(`/container/${container.id}`))}
+          aria-current={selectedId === container.id ? 'true' : undefined}
+          className={cn(
+            'min-w-0 flex-1 text-left py-1.5 px-2 rounded-[var(--radius-sm)]',
+            selectedId === container.id && 'bg-[var(--color-text)] text-[var(--color-bg)]',
+          )}
         >
           <span className="block truncate text-sm font-semibold">{container.name}</span>
-          <span className="block font-mono text-[10px] uppercase tracking-[0.06em] text-[var(--color-text-muted)]">
+          <span className={cn(
+            'block font-mono text-[10px] uppercase tracking-[0.06em]',
+            selectedId === container.id ? 'text-[var(--color-bg)] opacity-80' : 'text-[var(--color-text-muted)]',
+          )}>
             {container.type}
             {container.itemCount > 0 && ` · ${container.itemCount} item${container.itemCount === 1 ? '' : 's'}`}
             {hasChildren && ` · ${node.children.length} bin${node.children.length === 1 ? '' : 's'}`}
@@ -93,13 +104,19 @@ function ContainerRow({ node, depth, expanded, onToggle }: {
 
       {isOpen && node.children.map((child) => (
         <ContainerRow key={child.container.id} node={child} depth={depth + 1}
-          expanded={expanded} onToggle={onToggle} />
+          expanded={expanded} onToggle={onToggle} onSelect={onSelect} selectedId={selectedId} />
       ))}
     </>
   );
 }
 
-export function StructureTree({ areas, containers }: { areas: Area[]; containers: Container[] }) {
+export function StructureTree({ areas, containers, onSelect, selectedId }: {
+  areas: Area[];
+  containers: Container[];
+  /** Supplied by a master-detail layout; without it, rows navigate as before. */
+  onSelect?: (containerId: number) => void;
+  selectedId?: number | null;
+}) {
   const navigate = useNavigate();
   const byArea = React.useMemo(() => buildTree(containers), [containers]);
   // Areas open by default: the point of this view is seeing the shape, and a
@@ -152,7 +169,7 @@ export function StructureTree({ areas, containers }: { areas: Area[]; containers
 
             {areaOpen && roots.map((node) => (
               <ContainerRow key={node.container.id} node={node} depth={1}
-                expanded={expanded} onToggle={toggle} />
+                expanded={expanded} onToggle={toggle} onSelect={onSelect} selectedId={selectedId} />
             ))}
           </React.Fragment>
         );

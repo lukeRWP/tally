@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ColHead } from '@/components/ui/col-head';
@@ -11,6 +12,8 @@ import { EntityForm } from '@/components/inventory/entity-form';
 import { useProperties, useAreas, usePropertyTree, useCreateProperty, useCreateArea } from '@/hooks/use-inventory';
 import { StructureTree } from '@/components/inventory/structure-tree';
 import { PropertyChips } from '@/components/inventory/property-chips';
+import { ContainerPreview } from '@/components/inventory/container-preview';
+import { useLayoutMode } from '@/hooks/use-layout-mode';
 
 /**
  * The top of the place hierarchy, and the screen you build the house on.
@@ -21,6 +24,28 @@ import { PropertyChips } from '@/components/inventory/property-chips';
  * button that creates the next thing down.
  */
 export function AreasPage() {
+  // Master-detail only where there is room for it. In touch chrome a bin still
+  // opens its own page, because there is no second column to put it in.
+  const split = useLayoutMode() === 'sidebar';
+  const [params, setParams] = useSearchParams();
+  const selectedBin = params.get('bin') ? Number(params.get('bin')) : null;
+
+  /**
+   * Selection lives in the URL, not in state.
+   *
+   * It makes a chosen bin linkable, survives a reload, and — the part that
+   * actually matters day to day — lets Back step out of a bin instead of
+   * leaving the page entirely. `replace` is deliberate: clicking through six
+   * bins should not bury the page you arrived from under six history entries.
+   */
+  const selectBin = React.useCallback((id: number) => {
+    setParams((prev) => {
+      const next = new URLSearchParams(prev);
+      if (next.get('bin') === String(id)) next.delete('bin'); else next.set('bin', String(id));
+      return next;
+    }, { replace: true });
+  }, [setParams]);
+
   const [createPropertyOpen, setCreatePropertyOpen] = React.useState(false);
   const [createAreaOpen, setCreateAreaOpen] = React.useState(false);
 
@@ -170,7 +195,26 @@ export function AreasPage() {
           {areas && areas.length > 0 && (
             treeLoading
               ? <Skeleton className="h-24 w-full mt-2" />
-              : <StructureTree areas={areas} containers={treeContainers ?? []} />
+              : split ? (
+                // The tree keeps a readable measure and the contents take the
+                // rest, so a wide screen shows more inventory rather than more
+                // whitespace. items-start stops the short column stretching.
+                <div className="grid grid-cols-[minmax(320px,380px)_1fr] items-start gap-6">
+                  <StructureTree
+                    areas={areas}
+                    containers={treeContainers ?? []}
+                    onSelect={selectBin}
+                    selectedId={selectedBin}
+                  />
+                  {/* Sticky so the contents stay in view while the tree
+                      scrolls past them — the whole point of not navigating. */}
+                  <div className="sticky top-4 max-h-[calc(100dvh-7rem)] overflow-y-auto">
+                    <ContainerPreview containerId={selectedBin} />
+                  </div>
+                </div>
+              ) : (
+                <StructureTree areas={areas} containers={treeContainers ?? []} />
+              )
           )}
         </section>
       )}
