@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ColHead } from '@/components/ui/col-head';
@@ -11,6 +12,9 @@ import { EntityForm } from '@/components/inventory/entity-form';
 import { useProperties, useAreas, usePropertyTree, useCreateProperty, useCreateArea } from '@/hooks/use-inventory';
 import { StructureTree } from '@/components/inventory/structure-tree';
 import { PropertyChips } from '@/components/inventory/property-chips';
+import { ContainerPreview } from '@/components/inventory/container-preview';
+import { useLayoutMode } from '@/hooks/use-layout-mode';
+import { useKeyboardNav } from '@/hooks/use-keyboard-nav';
 
 /**
  * The top of the place hierarchy, and the screen you build the house on.
@@ -21,8 +25,72 @@ import { PropertyChips } from '@/components/inventory/property-chips';
  * button that creates the next thing down.
  */
 export function AreasPage() {
+  // Master-detail only where there is room for it. In touch chrome a bin still
+  // opens its own page, because there is no second column to put it in.
+  const split = useLayoutMode() === 'sidebar';
+  const navigate = useNavigate();
+  const [params, setParams] = useSearchParams();
+  const selectedBin = params.get('bin') ? Number(params.get('bin')) : null;
+
+  /**
+   * Selection lives in the URL, not in state.
+   *
+   * It makes a chosen bin linkable, survives a reload, and — the part that
+   * actually matters day to day — lets Back step out of a bin instead of
+   * leaving the page entirely. `replace` is deliberate: clicking through six
+   * bins should not bury the page you arrived from under six history entries.
+   */
+  const selectBin = React.useCallback((id: number) => {
+    setParams((prev) => {
+      const next = new URLSearchParams(prev);
+      if (next.get('bin') === String(id)) next.delete('bin'); else next.set('bin', String(id));
+      return next;
+    }, { replace: true });
+  }, [setParams]);
+
   const [createPropertyOpen, setCreatePropertyOpen] = React.useState(false);
   const [createAreaOpen, setCreateAreaOpen] = React.useState(false);
+  /**
+   * The bins j/k walks, in the order they appear on screen.
+   *
+   * Registered by the tree rather than recomputed here, because "visible"
+   * depends on which rows are expanded — deriving it a second time would drift
+   * from what is actually rendered and the selection would jump.
+   */
+  const [visibleBins, setVisibleBins] = React.useState<number[]>([]);
+
+  // j/k walks the bins as drawn. Nothing selected yet starts at the top going
+  // down and the bottom going up, so the first keypress always lands somewhere
+  // rather than doing nothing.
+  const moveSelection = React.useCallback((delta: 1 | -1) => {
+    if (visibleBins.length === 0) return;
+    const at = selectedBin == null ? -1 : visibleBins.indexOf(selectedBin);
+    const next = at === -1
+      ? (delta === 1 ? 0 : visibleBins.length - 1)
+      : Math.min(visibleBins.length - 1, Math.max(0, at + delta));
+    setParams((prev) => {
+      const p2 = new URLSearchParams(prev);
+      p2.set('bin', String(visibleBins[next]));
+      return p2;
+    }, { replace: true });
+  }, [visibleBins, selectedBin, setParams]);
+
+  const clearSelection = React.useCallback(() => {
+    setParams((prev) => {
+      const p2 = new URLSearchParams(prev);
+      p2.delete('bin');
+      return p2;
+    }, { replace: true });
+  }, [setParams]);
+
+  useKeyboardNav({
+    // Only where there is a keyboard to serve and a selection to move.
+    enabled: split,
+    onMove: moveSelection,
+    onEscape: clearSelection,
+    onSearch: () => navigate('/search'),
+    onOpen: () => { if (selectedBin != null) navigate(`/container/${selectedBin}`); },
+  });
 
   const { data: properties, isLoading, isError, refetch } = useProperties();
   const createProperty = useCreateProperty();
@@ -170,7 +238,27 @@ export function AreasPage() {
           {areas && areas.length > 0 && (
             treeLoading
               ? <Skeleton className="h-24 w-full mt-2" />
-              : <StructureTree areas={areas} containers={treeContainers ?? []} />
+              : split ? (
+                // The tree keeps a readable measure and the contents take the
+                // rest, so a wide screen shows more inventory rather than more
+                // whitespace. items-start stops the short column stretching.
+                <div className="grid grid-cols-[minmax(320px,380px)_1fr] items-start gap-6">
+                  <StructureTree
+                    areas={areas}
+                    containers={treeContainers ?? []}
+                    onSelect={selectBin}
+                    selectedId={selectedBin}
+                    onVisibleOrder={setVisibleBins}
+                  />
+                  {/* Sticky so the contents stay in view while the tree
+                      scrolls past them — the whole point of not navigating. */}
+                  <div className="sticky top-4 max-h-[calc(100dvh-7rem)] overflow-y-auto">
+                    <ContainerPreview containerId={selectedBin} />
+                  </div>
+                </div>
+              ) : (
+                <StructureTree areas={areas} containers={treeContainers ?? []} />
+              )
           )}
         </section>
       )}
