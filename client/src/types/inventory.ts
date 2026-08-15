@@ -46,6 +46,11 @@ export interface Item {
   /** True when currentValue came from photo identification rather than the user. */
   currentValueIsEstimate: boolean;
   condition: 'new' | 'good' | 'fair' | 'poor';
+  /**
+   * A small derivative for list rows. Absent until one has been generated —
+   * callers fall back to photoUrl, which is the full-size original.
+   */
+  photoThumbUrl?: string;
   /** Whether the thing itself is here, or only its packaging / spares. */
   completeness: 'complete' | 'box_only' | 'accessories_only';
   qrCode: string;

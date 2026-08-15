@@ -20,6 +20,9 @@ const upload = multer({
 
 module.exports = function filesRoutes({ app, db, logger, config }) {
   const FilesService = require('./files.service');
+  // Background list-row thumbnails. Owns no routes — it is initialised here
+  // because this module owns files, and items.service calls into it on read.
+  require('./thumbnails.service').init({ db, logger });
   FilesService.init({ db, logger });
 
   const { success, error } = require('../../utils/response');

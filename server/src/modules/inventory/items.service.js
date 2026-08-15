@@ -3,6 +3,7 @@ const { simplifyProductName } = require('../../utils/product-name');
 const AuditService = require('../audit/audit.service');
 const RecycleService = require('../recycle/recycle.service');
 const storage = require('../../infrastructure/storage');
+const Thumbnails = require('../files/thumbnails.service');
 
 let _db = null;
 let _logger = null;
@@ -51,6 +52,7 @@ const ItemsService = {
       // Newest uploaded photo (the capture flow's step 1). Presigned by the
       // caller — _mapItem is sync and presigning is not.
       photoKey: row.PHOTO_KEY !== undefined ? (row.PHOTO_KEY || null) : undefined,
+      photoThumbKey: row.PHOTO_THUMB_KEY !== undefined ? (row.PHOTO_THUMB_KEY || null) : undefined,
     };
   },
 
@@ -75,6 +77,11 @@ const ItemsService = {
          (SELECT f.FILE_KEY FROM TALLY.item_files f
            WHERE f.ITEM_ID = i.ID AND f.FILE_TYPE = 'photo'
            ORDER BY f.ID DESC LIMIT 1) AS PHOTO_KEY,
+         -- Same ORDER BY and LIMIT, so it resolves to the same row as the key
+         -- above. ID is unique, so the pairing is deterministic.
+         (SELECT f.THUMB_KEY FROM TALLY.item_files f
+           WHERE f.ITEM_ID = i.ID AND f.FILE_TYPE = 'photo'
+           ORDER BY f.ID DESC LIMIT 1) AS PHOTO_THUMB_KEY,
          NULL AS _PHOTO_SENTINEL
        FROM TALLY.items i
        LEFT JOIN TALLY.products p ON i.PRODUCT_ID = p.ID
@@ -93,8 +100,17 @@ const ItemsService = {
     return Promise.all(items.map(async (item) => {
       if (!item.photoKey) return item;
       try {
-        const photoUrl = await storage.getPresignedUrl(item.photoKey, { inline: true });
-        return { ...item, photoUrl };
+        const [photoUrl, photoThumbUrl] = await Promise.all([
+          storage.getPresignedUrl(item.photoKey, { inline: true }),
+          item.photoThumbKey
+            ? storage.getPresignedUrl(item.photoThumbKey, { inline: true })
+            : null,
+        ]);
+        // No thumbnail yet — serve the original this time and make one for
+        // next time. Fire-and-forget: a list render must not wait on a resize,
+        // and every photo uploaded before 007 arrives here exactly once.
+        if (!item.photoThumbKey) Thumbnails.ensure(item.photoKey);
+        return photoThumbUrl ? { ...item, photoUrl, photoThumbUrl } : { ...item, photoUrl };
       } catch {
         return item; // a missing object must not break the whole list
       }
@@ -118,6 +134,11 @@ const ItemsService = {
          (SELECT f.FILE_KEY FROM TALLY.item_files f
            WHERE f.ITEM_ID = i.ID AND f.FILE_TYPE = 'photo'
            ORDER BY f.ID DESC LIMIT 1) AS PHOTO_KEY,
+         -- Same ORDER BY and LIMIT, so it resolves to the same row as the key
+         -- above. ID is unique, so the pairing is deterministic.
+         (SELECT f.THUMB_KEY FROM TALLY.item_files f
+           WHERE f.ITEM_ID = i.ID AND f.FILE_TYPE = 'photo'
+           ORDER BY f.ID DESC LIMIT 1) AS PHOTO_THUMB_KEY,
          c.NAME AS CONTAINER_NAME,
          a.ID AS AREA_ID,
          a.NAME AS AREA_NAME,
@@ -439,6 +460,11 @@ const ItemsService = {
          (SELECT f.FILE_KEY FROM TALLY.item_files f
            WHERE f.ITEM_ID = i.ID AND f.FILE_TYPE = 'photo'
            ORDER BY f.ID DESC LIMIT 1) AS PHOTO_KEY,
+         -- Same ORDER BY and LIMIT, so it resolves to the same row as the key
+         -- above. ID is unique, so the pairing is deterministic.
+         (SELECT f.THUMB_KEY FROM TALLY.item_files f
+           WHERE f.ITEM_ID = i.ID AND f.FILE_TYPE = 'photo'
+           ORDER BY f.ID DESC LIMIT 1) AS PHOTO_THUMB_KEY,
          c.NAME  AS CONTAINER_NAME,
          a.NAME  AS AREA_NAME,
          pr.NAME AS PROPERTY_NAME
