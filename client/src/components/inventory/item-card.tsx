@@ -17,7 +17,8 @@ interface ItemCardProps {
   /** When set, the row becomes a selection toggle instead of a link. */
   selectable?: boolean;
   selected?: boolean;
-  onToggle?: () => void;
+  /** `shift` is true for a shift-click — the page turns that into a range. */
+  onToggle?: (shift: boolean) => void;
 }
 
 const conditionVariant = {

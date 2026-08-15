@@ -19,7 +19,8 @@ export interface RuledRowProps {
   onNavigate?: () => void;
   selectable?: boolean;
   selected?: boolean;
-  onToggle?: () => void;
+  /** `shift` is true for a shift-click — the page turns that into a range. */
+  onToggle?: (shift: boolean) => void;
   /** Accessible label when selectable (e.g. "Select Cordless Drill"). */
   selectLabel?: string;
   /** Optional square thumbnail / icon block at the left. */
@@ -47,7 +48,11 @@ export function RuledRow({
   trailing,
   animationDelay,
 }: RuledRowProps) {
-  const handleClick = selectable ? onToggle : onNavigate;
+  // The shift state only exists on the event, so it is read here and passed
+  // up rather than reconstructed from a keydown listener somewhere else.
+  const handleClick = selectable
+    ? (e: React.MouseEvent) => onToggle?.(e.shiftKey)
+    : onNavigate;
   return (
     <button
       type="button"

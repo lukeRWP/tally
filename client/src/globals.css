@@ -232,3 +232,24 @@ html {
    but never `display`, and this rule is unlayered (it follows
    `@import "tailwindcss"`), so it outranks every layered utility. */
 #qr-shaded-region > div { display: none; }
+
+/*
+ * Tailwind v4's preflight sets `cursor: default` on buttons, reversing v3.
+ *
+ * Every interactive surface in this app that is not <Button> is a bare
+ * <button> — RuledRow, which is every item, container and area row and the
+ * primary click target at a desk; the sidebar nav; the header icons; the
+ * ledger's "+ add" affordances. All of them were written before v4 and all of
+ * them expected a pointer, so on desktop the app tells you almost nothing is
+ * clickable.
+ *
+ * Restored here rather than by adding a class to a dozen components, because
+ * the next bare button would miss it again. Disabled controls keep the default
+ * arrow — that is the one case where "not clickable" is the truth.
+ */
+button:not(:disabled):not([aria-disabled='true']),
+[role='button']:not([aria-disabled='true']),
+label[for],
+summary {
+  cursor: pointer;
+}
