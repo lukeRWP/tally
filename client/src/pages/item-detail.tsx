@@ -518,6 +518,52 @@ export function ItemDetail() {
   const breadcrumbItems = (item as unknown as { breadcrumb?: import('@/types/inventory').BreadcrumbItem[] })
     ?.breadcrumb ?? [];
 
+  /**
+   * The name, code and stamps.
+   *
+   * On a phone this sits beside the thumbnail, because there is one column and
+   * the picture and the name introduce the page together. At a desk the photo
+   * gets a column of its own, and a title tucked into a 340px sidebar reads as
+   * a caption for the photograph rather than as the heading of the page — so it
+   * moves to the top of the ledger, which is where the page's content starts.
+   */
+  const identityText = (
+    <div className="min-w-0 flex flex-col gap-2">
+        <TitleBar className="w-fit max-w-full">{item.name}</TitleBar>
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="font-mono text-[11px] text-[var(--color-text-muted)]">{item.qrCode}</span>
+          {item.condition && (
+            <Badge>{item.condition.charAt(0).toUpperCase() + item.condition.slice(1)}</Badge>
+          )}
+          {/* 'active' is the unremarkable case, so it gets the plain ink stamp;
+              only the states worth noticing take a colour. */}
+          <Badge variant={item.status === 'lent' ? 'warning' : item.status === 'active' ? 'default' : 'danger'}>
+            {item.status}
+          </Badge>
+        </div>
+        {/* Shown only when it would actually change the name, so it retires
+            itself the moment it is used. Quiet by design: a catalogue title is
+            ugly, not broken, and the row it names is still perfectly findable. */}
+        {item.suggestedName && (
+          <button
+            type="button"
+            disabled={updateItem.isPending}
+            onClick={() => updateItem.mutate(
+              { id, name: item.suggestedName },
+              {
+                onSuccess: () => toast.success('Name shortened'),
+                onError: (e: Error) => toast.error(e.message || 'Could not rename it'),
+              },
+            )}
+            className="flex items-start gap-1.5 text-left min-h-[32px] font-mono text-[10px] uppercase tracking-[0.06em] text-[var(--color-primary)] disabled:opacity-45"
+          >
+            <Scissors className="w-3.5 h-3.5 shrink-0 mt-[1px]" />
+            <span className="min-w-0">Shorten to “{item.suggestedName}”</span>
+          </button>
+        )}
+    </div>
+  );
+
   return (
     <div className={cn(
       'flex flex-col gap-4 pb-24 lg:pb-8',
@@ -575,7 +621,10 @@ export function ItemDetail() {
           </button>
         )}
 
-        <div className="min-w-0 flex-1 flex flex-col gap-2">
+        {/* On a phone the name sits beside the thumbnail. At a desk it leads
+            the ledger instead — see identityText below. */}
+        {!split && (
+          <div className="min-w-0 flex-1 flex flex-col gap-2">
         <TitleBar className="w-fit max-w-full">{item.name}</TitleBar>
         <div className="flex items-center gap-2 flex-wrap">
           <span className="font-mono text-[11px] text-[var(--color-text-muted)]">{item.qrCode}</span>
@@ -608,7 +657,8 @@ export function ItemDetail() {
             <span className="min-w-0">Shorten to “{item.suggestedName}”</span>
           </button>
         )}
-        </div>
+          </div>
+        )}
       </div>
 
       {/*
@@ -686,6 +736,7 @@ export function ItemDetail() {
           only legible while the label and its value stay within a glance of
           each other. */}
       <div className={cn('flex flex-col gap-4', split && 'lg:max-w-[720px]')}>
+      {split && identityText}
 
       {/* THE LEDGER. Every fact on one rule, present or not. An absent fact
           keeps its row and ends in "+ add", so the page states what it could
