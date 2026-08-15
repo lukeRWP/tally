@@ -5,6 +5,11 @@ node_modules/
 client/build/
 client/dist/
 server/dist/
+# TypeScript incremental cache: machine-specific, rewritten by every tsc run,
+# and never a cache hit in CI (which builds from a clean checkout). It was
+# tracked until 2026-08-15, so it dirtied the tree constantly and rode along in
+# unrelated commits.
+*.tsbuildinfo
 
 # Environment
 .env
