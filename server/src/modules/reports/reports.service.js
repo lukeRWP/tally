@@ -378,6 +378,7 @@ const ReportsService = {
                a.NAME AS GROUP_NAME,
                i.PURCHASE_PRICE,
                i.CURRENT_VALUE,
+               i.COMPLETENESS,
                i.DEPRECIATION_ENABLED,
                i.DEPRECIATION_RATE AS ITEM_DEP_RATE,
                p.DEPRECIATION_RATE AS PRODUCT_DEP_RATE,
@@ -398,6 +399,7 @@ const ReportsService = {
                t.NAME AS GROUP_NAME,
                i.PURCHASE_PRICE,
                i.CURRENT_VALUE,
+               i.COMPLETENESS,
                i.DEPRECIATION_ENABLED,
                i.DEPRECIATION_RATE AS ITEM_DEP_RATE,
                p.DEPRECIATION_RATE AS PRODUCT_DEP_RATE,
@@ -421,6 +423,7 @@ const ReportsService = {
                'Total' AS GROUP_NAME,
                i.PURCHASE_PRICE,
                i.CURRENT_VALUE,
+               i.COMPLETENESS,
                i.DEPRECIATION_ENABLED,
                i.DEPRECIATION_RATE AS ITEM_DEP_RATE,
                p.DEPRECIATION_RATE AS PRODUCT_DEP_RATE,
@@ -445,7 +448,19 @@ const ReportsService = {
     for (const row of rows) {
       const group = row.GROUP_NAME || 'Untagged';
       if (!groups[group]) {
-        groups[group] = { group, purchaseTotal: 0, currentTotal: 0, itemCount: 0 };
+        groups[group] = { group, purchaseTotal: 0, currentTotal: 0, itemCount: 0, excludedCount: 0 };
+      }
+
+      // A box or a bag of spares carries the price of the object it came from,
+      // and that object is in use somewhere else. The insurance report has
+      // skipped these since #178; counting them here left the two reports
+      // disagreeing about what the same property is worth.
+      //
+      // Counted separately rather than filtered in SQL: an exclusion nobody can
+      // see is indistinguishable from data that was never entered.
+      if (_isPartial({ completeness: row.COMPLETENESS })) {
+        groups[group].excludedCount += 1;
+        continue;
       }
 
       const purchasePrice = row.PURCHASE_PRICE ? parseFloat(row.PURCHASE_PRICE) : 0;
@@ -468,6 +483,7 @@ const ReportsService = {
       purchaseTotal: parseFloat(g.purchaseTotal.toFixed(2)),
       currentTotal: parseFloat(g.currentTotal.toFixed(2)),
       itemCount: g.itemCount,
+      excludedCount: g.excludedCount,
     }));
   },
 
@@ -927,11 +943,13 @@ const ReportsService = {
     const value = sorted.reduce((s, g) => s + (g.currentTotal || 0), 0);
     const max = Math.max(1, ...sorted.map(g => g.currentTotal || 0));
 
+    const excluded = sorted.reduce((s2, g) => s2 + (g.excludedCount || 0), 0);
     _band(doc, [
       { k: 'Groups', v: String(sorted.length) },
       { k: 'Items', v: String(items) },
       { k: 'Purchase total', v: _fmtCurrency(paid) },
       { k: 'Current total', v: _fmtCurrency(value) },
+      excluded ? { k: 'Excluded', v: String(excluded) } : null,
     ]);
 
     if (!sorted.length) return _empty(doc, 'Nothing to total in this property.');
@@ -963,7 +981,19 @@ const ReportsService = {
       _rowEnd(doc, y, H);
     });
 
-    return 'BAR = SHARE OF THE LARGEST GROUP';
+    if (excluded) {
+      _ensureRoom(doc, 26);
+      doc.font('Helvetica').fontSize(7.5).fillColor(INK)
+        .text(
+          `${_plural(excluded, 'ROW').toLowerCase()} excluded — packaging or spares only. ` +
+          'Their price belongs to the item they came from, which is not in this property. ' +
+          'The insurance summary excludes them on the same basis.',
+          M, doc.y + 8, { width: W },
+        );
+    }
+    return excluded
+      ? `BAR = SHARE OF THE LARGEST GROUP · ${excluded} EXCLUDED`
+      : 'BAR = SHARE OF THE LARGEST GROUP';
   },
 
   _renderLocationPdf(doc, areas) {
@@ -1255,9 +1285,12 @@ const ReportsService = {
             { id: 'itemCount', title: 'Item Count' },
             { id: 'purchaseTotal', title: 'Purchase Total' },
             { id: 'currentTotal', title: 'Current Total' },
+            // Without this a spreadsheet total silently disagrees with the PDF
+            // about how many things the property contains.
+            { id: 'excludedCount', title: 'Excluded (box/spares)' },
           ],
         });
-        records = data;
+        records = data.map(g => ({ ...g, excludedCount: g.excludedCount ?? 0 }));
         break;
 
       case 'items_by_location':

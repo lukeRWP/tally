@@ -292,3 +292,60 @@ test('the insurance CSV carries completeness, so a spreadsheet total agrees', ()
   assert.match(csv.split('\n')[0], /Completeness/);
   assert.match(csv, /box_only/);
 });
+
+// ── total value agrees with the insurance summary ─────────────────────────
+
+/** Runs totalValue over fabricated rows and returns the single group. */
+async function totalOf(rows) {
+  Reports.init({ db: { query: async () => rows }, logger: noop, config: {} });
+  const [group] = await Reports.totalValue(1, { groupBy: 'property' });
+  return group;
+}
+
+test('total value skips box/spares rows, as the insurance summary does', async () => {
+  // The two reports describing the same property must not disagree about what
+  // it is worth. This counted boxes at full price until now.
+  const group = await totalOf([
+    { GROUP_NAME: 'Total', PURCHASE_PRICE: '189.00', CURRENT_VALUE: '142.00', COMPLETENESS: 'complete' },
+    { GROUP_NAME: 'Total', PURCHASE_PRICE: '1400.00', CURRENT_VALUE: '1400.00', COMPLETENESS: 'box_only' },
+  ]);
+  assert.equal(group.currentTotal, 142);
+  assert.equal(group.purchaseTotal, 189);
+});
+
+test('an excluded row is counted and reported, not silently dropped', async () => {
+  const group = await totalOf([
+    { GROUP_NAME: 'Total', PURCHASE_PRICE: '189.00', CURRENT_VALUE: '142.00', COMPLETENESS: 'complete' },
+    { GROUP_NAME: 'Total', PURCHASE_PRICE: '1400.00', CURRENT_VALUE: '1400.00', COMPLETENESS: 'box_only' },
+    { GROUP_NAME: 'Total', PURCHASE_PRICE: '30.00', CURRENT_VALUE: null, COMPLETENESS: 'accessories_only' },
+  ]);
+  assert.equal(group.itemCount, 1, 'an excluded row still counted toward itemCount');
+  assert.equal(group.excludedCount, 2);
+});
+
+test('rows predating the completeness column still count', async () => {
+  // COMPLETENESS is NOT NULL DEFAULT 'complete', but a fake/legacy row may
+  // arrive undefined. Treating that as partial would zero the whole report.
+  const group = await totalOf([
+    { GROUP_NAME: 'Total', PURCHASE_PRICE: '50.00', CURRENT_VALUE: '40.00' },
+  ]);
+  assert.equal(group.currentTotal, 40);
+  assert.equal(group.itemCount, 1);
+  assert.equal(group.excludedCount, 0);
+});
+
+test('the total-value CSV carries the excluded count', () => {
+  const csv = Reports.generateCsv('total_value', [
+    { group: 'Garage', itemCount: 40, purchaseTotal: 8420, currentTotal: 6100, excludedCount: 2 },
+  ]);
+  assert.match(csv.split('\n')[0], /Excluded \(box\/spares\)/);
+});
+
+test('every totalValue grouping reads COMPLETENESS', () => {
+  // Three near-identical queries; adding the column to two of them would leave
+  // "by tag" quietly counting boxes.
+  const src = fs.readFileSync(path.join(__dirname, '../src/modules/reports/reports.service.js'), 'utf8');
+  const body = src.slice(src.indexOf('async totalValue('), src.indexOf('const rows = await _db.query(sql, params)'));
+  assert.equal((body.match(/i\.COMPLETENESS/g) || []).length, 3,
+    'a grouping is missing the column and will count packaging at full value');
+});
