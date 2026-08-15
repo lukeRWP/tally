@@ -39,7 +39,12 @@ export function ItemCard({ item, selectable, selected, onToggle }: ItemCardProps
         <img
           // The photo YOU took wins over the catalogue stock image — it is the
           // one that makes a barcode-less object recognisable in a list.
-          src={item.photoUrl || item.productImageUrl || ''}
+          //
+          // Thumbnail first: this box is 32px, and the original is downscaled
+          // to 1600px on upload, so the full-size photo is roughly a thousand
+          // times the pixels this needs. Falls back to it when no derivative
+          // exists yet — the server generates one on first sight.
+          src={item.photoThumbUrl || item.photoUrl || item.productImageUrl || ''}
           alt=""
           className="h-8 w-8 object-cover"
           loading="lazy"
