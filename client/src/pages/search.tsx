@@ -1,12 +1,13 @@
 import * as React from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, Search as SearchIcon } from 'lucide-react';
+import { ArrowLeft, Search as SearchIcon, ScanLine, ArrowRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ColHead } from '@/components/ui/col-head';
 import { Input } from '@/components/ui/input';
 import { ItemCard } from '@/components/inventory/item-card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useSearchItems } from '@/hooks/use-inventory';
+import { extractTlyCode } from '@/lib/tly';
 import { cn } from '@/lib/utils';
 import { useLayoutMode } from '@/hooks/use-layout-mode';
 import { useKeyboardNav } from '@/hooks/use-keyboard-nav';
@@ -71,6 +72,20 @@ export function SearchPage() {
       return next;
     }, { replace: true });
   }, [debounced, status, setSearchParams]);
+
+  /**
+   * A tally code typed into search goes where the code points.
+   *
+   * Search is the surface people reach for, and "TLY-I-0004AB" is a perfectly
+   * reasonable thing to paste into it — off a printed label, out of a report,
+   * from the item page. It would otherwise return nothing, because the code is
+   * not in NAME or DESCRIPTION.
+   *
+   * This also carries the capability that hiding Scan on a camera-less machine
+   * would otherwise have removed: /scan's typed-code field was the only route
+   * to a code, and dropping the nav entry without this would have stranded it.
+   */
+  const typedCode = extractTlyCode(query);
 
   const { data: results, isLoading, isError, refetch } = useSearchItems(debounced, { status });
 
@@ -161,7 +176,24 @@ export function SearchPage() {
       </div>
 
       <div className="flex flex-col px-4 pt-4 pb-4">
-        {debounced === '' ? (
+        {/* A code goes where it points, ahead of any text matching — the code
+            is not in NAME or DESCRIPTION, so searching for it finds nothing. */}
+        {typedCode ? (
+          <button
+            type="button"
+            onClick={() => navigate(`/s/${typedCode}`)}
+            className="flex w-full items-center gap-3 rounded-[var(--radius-sm)] border-2 border-[var(--color-text)] px-3 py-3 text-left hover:bg-[var(--color-elevated)]"
+          >
+            <ScanLine className="h-5 w-5 shrink-0" />
+            <span className="min-w-0 flex-1">
+              <span className="block font-mono text-[10px] uppercase tracking-[0.1em] text-[var(--color-text-muted)]">
+                that is a tally code
+              </span>
+              <span className="block truncate text-sm font-semibold">Go to {typedCode}</span>
+            </span>
+            <ArrowRight className="h-4 w-4 shrink-0" />
+          </button>
+        ) : debounced === '' ? (
           <p className="text-sm text-[var(--color-text-muted)] text-center pt-10">
             Type a name — results show where each thing lives.
           </p>

@@ -11,6 +11,7 @@ import { cn } from '@/lib/utils';
 import { buildCaptureUrl } from '@/lib/capture-url';
 import { useCarryStore } from '@/store/carry-store';
 import { useLayoutMode } from '@/hooks/use-layout-mode';
+import { useHasCamera } from '@/hooks/use-has-camera';
 
 // Mirrors the bottom nav's destinations in the same order, plus Search at the
 // top: one information architecture expressed on both surfaces, so desktop and
@@ -38,6 +39,10 @@ const navItems = [
 
 function Sidebar() {
   const location = useLocation();
+  // Scan is dropped where there is no camera to scan with. Asked of the device
+  // rather than inferred from the width — this rail also serves iPad landscape,
+  // which very much has one.
+  const hasCamera = useHasCamera();
   const navigate = useNavigate();
   const { user } = useAuthStore();
   const { data: unreadCount } = useUnreadCount();
@@ -69,7 +74,7 @@ function Sidebar() {
 
       {/* Nav items */}
       <nav className="flex-1 px-3 pt-3 pb-4 space-y-1">
-        {navItems.map((item) => {
+        {navItems.filter((item) => item.path !== '/scan' || hasCamera).map((item) => {
           const isActive = isNavActive(item.path, location.pathname);
           const Icon = item.icon;
 
