@@ -7,6 +7,13 @@ import { COMPLETENESS_LABEL, isPartial } from '@/lib/completeness';
 
 interface ItemCardProps {
   item: Item;
+  /**
+   * Supplied by a split view: the row SELECTS instead of navigating, so the
+   * results stay on screen. Without it the row navigates exactly as before.
+   * A wrapper cannot do this from outside — RuledRow owns the click, so an
+   * outer onClick fires alongside the navigation rather than instead of it.
+   */
+  onSelect?: () => void;
   /** When set, the row becomes a selection toggle instead of a link. */
   selectable?: boolean;
   selected?: boolean;
@@ -26,7 +33,7 @@ const statusVariant = {
   lent: 'info',
 } as const;
 
-export function ItemCard({ item, selectable, selected, onToggle }: ItemCardProps) {
+export function ItemCard({ item, selectable, selected, onToggle, onSelect }: ItemCardProps) {
   const navigate = useNavigate();
   const FallbackIcon = getItemIcon(item.name);
 
@@ -57,7 +64,7 @@ export function ItemCard({ item, selectable, selected, onToggle }: ItemCardProps
 
   return (
     <RuledRow
-      onNavigate={() => navigate(`/item/${item.id}`)}
+      onNavigate={() => (onSelect ? onSelect() : navigate(`/item/${item.id}`))}
       selectable={selectable}
       selected={selected}
       onToggle={onToggle}

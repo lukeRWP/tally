@@ -8,6 +8,10 @@ import { ItemCard } from '@/components/inventory/item-card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useSearchItems } from '@/hooks/use-inventory';
 import { cn } from '@/lib/utils';
+import { useLayoutMode } from '@/hooks/use-layout-mode';
+import { useKeyboardNav } from '@/hooks/use-keyboard-nav';
+import { SplitView } from '@/components/layout/split-view';
+import { ItemPreview } from '@/components/inventory/item-preview';
 
 /**
  * Global search — the surface for the app's #1 job, "Where is X?".
@@ -32,6 +36,7 @@ const STATUS_CHIPS: Array<{ label: string; value: string | undefined }> = [
 
 export function SearchPage() {
   const navigate = useNavigate();
+  const split = useLayoutMode() === 'sidebar';
   const [searchParams, setSearchParams] = useSearchParams();
   const inputRef = React.useRef<HTMLInputElement>(null);
 
@@ -55,13 +60,53 @@ export function SearchPage() {
   // Mirror the settled query into the URL. `replace` keeps typing from
   // flooding history — Back always leaves the page, never rewinds keystrokes.
   React.useEffect(() => {
-    const params: Record<string, string> = {};
-    if (debounced) params.q = debounced;
-    if (status) params.status = status;
-    setSearchParams(params, { replace: true });
+    // MERGE, do not rebuild. This used to construct a fresh object from q and
+    // status alone, so it silently dropped every other param in the URL — the
+    // selected result vanished on mount, and any param added later would have
+    // gone the same way without anyone touching this line.
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      if (debounced) next.set('q', debounced); else next.delete('q');
+      if (status) next.set('status', status); else next.delete('status');
+      return next;
+    }, { replace: true });
   }, [debounced, status, setSearchParams]);
 
   const { data: results, isLoading, isError, refetch } = useSearchItems(debounced, { status });
+
+  /**
+   * The chosen result, in the URL beside the query.
+   *
+   * Keeping it here rather than in state means a result you found is a link
+   * you can send, and Back steps off the result rather than off the search —
+   * which matters most on the one surface people arrive at repeatedly.
+   */
+  const selectedId = searchParams.get('sel') ? Number(searchParams.get('sel')) : null;
+  const select = React.useCallback((id: number | null) => {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      if (id == null) next.delete('sel'); else next.set('sel', String(id));
+      return next;
+    }, { replace: true });
+  }, [setSearchParams]);
+
+  const ids = React.useMemo(() => (results ?? []).map((r) => r.id), [results]);
+  useKeyboardNav({
+    enabled: split,
+    onMove: (delta) => {
+      if (ids.length === 0) return;
+      const at = selectedId == null ? -1 : ids.indexOf(selectedId);
+      const next = at === -1
+        ? (delta === 1 ? 0 : ids.length - 1)
+        : Math.min(ids.length - 1, Math.max(0, at + delta));
+      select(ids[next]);
+    },
+    onEscape: () => select(null),
+    onOpen: () => { if (selectedId != null) navigate(`/item/${selectedId}`); },
+    // '/' already lives in this page's own input, so refocusing it is the
+    // useful thing rather than navigating to the page you are on.
+    onSearch: () => inputRef.current?.focus(),
+  });
 
   return (
     <div className="flex flex-col min-h-full">
@@ -138,12 +183,34 @@ export function SearchPage() {
             </Button>
           </div>
         ) : results && results.length > 0 ? (
-          <>
-            <ColHead>{results.length} result{results.length === 1 ? '' : 's'}</ColHead>
-            {results.map((item) => (
-              <ItemCard key={item.id} item={item} />
-            ))}
-          </>
+          split ? (
+            <SplitView
+              list={
+                <>
+                  <ColHead>{results.length} result{results.length === 1 ? '' : 's'}</ColHead>
+                  {results.map((item) => (
+                    <div
+                      key={item.id}
+                      className={cn(
+                        'rounded-[var(--radius-sm)]',
+                        selectedId === item.id && 'bg-[var(--color-elevated)] ring-1 ring-[var(--color-text)]',
+                      )}
+                    >
+                      <ItemCard item={item} onSelect={() => select(item.id)} />
+                    </div>
+                  ))}
+                </>
+              }
+              detail={<ItemPreview itemId={selectedId} />}
+            />
+          ) : (
+            <>
+              <ColHead>{results.length} result{results.length === 1 ? '' : 's'}</ColHead>
+              {results.map((item) => (
+                <ItemCard key={item.id} item={item} />
+              ))}
+            </>
+          )
         ) : (
           <p className="text-sm text-[var(--color-text-muted)] text-center pt-10">
             Nothing matches “{debounced}”
