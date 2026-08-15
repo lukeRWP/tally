@@ -10,6 +10,7 @@ import { api } from '@/lib/api';
 import { useCarryStore } from '@/store/carry-store';
 import { usePutDown } from '@/hooks/use-put-down';
 import { useMoveItem, useMoveContainer } from '@/hooks/use-inventory';
+import { useLayoutMode } from '@/hooks/use-layout-mode';
 
 /**
  * Put it down.
@@ -34,6 +35,7 @@ interface ResolvedEntity {
 }
 
 export function PutDown() {
+  const atDesk = useLayoutMode() === 'sidebar';
   const navigate = useNavigate();
   const carried = useCarryStore((s) => s.carried);
   const lastMove = useCarryStore((s) => s.lastMove);
@@ -43,7 +45,7 @@ export function PutDown() {
   const moveItem = useMoveItem();
   const moveContainer = useMoveContainer();
 
-  const [picking, setPicking] = React.useState(false);
+  const [picking, setPicking] = React.useState(atDesk);
   const [busy, setBusy] = React.useState(false);
 
   // The scanner callback is handed to the camera once, so it must not close
@@ -190,11 +192,16 @@ export function PutDown() {
         <>
           {/* The action is drawn inside the frame, so it is read while aiming.
               It doubles as the progress indicator while the move is in flight. */}
-          <TagScanner
-            label={busy ? 'Moving…' : 'Scan tote/area tag'}
-            onTag={handleCode}
-            onClose={() => navigate(-1)}
-          />
+          {/* At a desk the camera is opt-in: the picker above is the path that
+              works, and leading with a viewfinder there shows a denial for a
+              device that has no camera to deny. */}
+          {!atDesk && (
+            <TagScanner
+              label={busy ? 'Moving…' : 'Scan tote/area tag'}
+              onTag={handleCode}
+              onClose={() => navigate(-1)}
+            />
+          )}
           <Button variant="outline" size="sm" className="shrink-0" onClick={() => setPicking(true)}>
             <List className="w-4 h-4" />
             Pick a bin from the list
