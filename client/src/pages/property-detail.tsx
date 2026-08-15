@@ -12,8 +12,12 @@ import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { ErrorState } from '@/components/ui/error-state';
 import { useProperty, useAreas, useCreateArea, useDeleteProperty } from '@/hooks/use-inventory';
 import { toast } from '@/components/ui/toast';
+import { cn } from '@/lib/utils';
+import { useLayoutMode } from '@/hooks/use-layout-mode';
 
 export function PropertyDetail() {
+  // Above every early return — hooks must run on each render.
+  const wide = useLayoutMode() === 'sidebar';
   const { propertyId } = useParams<{ propertyId: string }>();
   const id = Number(propertyId);
 
@@ -120,9 +124,13 @@ export function PropertyDetail() {
           </div>
         )}
 
-        {areas?.map((area) => (
-          <AreaCard key={area.id} area={area} />
-        ))}
+        {/* Two columns at a desk — a stretched ruled row puts its chevron a
+            screen from its name. */}
+        <div className={cn(wide && 'grid grid-cols-2 gap-x-6')}>
+          {areas?.map((area) => (
+            <AreaCard key={area.id} area={area} />
+          ))}
+        </div>
       </div>
 
       <EntityForm

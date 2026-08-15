@@ -8,6 +8,8 @@ import { ColHead } from '@/components/ui/col-head';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from '@/components/ui/toast';
+import { cn } from '@/lib/utils';
+import { useLayoutMode } from '@/hooks/use-layout-mode';
 
 /**
  * The recycle bin, one row per DELETION rather than one row per swept-up item.
@@ -62,6 +64,8 @@ function describeContents(b: DeleteBatch): string | null {
 }
 
 export function RecycleBinList() {
+  // Above every early return — hooks must run on each render.
+  const wide = useLayoutMode() === 'sidebar';
   const qc = useQueryClient();
   const [purgeOpen, setPurgeOpen] = useState(false);
 
@@ -151,6 +155,9 @@ export function RecycleBinList() {
       {!isLoading && list.length > 0 && (
         <div className="flex flex-col">
           <ColHead>Deletions</ColHead>
+          {/* Two columns at a desk. A deletion batch is a receipt line, and 30
+              days of them is a long scroll at one per row. */}
+          <div className={cn(wide && 'grid grid-cols-2 gap-x-6 items-start')}>
           {list.map((b) => {
             const Icon = ICON[b.rootType] ?? Package;
             const contents = describeContents(b);
@@ -191,6 +198,7 @@ export function RecycleBinList() {
               </div>
             );
           })}
+          </div>
         </div>
       )}
     </div>
