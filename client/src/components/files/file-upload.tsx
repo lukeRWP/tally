@@ -10,12 +10,24 @@ type FileType = (typeof FILE_TYPES)[number];
 
 interface FileUploadProps {
   itemId: number;
+  /**
+   * Restrict what this box can file things as.
+   *
+   * The Photos panel and the Documents panel each carry their own box, and a
+   * box that offers all five types can drop a receipt into Photos — the file
+   * would then appear in the OTHER panel, which reads as the upload having
+   * failed. Each box offers only the types its own panel shows.
+   */
+  types?: readonly FileType[];
 }
 
-export function FileUpload({ itemId }: FileUploadProps) {
+export function FileUpload({ itemId, types }: FileUploadProps) {
   const inputRef = React.useRef<HTMLInputElement>(null);
   const [selectedFile, setSelectedFile] = React.useState<File | null>(null);
-  const [fileType, setFileType] = React.useState<FileType>('other');
+  const offered = types ?? FILE_TYPES;
+  // Default to the only choice when there is one, so a photo upload is two
+  // clicks rather than three.
+  const [fileType, setFileType] = React.useState<FileType>(offered[0] ?? 'other');
   const upload = useUploadFile();
 
   function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
@@ -40,8 +52,8 @@ export function FileUpload({ itemId }: FileUploadProps) {
       <p className="text-xs font-medium text-[var(--color-text-muted)]">Attach a file</p>
 
       {/* File type pills */}
-      <div className="flex flex-wrap gap-1.5">
-        {FILE_TYPES.map((type) => (
+      <div className={cn('flex flex-wrap gap-1.5', offered.length < 2 && 'hidden')}>
+        {offered.map((type) => (
           <button
             key={type}
             type="button"

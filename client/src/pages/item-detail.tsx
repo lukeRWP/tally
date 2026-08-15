@@ -296,10 +296,10 @@ function Section({
  * meant finding a second heading for a thing the first one was already about.
  * One panel: what is attached, and the box you attach with.
  */
-function FilesBox({ id }: { id: number }) {
+function FilesBox({ id, types }: { id: number; types?: readonly ('receipt' | 'warranty' | 'manual' | 'photo' | 'other')[] }) {
   return (
     <div className="pt-2 pb-1">
-      <FileUpload itemId={id} />
+      <FileUpload itemId={id} types={types} />
     </div>
   );
 }
@@ -470,6 +470,8 @@ export function ItemDetail() {
   // Any file at all: FileList carries the ONLY open/delete controls for files,
   // photos included, so gating it on non-photo files stranded them.
   const hasFilesAny = (itemFiles ?? []).length > 0;
+  const photoCount = (itemFiles ?? []).filter((f) => f.fileType === 'photo').length;
+  const docCount = (itemFiles ?? []).filter((f) => f.fileType !== 'photo').length;
   const hasAccessories = (accessories?.length ?? 0) > 0;
   const hasLending = (lendingHistory?.length ?? 0) > 0;
 
@@ -829,11 +831,6 @@ export function ItemDetail() {
         </Section>
       )}
 
-      <ItemHistory
-        itemId={id}
-        containerId={containerId}
-        containerName={breadcrumb?.filter((b) => b.type === 'container').at(-1)?.name ?? null}
-      />
 
       </div>
 
@@ -887,20 +884,40 @@ export function ItemDetail() {
 
       {/* Photos live in the ledger row, so this is receipts, manuals, warranties. */}
       {hasFilesAny && (
-        <Section card={split} defaultOpen title="Files" count={itemFiles?.length}>
-          <FileList itemId={id} />
-          <FilesBox id={id} />
+        <Section card={split} defaultOpen title="Photos" count={photoCount}>
+          <FileList itemId={id} only="photos" />
+          <FilesBox id={id} types={['photo']} />
         </Section>
       )}
 
-      {/* With nothing attached yet the panel is just the box — a "Files · 0"
-          header over an empty list, followed by a separate "Attach" header, was
-          two headings and no content. */}
+      {/* Same table, different things: a photo is looked AT, a receipt or a
+          manual is opened and read. One list ordered by upload date buries
+          whichever you did not come for. */}
+      {hasFilesAny && (
+        <Section card={split} defaultOpen title="Documents" count={docCount}>
+          <FileList itemId={id} only="documents" />
+          <FilesBox id={id} types={['receipt', 'warranty', 'manual', 'other']} />
+        </Section>
+      )}
+
+      {/* Nothing attached at all: one panel and one box, rather than two empty
+          headings side by side. */}
       {!hasFilesAny && (
         <Section card={split} defaultOpen title="Files">
           <FilesBox id={id} />
         </Section>
       )}
+
+      {/* Moved out of the ledger column: history is a record of what has
+          happened, which is the same kind of thing as the files and dates
+          beside it — not a fact about the object like the rows above. */}
+      <div className={cn(split && 'rounded-[var(--radius-sm)] border border-[var(--color-rule)] px-3 pb-2 pt-1.5')}>
+        <ItemHistory
+          itemId={id}
+          containerId={containerId}
+          containerName={breadcrumb?.filter((b) => b.type === 'container').at(-1)?.name ?? null}
+        />
+      </div>
 
       {/* Last on the page: everything above describes THIS object — where it
           is, what it cost, what has happened to it. This describes the product
