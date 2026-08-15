@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Camera, Check, X, Printer, Plus, MapPin, SkipForward, List, AlertTriangle, Search } from 'lucide-react';
+import { Camera, Check, X, Printer, Plus, MapPin, SkipForward, List, AlertTriangle, Search, ImagePlus } from 'lucide-react';
 import { ProductScanner } from '@/components/scanner/product-scanner';
 import { TagScanner } from '@/components/scanner/tag-scanner';
 import { ProductSearch } from '@/components/scanner/product-search';
@@ -20,6 +20,7 @@ import { cn } from '@/lib/utils';
 import { extractTlyCode } from '@/lib/tly';
 import { useVisionPref } from '@/store/vision-store';
 import { decideSuggestion } from '@/lib/vision-decision';
+import { useLayoutMode } from '@/hooks/use-layout-mode';
 
 /**
  * The capture flow: PICTURE → SCAN → SCAN → DONE.
@@ -188,6 +189,10 @@ export function Capture() {
   const navigate = useNavigate();
   const [params] = useSearchParams();
   const photoInput = React.useRef<HTMLInputElement>(null);
+  // A desk has no rear camera and usually no camera worth pointing at a shelf,
+  // so step 1 stops asking for one.
+  const atDesk = useLayoutMode() === 'sidebar';
+  const [dragging, setDragging] = React.useState(false);
   const nameField = React.useRef<HTMLInputElement>(null);
 
   const [recents, setRecents] = React.useState<Destination[]>(readRecents);
@@ -613,15 +618,24 @@ export function Capture() {
     }
   }
 
-  async function onPhoto(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    e.target.value = '';
-    if (!file) return;
+  /**
+   * One path for a chosen photo, however it arrived — file picker on any
+   * device, or dropped onto the panel at a desk. Two copies of this would
+   * drift on the part that matters least visibly: whether identification runs.
+   */
+  async function acceptPhotoFile(file: File) {
     const blob = await downscale(file);
     setDraft((d) => ({ ...d, photo: blob, photoUrl: URL.createObjectURL(blob) }));
     setPhase('identify');
     // Not awaited: step 2 is already on screen and the camera scanner is live.
     void identifyPhoto(blob);
+  }
+
+  async function onPhoto(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    await acceptPhotoFile(file);
   }
 
   const step = phase === 'photo' ? 1 : phase === 'identify' ? 2 : 3;
@@ -641,9 +655,15 @@ export function Capture() {
   }
 
   return (
-    <div className="flex flex-col gap-3 max-w-lg mx-auto h-full">
+    <div className={cn(
+      'flex flex-col gap-3 mx-auto h-full',
+      // max-w-lg frames a camera viewfinder, which is what this page is on a
+      // phone. The desk form is a form: it needs room for a label beside its
+      // field, not a 512px column that truncates every placeholder.
+      atDesk ? 'w-full max-w-[900px]' : 'max-w-lg',
+    )}>
       {/* progress + destination */}
-      <div className="flex items-center gap-2 shrink-0">
+      <div className={cn('flex items-center gap-2 shrink-0', atDesk && 'hidden')}>
         {[1, 2, 3].map((n) => (
           <span key={n} className={cn('h-[3px] rounded-full transition-all duration-300 ease-out',
             n === step ? 'w-8 bg-[var(--color-primary)]' : 'w-5',
@@ -749,20 +769,86 @@ export function Capture() {
 
       {/* Each step enters as its own move, so advancing reads as progress
           rather than the same page quietly rearranging itself. */}
+      {atDesk ? (
+        /*
+         * MANUAL CREATION at a desk.
+         *
+         * The three-step flow is built around a camera: photograph the thing,
+         * scan its barcode, scan the bin's tag. All three are gestures you make
+         * while holding a phone in front of a shelf. At a desk none of them are
+         * available, so following the same three screens means pressing Skip
+         * twice to reach the only step that works.
+         *
+         * So a desk gets ONE screen: name it, say where it goes, optionally
+         * attach a photo. Same draft, same commit — this is a different way in,
+         * not a different thing being made.
+         */
+        <ManualCreate
+          draft={draft}
+          setDraft={setDraft}
+          dest={dest}
+          onPickDest={pinDestination}
+          onChoosePhoto={() => photoInput.current?.click()}
+          dragging={dragging}
+          setDragging={setDragging}
+          onDropFile={(f) => void acceptPhotoFile(f)}
+          onSubmit={() => { if (dest) void commit(draft, dest); }}
+          pending={busy !== null || createItem.isPending}
+          seedAreaId={ctxArea || dest?.areaId}
+          seedPropertyId={ctxProperty || undefined}
+        />
+      ) : (
       <div key={phase} className={cn('animate-step-in flex flex-col gap-3', phase !== 'photo' && 'flex-1 min-h-0')}>
       {/* ── step 1: the picture ─────────────────────────────────────────── */}
       {phase === 'photo' && (
         <div className="flex flex-col gap-2">
-          <input ref={photoInput} type="file" accept="image/*" capture="environment"
+          {/*
+            `capture="environment"` asks the OS for the REAR camera, which is
+            right on a phone held up to a shelf and wrong at a desk — it either
+            does nothing or opens a webcam pointed at your face. At a desk the
+            same input is a file picker, so the attribute is dropped and the
+            copy stops promising a camera that is not there.
+          */}
+          <input ref={photoInput} type="file" accept="image/*"
+            {...(atDesk ? {} : { capture: 'environment' as const })}
             className="hidden" onChange={onPhoto} />
-          <button type="button" onClick={() => photoInput.current?.click()}
-            className="flex flex-col items-center justify-center gap-2 border-2 border-[var(--color-text)] rounded-[var(--radius-sm)] py-10">
-            <Camera className="w-8 h-8" />
-            <span className="font-mono text-xs uppercase tracking-[0.1em] font-bold">Take a photo of the item</span>
+          <button
+            type="button"
+            onClick={() => photoInput.current?.click()}
+            // Dropping a file IS the desktop gesture for this. Ignored on
+            // touch, where there is nothing to drag from.
+            onDragOver={atDesk ? (e) => { e.preventDefault(); setDragging(true); } : undefined}
+            onDragLeave={atDesk ? () => setDragging(false) : undefined}
+            onDrop={atDesk ? (e) => {
+              e.preventDefault();
+              setDragging(false);
+              const file = e.dataTransfer.files?.[0];
+              if (file) void acceptPhotoFile(file);
+            } : undefined}
+            className={cn(
+              'flex flex-col items-center justify-center gap-2 border-2 rounded-[var(--radius-sm)]',
+              atDesk ? 'py-16 border-dashed' : 'py-10',
+              dragging ? 'border-[var(--color-primary)] bg-[var(--color-primary-bg)]' : 'border-[var(--color-text)]',
+            )}
+          >
+            {atDesk ? <ImagePlus className="w-8 h-8" /> : <Camera className="w-8 h-8" />}
+            <span className="font-mono text-xs uppercase tracking-[0.1em] font-bold">
+              {atDesk ? 'Drop a photo here, or choose a file' : 'Take a photo of the item'}
+            </span>
+            {atDesk && (
+              <span className="font-mono text-[10px] uppercase tracking-[0.08em] text-[var(--color-text-muted)]">
+                or skip straight to naming it
+              </span>
+            )}
           </button>
-          <Button variant="ghost" size="sm" onClick={() => setPhase('identify')}>
+          {/*
+            At a desk skipping is the ORDINARY path, not the escape hatch — most
+            desks have no camera and no photo to hand — so it stops being a ghost
+            link and becomes a real choice of equal weight.
+          */}
+          <Button variant={atDesk ? 'outline' : 'ghost'} size="sm" onClick={() => setPhase('identify')}>
             <SkipForward className="w-3.5 h-3.5" />
-            Skip photo
+            {atDesk ? 'Skip to details' : 'Skip photo'}
           </Button>
         </div>
       )}
@@ -1021,7 +1107,7 @@ export function Capture() {
       )}
 
       </div>
-
+      )}
       {/* ── receipts ─────────────────────────────────────────────────────── */}
       {/* Step 1 only: this list is unbounded, and steps 2 and 3 are sized to
           the viewport. Step 1 has no frame to steal from. */}
@@ -1076,3 +1162,178 @@ export function Capture() {
 }
 
 export default Capture;
+
+
+/**
+ * Creating something at a desk.
+ *
+ * The three-step flow is a camera flow: photograph the thing, scan its barcode,
+ * scan the bin's tag. Every one of those is a gesture you make holding a phone
+ * in front of a shelf, and at a desk none of them are available — so following
+ * the same three screens means pressing Skip twice to reach the one step that
+ * still works.
+ *
+ * This is the same draft and the same commit, asked for the way a keyboard asks:
+ * everything visible at once, name first and focused, nothing hidden behind a
+ * step you cannot complete. The photo is optional and last, because at a desk it
+ * usually does not exist.
+ */
+function ManualCreate({
+  draft, setDraft, dest, onPickDest, onChoosePhoto, dragging, setDragging,
+  onDropFile, onSubmit, pending, seedAreaId, seedPropertyId,
+}: {
+  draft: Draft;
+  setDraft: React.Dispatch<React.SetStateAction<Draft>>;
+  dest: Destination | null;
+  onPickDest: (d: Destination) => void;
+  onChoosePhoto: () => void;
+  dragging: boolean;
+  setDragging: (v: boolean) => void;
+  onDropFile: (f: File) => void;
+  onSubmit: () => void;
+  pending: boolean;
+  seedAreaId?: number;
+  seedPropertyId?: number;
+}) {
+  const [picking, setPicking] = React.useState(false);
+  const nameRef = React.useRef<HTMLInputElement>(null);
+  React.useEffect(() => { nameRef.current?.focus(); }, []);
+
+  const ready = draft.name.trim().length > 0 && dest != null;
+
+  return (
+    <div className="grid grid-cols-[minmax(0,1fr)_minmax(260px,320px)] items-start gap-6">
+      <form
+        className="flex flex-col gap-4"
+        onSubmit={(e) => { e.preventDefault(); if (ready && !pending) onSubmit(); }}
+      >
+        <div className="flex flex-col gap-1">
+          <label htmlFor="mc-name" className="font-mono text-[10px] uppercase tracking-[0.1em] text-[var(--color-text-muted)]">
+            What is it?
+          </label>
+          <Input
+            id="mc-name"
+            ref={nameRef}
+            value={draft.name}
+            maxLength={255}
+            placeholder="Cordless drill"
+            onChange={(e) => setDraft((d) => ({ ...d, name: e.target.value }))}
+          />
+        </div>
+
+        <div className="flex flex-col gap-1">
+          <label htmlFor="mc-desc" className="font-mono text-[10px] uppercase tracking-[0.1em] text-[var(--color-text-muted)]">
+            Description <span className="normal-case tracking-normal">— optional</span>
+          </label>
+          <Input
+            id="mc-desc"
+            value={draft.description ?? ''}
+            placeholder="Anything you would want to search for later"
+            onChange={(e) => setDraft((d) => ({ ...d, description: e.target.value || undefined }))}
+          />
+        </div>
+
+        <div className="grid grid-cols-2 gap-3">
+          <div className="flex flex-col gap-1">
+            <label htmlFor="mc-qty" className="font-mono text-[10px] uppercase tracking-[0.1em] text-[var(--color-text-muted)]">
+              Quantity
+            </label>
+            <Input
+              id="mc-qty" type="number" min={1} step={1}
+              value={draft.quantity ?? 1}
+              onChange={(e) => setDraft((d) => ({ ...d, quantity: Math.max(1, Number(e.target.value) || 1) }))}
+            />
+          </div>
+          <div className="flex flex-col gap-1">
+            <label htmlFor="mc-barcode" className="font-mono text-[10px] uppercase tracking-[0.1em] text-[var(--color-text-muted)]">
+              Barcode <span className="normal-case tracking-normal">— optional</span>
+            </label>
+            {/* Typed rather than scanned. A USB barcode reader is a keyboard,
+                so this field also catches one without any camera involved. */}
+            <Input
+              id="mc-barcode"
+              value={draft.barcode ?? ''}
+              placeholder="Type or scan"
+              onChange={(e) => setDraft((d) => ({ ...d, barcode: e.target.value || undefined }))}
+            />
+          </div>
+        </div>
+
+        {/* WHERE is required, so it is stated rather than implied. */}
+        <div className="flex flex-col gap-1">
+          <span className="font-mono text-[10px] uppercase tracking-[0.1em] text-[var(--color-text-muted)]">
+            Where does it go?
+          </span>
+          {dest ? (
+            <div className="flex items-center gap-2 rounded-[var(--radius-sm)] border-2 border-[var(--color-text)] px-3 py-2">
+              <MapPin className="h-4 w-4 shrink-0" />
+              <span className="min-w-0 flex-1 truncate text-sm font-semibold">{dest.name}</span>
+              <Button type="button" variant="ghost" size="sm" onClick={() => setPicking(true)}>Change</Button>
+            </div>
+          ) : (
+            <Button type="button" variant="outline" onClick={() => setPicking(true)}>
+              <List className="h-4 w-4" /> Choose a bin
+            </Button>
+          )}
+        </div>
+
+        <div className="flex items-center gap-3 pt-1">
+          <Button type="submit" disabled={!ready || pending} className="min-w-[160px]">
+            <Check className="h-4 w-4" />
+            {pending ? 'Saving…' : 'Create item'}
+          </Button>
+          {/* Says WHICH requirement is missing rather than just sitting dead. */}
+          {!ready && (
+            <span className="whitespace-nowrap font-mono text-[10px] uppercase tracking-[0.08em] text-[var(--color-text-muted)]">
+              {draft.name.trim() ? 'pick a bin first' : 'name it first'}
+            </span>
+          )}
+        </div>
+      </form>
+
+      {/* The photo is optional and last: at a desk there usually is not one. */}
+      <div className="flex flex-col gap-2">
+        <span className="font-mono text-[10px] uppercase tracking-[0.1em] text-[var(--color-text-muted)]">
+          Photo — optional
+        </span>
+        {draft.photoUrl ? (
+          <img src={draft.photoUrl} alt="" className="h-[220px] w-full rounded-[var(--radius-sm)] border border-[var(--color-rule)] object-cover" />
+        ) : (
+          <button
+            type="button"
+            onClick={onChoosePhoto}
+            onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
+            onDragLeave={() => setDragging(false)}
+            onDrop={(e) => {
+              e.preventDefault();
+              setDragging(false);
+              const f = e.dataTransfer.files?.[0];
+              if (f) onDropFile(f);
+            }}
+            className={cn(
+              'flex h-[220px] w-full flex-col items-center justify-center gap-2 rounded-[var(--radius-sm)] border-2 border-dashed',
+              dragging ? 'border-[var(--color-primary)] bg-[var(--color-primary-bg)]' : 'border-[var(--color-rule)]',
+            )}
+          >
+            <ImagePlus className="h-7 w-7 text-[var(--color-text-muted)]" />
+            <span className="font-mono text-[10px] uppercase tracking-[0.08em] text-[var(--color-text-muted)]">
+              drop one here, or choose a file
+            </span>
+          </button>
+        )}
+      </div>
+
+      {picking && (
+        <DestinationPicker
+          seedAreaId={seedAreaId}
+          seedPropertyId={seedPropertyId}
+          onPick={(bin) => {
+            onPickDest({ id: bin.id, name: bin.name, areaId: bin.areaId });
+            setPicking(false);
+          }}
+          onClose={() => setPicking(false)}
+        />
+      )}
+    </div>
+  );
+}
