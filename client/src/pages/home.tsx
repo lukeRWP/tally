@@ -4,6 +4,8 @@ import { Search, ChevronDown, Filter, X } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { ColHead } from '@/components/ui/col-head';
+import { useLayoutMode } from '@/hooks/use-layout-mode';
+import type { Property } from '@/types/inventory';
 import { ErrorState } from '@/components/ui/error-state';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ItemCard } from '@/components/inventory/item-card';
@@ -104,6 +106,8 @@ const STATUSES: Array<{ label: string; value: string }> = [
  * Browsing the house by place has a tab of its own, so no property list here.
  */
 export function Home() {
+  // Above any early return: hooks must run on every render.
+  const wide = useLayoutMode() === 'sidebar';
   const navigate = useNavigate();
   const [searchInput, setSearchInput] = React.useState('');
   const [searchQuery, setSearchQuery] = React.useState('');
@@ -386,6 +390,7 @@ export function Home() {
         </section>
       ) : (
         <section className="flex flex-col animate-fade-up">
+          {wide && <div className="mb-4"><HouseTotals properties={properties} /></div>}
           <ColHead>Recently added{recentItems?.length ? ` · ${recentItems.length}` : ''}</ColHead>
 
           {recentLoading && (
@@ -424,11 +429,48 @@ export function Home() {
             )
           )}
 
-          {!recentError && recentItems?.map((item) => (
-            <ItemCard key={item.id} item={item} />
-          ))}
+          {/* Two columns at a desk: ten ruled rows across 1400px is a lot of
+              empty middle and a lot of scrolling for a list this short. */}
+          <div className={cn(wide && 'grid grid-cols-2 gap-x-6')}>
+            {!recentError && recentItems?.map((item) => (
+              <ItemCard key={item.id} item={item} />
+            ))}
+          </div>
         </section>
       )}
+    </div>
+  );
+}
+
+/**
+ * What the house adds up to, at a glance.
+ *
+ * A desk can answer "how much is there?" before you scroll, and the property
+ * list already carries every number — this costs no request. It is deliberately
+ * absent on a phone, where the same strip would push the recent items, which
+ * are the reason people open this screen, below the fold.
+ */
+function HouseTotals({ properties }: { properties: Property[] | undefined }) {
+  if (!properties || properties.length === 0) return null;
+  const sum = (pick: (p: Property) => number) => properties.reduce((t, p) => t + (pick(p) || 0), 0);
+  const stats = [
+    { k: properties.length === 1 ? 'Property' : 'Properties', v: properties.length },
+    { k: 'Areas', v: sum((p) => p.areaCount) },
+    { k: 'Containers', v: sum((p) => p.containerCount) },
+    { k: 'Items', v: sum((p) => p.itemCount) },
+  ];
+  return (
+    <div className="grid grid-cols-4 gap-3 animate-fade-up">
+      {stats.map(({ k, v }) => (
+        <div key={k} className="border-2 border-[var(--color-text)] rounded-[var(--radius-sm)] px-3 py-2">
+          <span className="block font-mono text-[10px] uppercase tracking-[0.12em] text-[var(--color-text-muted)]">
+            {k}
+          </span>
+          <span className="block font-mono text-2xl font-bold tabular-nums leading-tight">
+            {v.toLocaleString('en-US')}
+          </span>
+        </div>
+      ))}
     </div>
   );
 }
