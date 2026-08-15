@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { FileText, Image, Receipt, File, Trash2 } from 'lucide-react';
+import { FileText, Image, Receipt, File, Trash2, Image as ImageIcon } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { toast } from '@/components/ui/toast';
@@ -137,10 +137,41 @@ export function FileList({ itemId, only }: FileListProps) {
     );
   }
 
-  // Group by file type in display order
-  // A panel already titled Photos does not need every row filed under a
-  // "PHOTO" sub-heading as well.
-  const showGroupHeadings = only !== 'photos';
+  /*
+   * Photos are shown, not listed.
+   *
+   * "drill-side.jpg · 234.5 KB" tells you a photo exists and nothing about
+   * what is in it, which is the only thing anyone opens a photo panel to find
+   * out. A filename is the right row for a manual — you already know what a
+   * manual looks like — and the wrong one for a picture.
+   */
+  if (only === 'photos') {
+    return (
+      <div className="grid grid-cols-3 gap-2 pt-1">
+        {files.map((file) => (
+          <button
+            key={file.id}
+            type="button"
+            onClick={() => file.url && window.open(file.url, '_blank')}
+            title={file.fileName}
+            className="group relative aspect-square overflow-hidden rounded-[var(--radius-sm)] border border-[var(--color-rule)] bg-[var(--color-elevated)] hover:border-[var(--color-text)]"
+          >
+            {file.url ? (
+              <img src={file.url} alt={file.fileName} loading="lazy" className="h-full w-full object-cover" />
+            ) : (
+              <span className="flex h-full w-full items-center justify-center text-[var(--color-text-muted)]">
+                <ImageIcon className="h-5 w-5" />
+              </span>
+            )}
+          </button>
+        ))}
+      </div>
+    );
+  }
+
+  // Group by file type in display order. The photos panel returned above, so
+  // everything still here has more than one kind to separate and wants the
+  // headings — the flag that used to suppress them has no case left.
   const grouped = FILE_TYPE_ORDER.reduce<Record<string, ItemFile[]>>((acc, type) => {
     const group = files.filter((f) => f.fileType === type);
     if (group.length) acc[type] = group;
@@ -151,11 +182,9 @@ export function FileList({ itemId, only }: FileListProps) {
     <div className="flex flex-col gap-3">
       {Object.entries(grouped).map(([type, group]) => (
         <div key={type}>
-          {showGroupHeadings && (
-            <p className="text-[10px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)] mb-1">
-              {type}
-            </p>
-          )}
+          <p className="text-[10px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)] mb-1">
+            {type}
+          </p>
           <div>
             {group.map((file) => (
               <FileRow key={file.id} file={file} itemId={itemId} />

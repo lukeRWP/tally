@@ -847,7 +847,9 @@ export function ItemDetail() {
         gets one card, not one card and three gaps.
       */}
       <div className={cn(
-        split && 'lg:col-span-2 grid grid-cols-[repeat(auto-fill,minmax(320px,1fr))] items-start gap-4',
+        // Three, not auto-fill. At 1400px auto-fill gave four ~330px columns, which
+        // is narrower than the content wants and reads as a row of strips.
+        split && 'lg:col-span-2 grid grid-cols-3 items-start gap-4',
         !split && 'flex flex-col gap-4',
       )}>
 
