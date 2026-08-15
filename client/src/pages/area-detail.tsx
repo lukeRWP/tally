@@ -15,8 +15,12 @@ import { toast } from '@/components/ui/toast';
 import { TagPicker } from '@/components/tags/tag-picker';
 import { LabelPrintDialog } from '@/components/labels/label-print-dialog';
 import { usePrintQueueStore } from '@/store/print-queue-store';
+import { cn } from '@/lib/utils';
+import { useLayoutMode } from '@/hooks/use-layout-mode';
 
 export function AreaDetail() {
+  // Above every early return — hooks must run on each render.
+  const wide = useLayoutMode() === 'sidebar';
   const { areaId } = useParams<{ areaId: string }>();
   const id = Number(areaId);
 
@@ -175,9 +179,12 @@ export function AreaDetail() {
           </div>
         )}
 
+        {/* Two columns at a desk: a ruled row stretched to 1400px puts its chevron a screen away from its name, and a short list wastes the height. */}
+        <div className={cn(wide && 'grid grid-cols-2 gap-x-6')}>
         {containers?.map((container) => (
           <ContainerCard key={container.id} container={container} />
         ))}
+        </div>
       </div>
 
       <EntityForm

@@ -26,8 +26,12 @@ import { LabelPrintDialog } from '@/components/labels/label-print-dialog';
 import { ShareDialog } from '@/components/sharing/share-dialog';
 import { usePrintQueueStore } from '@/store/print-queue-store';
 import { useCarryStore } from '@/store/carry-store';
+import { cn } from '@/lib/utils';
+import { useLayoutMode } from '@/hooks/use-layout-mode';
 
 export function ContainerDetail() {
+  // Above every early return — hooks must run on each render.
+  const wide = useLayoutMode() === 'sidebar';
   const { containerId } = useParams<{ containerId: string }>();
   const id = Number(containerId);
   const navigate = useNavigate();
@@ -356,6 +360,10 @@ export function ContainerDetail() {
           </p>
         )}
 
+        {/* Two columns at a desk: a ruled row stretched to 1400px puts its
+            chevron a screen away from its name, and a bin's contents are the
+            reason you opened the page — worth seeing more of at once. */}
+        <div className={cn(wide && 'grid grid-cols-2 gap-x-6')}>
         {children?.map((child) => (
           <ContainerCard
             key={child.id}
@@ -365,6 +373,7 @@ export function ContainerDetail() {
             onToggle={() => toggleSelected(`container:${child.id}`)}
           />
         ))}
+        </div>
       </section>
 
       {/* Items */}
@@ -379,6 +388,7 @@ export function ContainerDetail() {
           </p>
         )}
 
+        <div className={cn(wide && 'grid grid-cols-2 gap-x-6')}>
         {items?.map((item) => (
           <ItemCard
             key={item.id}
@@ -388,6 +398,7 @@ export function ContainerDetail() {
             onToggle={() => toggleSelected(`item:${item.id}`)}
           />
         ))}
+        </div>
       </section>
 
       {/* Select-mode action bar — replaces the FAB so the two never overlap */}
