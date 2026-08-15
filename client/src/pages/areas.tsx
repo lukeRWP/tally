@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ColHead } from '@/components/ui/col-head';
@@ -14,6 +14,7 @@ import { StructureTree } from '@/components/inventory/structure-tree';
 import { PropertyChips } from '@/components/inventory/property-chips';
 import { ContainerPreview } from '@/components/inventory/container-preview';
 import { useLayoutMode } from '@/hooks/use-layout-mode';
+import { useKeyboardNav } from '@/hooks/use-keyboard-nav';
 
 /**
  * The top of the place hierarchy, and the screen you build the house on.
@@ -27,6 +28,7 @@ export function AreasPage() {
   // Master-detail only where there is room for it. In touch chrome a bin still
   // opens its own page, because there is no second column to put it in.
   const split = useLayoutMode() === 'sidebar';
+  const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
   const selectedBin = params.get('bin') ? Number(params.get('bin')) : null;
 
@@ -48,6 +50,47 @@ export function AreasPage() {
 
   const [createPropertyOpen, setCreatePropertyOpen] = React.useState(false);
   const [createAreaOpen, setCreateAreaOpen] = React.useState(false);
+  /**
+   * The bins j/k walks, in the order they appear on screen.
+   *
+   * Registered by the tree rather than recomputed here, because "visible"
+   * depends on which rows are expanded — deriving it a second time would drift
+   * from what is actually rendered and the selection would jump.
+   */
+  const [visibleBins, setVisibleBins] = React.useState<number[]>([]);
+
+  // j/k walks the bins as drawn. Nothing selected yet starts at the top going
+  // down and the bottom going up, so the first keypress always lands somewhere
+  // rather than doing nothing.
+  const moveSelection = React.useCallback((delta: 1 | -1) => {
+    if (visibleBins.length === 0) return;
+    const at = selectedBin == null ? -1 : visibleBins.indexOf(selectedBin);
+    const next = at === -1
+      ? (delta === 1 ? 0 : visibleBins.length - 1)
+      : Math.min(visibleBins.length - 1, Math.max(0, at + delta));
+    setParams((prev) => {
+      const p2 = new URLSearchParams(prev);
+      p2.set('bin', String(visibleBins[next]));
+      return p2;
+    }, { replace: true });
+  }, [visibleBins, selectedBin, setParams]);
+
+  const clearSelection = React.useCallback(() => {
+    setParams((prev) => {
+      const p2 = new URLSearchParams(prev);
+      p2.delete('bin');
+      return p2;
+    }, { replace: true });
+  }, [setParams]);
+
+  useKeyboardNav({
+    // Only where there is a keyboard to serve and a selection to move.
+    enabled: split,
+    onMove: moveSelection,
+    onEscape: clearSelection,
+    onSearch: () => navigate('/search'),
+    onOpen: () => { if (selectedBin != null) navigate(`/container/${selectedBin}`); },
+  });
 
   const { data: properties, isLoading, isError, refetch } = useProperties();
   const createProperty = useCreateProperty();
@@ -205,6 +248,7 @@ export function AreasPage() {
                     containers={treeContainers ?? []}
                     onSelect={selectBin}
                     selectedId={selectedBin}
+                    onVisibleOrder={setVisibleBins}
                   />
                   {/* Sticky so the contents stay in view while the tree
                       scrolls past them — the whole point of not navigating. */}

@@ -110,12 +110,14 @@ function ContainerRow({ node, depth, expanded, onToggle, onSelect, selectedId }:
   );
 }
 
-export function StructureTree({ areas, containers, onSelect, selectedId }: {
+export function StructureTree({ areas, containers, onSelect, selectedId, onVisibleOrder }: {
   areas: Area[];
   containers: Container[];
   /** Supplied by a master-detail layout; without it, rows navigate as before. */
   onSelect?: (containerId: number) => void;
   selectedId?: number | null;
+  /** The bin ids currently on screen, top to bottom — what j/k walks. */
+  onVisibleOrder?: (ids: number[]) => void;
 }) {
   const navigate = useNavigate();
   const byArea = React.useMemo(() => buildTree(containers), [containers]);
@@ -123,6 +125,28 @@ export function StructureTree({ areas, containers, onSelect, selectedId }: {
   // screen of collapsed rows shows less than the list it replaced.
   const [expanded, setExpanded] = React.useState<Set<number>>(new Set());
   const [closedAreas, setClosedAreas] = React.useState<Set<number>>(new Set());
+
+  /**
+   * The ids actually on screen, derived from the same maps the rows render
+   * from and in the same order. Computing this independently would drift the
+   * moment a row's visibility rule changed, and the selection would jump to a
+   * bin the user cannot see.
+   */
+  const visibleOrder = React.useMemo(() => {
+    const out: number[] = [];
+    const walk = (nodes: TreeNode[]) => {
+      for (const n of nodes) {
+        out.push(n.container.id);
+        if (expanded.has(n.container.id)) walk(n.children);
+      }
+    };
+    for (const area of areas) {
+      if (!closedAreas.has(area.id)) walk(byArea.get(area.id) || []);
+    }
+    return out;
+  }, [areas, byArea, expanded, closedAreas]);
+
+  React.useEffect(() => { onVisibleOrder?.(visibleOrder); }, [visibleOrder, onVisibleOrder]);
 
   const toggle = React.useCallback((id: number) => {
     setExpanded((prev) => {
