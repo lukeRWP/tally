@@ -30,7 +30,7 @@ export function Header() {
         <button
           type="button"
           aria-label="Scan a label"
-          className="p-2 xl:hidden"
+          className="p-2"
           onClick={() => navigate('/scan')}
         >
           <ScanLine className="w-5 h-5 text-[var(--color-text-secondary)]" />

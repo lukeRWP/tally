@@ -2,7 +2,9 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { X, ScanLine, Undo2 } from 'lucide-react';
 import { useCarryStore, type CarriedItem } from '@/store/carry-store';
 import { useMoveItem, useMoveContainer } from '@/hooks/use-inventory';
+import { useLayoutMode } from '@/hooks/use-layout-mode';
 import { toast } from '@/components/ui/toast';
+import { cn } from '@/lib/utils';
 
 /**
  * The carry banner: while anything is "in hand" this sits above the bottom nav
@@ -25,6 +27,11 @@ function describeLoad(load: CarriedItem[]): string {
 
 export function CarryBanner() {
   const navigate = useNavigate();
+  // Docks bottom-right as a panel when there is no bottom nav to sit above,
+  // and spans the width above the bar when there is.
+  const dock = useLayoutMode() === 'sidebar'
+    ? 'bottom-6 right-6 w-[26rem]'
+    : 'bottom-[calc(4.6rem+env(safe-area-inset-bottom))] left-3 right-3';
   const { pathname } = useLocation();
   const carried = useCarryStore((s) => s.carried);
   const lastMove = useCarryStore((s) => s.lastMove);
@@ -73,8 +80,8 @@ export function CarryBanner() {
 
   if (lastMove) {
     return (
-      <div className="fixed bottom-[calc(4.6rem+env(safe-area-inset-bottom))] xl:bottom-6 left-3 right-3 xl:left-auto xl:right-6 xl:w-[26rem] z-40
-        border-2 border-[var(--color-text)] bg-[var(--color-bg)] rounded-[var(--radius-sm)] px-3 py-2 flex items-center gap-2">
+      <div className={cn('fixed z-40', dock,
+        'border-2 border-[var(--color-text)] bg-[var(--color-bg)] rounded-[var(--radius-sm)] px-3 py-2 flex items-center gap-2')}>
         <span className="min-w-0 flex-1">
           <span className="block font-mono text-[10px] uppercase tracking-[0.1em] text-[var(--color-text-muted)]">
             moved to {lastMove.toContainerName}
@@ -109,8 +116,8 @@ export function CarryBanner() {
   if (carried.length === 0) return null;
 
   return (
-    <div className="fixed bottom-[calc(4.6rem+env(safe-area-inset-bottom))] xl:bottom-6 left-3 right-3 xl:left-auto xl:right-6 xl:w-[26rem] z-40
-      border-2 border-[var(--color-primary)] bg-[var(--color-primary-bg)] rounded-[var(--radius-sm)] px-3 py-2 flex items-center gap-2">
+    <div className={cn('fixed z-40', dock,
+      'border-2 border-[var(--color-primary)] bg-[var(--color-primary-bg)] rounded-[var(--radius-sm)] px-3 py-2 flex items-center gap-2')}>
       <span className="min-w-0 flex-1">
         <span className="block font-mono text-[10px] uppercase tracking-[0.1em] text-[var(--color-primary)] font-bold">
           carrying {carried.length > 1 ? `· ${carried.length}` : ''}
