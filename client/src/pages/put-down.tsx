@@ -10,6 +10,7 @@ import { api } from '@/lib/api';
 import { useCarryStore } from '@/store/carry-store';
 import { usePutDown } from '@/hooks/use-put-down';
 import { useMoveItem, useMoveContainer } from '@/hooks/use-inventory';
+import { cn } from '@/lib/utils';
 import { useLayoutMode } from '@/hooks/use-layout-mode';
 
 /**
@@ -158,7 +159,21 @@ export function PutDown() {
   }
 
   return (
-    <div className="flex flex-col gap-3 max-w-lg mx-auto h-full">
+    /*
+     * At a desk this is a two-column job, not a stack.
+     *
+     * The load and the destination are one decision — "put THESE, THERE" — and
+     * on a phone they have to take turns because there is no room for both. A
+     * desk can show them at once, so what you are carrying stays visible while
+     * you browse for somewhere to put it, instead of scrolling out of view the
+     * moment the picker opens.
+     */
+    <div className={cn(
+      'h-full',
+      atDesk
+        ? 'grid w-full max-w-[1100px] grid-cols-[minmax(280px,360px)_minmax(0,1fr)] items-start gap-6 mx-auto'
+        : 'flex flex-col gap-3 max-w-lg mx-auto',
+    )}>
       {/* What is in your hands, and the one question this screen asks. */}
       <div className="flex items-center gap-2 border-2 border-[var(--color-primary)] bg-[var(--color-primary-bg)] rounded-[var(--radius-sm)] px-3 py-2 shrink-0">
         <span className="min-w-0 flex-1">
@@ -182,6 +197,7 @@ export function PutDown() {
         </button>
       </div>
 
+      <div className={cn(atDesk && 'min-w-0')}>
       {picking ? (
         <DestinationPicker
           seedAreaId={carried[0]?.fromAreaId}
@@ -208,6 +224,7 @@ export function PutDown() {
           </Button>
         </>
       )}
+      </div>
     </div>
   );
 }

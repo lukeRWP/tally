@@ -598,7 +598,10 @@ export function ItemDetail() {
               // area instead of making you drill the whole cascade again.
               fromAreaId: breadcrumb?.find((b) => b.type === 'area')?.id,
             }]);
-            toast(`Carrying ${item.name} — scan where it goes`);
+            // 'scan' is the phone instruction. At a desk the picker is the
+            // path and there may be no camera to scan with, so the prompt has
+            // to name the thing the user can actually do.
+            toast(`Carrying ${item.name} — ${split ? 'choose where it goes' : 'scan where it goes'}`);
             navigate('/move');
           }}
         >
