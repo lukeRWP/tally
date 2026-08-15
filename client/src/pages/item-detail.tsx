@@ -575,7 +575,12 @@ export function ItemDetail() {
       // the constraint the single-column note below is protecting. What changes
       // is that a 1400px page no longer puts a label and its value 1300px apart
       // with nothing in between.
-      split && 'lg:grid lg:grid-cols-[minmax(280px,340px)_minmax(0,1fr)] lg:items-start lg:gap-8 lg:pb-8',
+      // 1092 = 340 (identity column) + 32 (gap-8) + 720 (the ledger's readable
+      // measure). Capping the GRID rather than the ledger is what keeps the top
+      // and bottom the same width: col 2 works out to 720 on its own, and the
+      // full-width rows below span exactly the same 1092 without being told a
+      // second number that could drift out of step with this one.
+      split && 'lg:grid lg:grid-cols-[minmax(280px,340px)_minmax(0,1fr)] lg:items-start lg:gap-8 lg:pb-8 lg:max-w-[1092px]',
     )}>
       {/* Breadcrumbs */}
       <div className={cn(split && 'lg:col-span-2')}>
@@ -734,10 +739,11 @@ export function ItemDetail() {
       </div>
       </div>
 
-      {/* The ledger column. Capped rather than full-bleed: a receipt line is
-          only legible while the label and its value stay within a glance of
-          each other. */}
-      <div className={cn('flex flex-col gap-4', split && 'lg:max-w-[720px]')}>
+      {/* The ledger column. Its 720px measure — a receipt line is only legible
+          while the label and its value stay within a glance of each other — now
+          comes from the grid's cap above, so this column no longer carries a
+          width of its own that the rows below it cannot see. */}
+      <div className="flex flex-col gap-4">
       {split && identityText}
 
       {/* THE LEDGER. Every fact on one rule, present or not. An absent fact
