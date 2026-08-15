@@ -99,10 +99,25 @@ function FileRow({ file, itemId }: FileRowProps) {
 
 interface FileListProps {
   itemId: number;
+  /**
+   * Which attachments to show.
+   *
+   * 'photos' and 'documents' are the same table and different things: a photo
+   * is looked AT, a receipt or a manual is opened and read. Splitting them
+   * means each can be presented the way it wants to be, and neither buries the
+   * other in a list ordered by upload date.
+   */
+  only?: 'photos' | 'documents';
 }
 
-export function FileList({ itemId }: FileListProps) {
-  const { data: files, isLoading } = useItemFiles(itemId);
+export function FileList({ itemId, only }: FileListProps) {
+  const { data: all, isLoading } = useItemFiles(itemId);
+  const files = React.useMemo(() => {
+    const list = all ?? [];
+    if (only === 'photos') return list.filter((f) => f.fileType === 'photo');
+    if (only === 'documents') return list.filter((f) => f.fileType !== 'photo');
+    return list;
+  }, [all, only]);
 
   if (isLoading) {
     return (
@@ -116,11 +131,16 @@ export function FileList({ itemId }: FileListProps) {
 
   if (!files || files.length === 0) {
     return (
-      <p className="text-xs text-[var(--color-text-muted)] py-1">No files attached yet.</p>
+      <p className="text-xs text-[var(--color-text-muted)] py-1">
+        {only === 'photos' ? 'No photos yet.' : only === 'documents' ? 'No documents yet.' : 'No files attached yet.'}
+      </p>
     );
   }
 
   // Group by file type in display order
+  // A panel already titled Photos does not need every row filed under a
+  // "PHOTO" sub-heading as well.
+  const showGroupHeadings = only !== 'photos';
   const grouped = FILE_TYPE_ORDER.reduce<Record<string, ItemFile[]>>((acc, type) => {
     const group = files.filter((f) => f.fileType === type);
     if (group.length) acc[type] = group;
@@ -131,9 +151,11 @@ export function FileList({ itemId }: FileListProps) {
     <div className="flex flex-col gap-3">
       {Object.entries(grouped).map(([type, group]) => (
         <div key={type}>
-          <p className="text-[10px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)] mb-1">
-            {type}
-          </p>
+          {showGroupHeadings && (
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)] mb-1">
+              {type}
+            </p>
+          )}
           <div>
             {group.map((file) => (
               <FileRow key={file.id} file={file} itemId={itemId} />
