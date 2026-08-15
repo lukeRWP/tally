@@ -36,6 +36,7 @@ import { useAccessories } from '@/hooks/use-accessories';
 import { useLendingHistory } from '@/hooks/use-lending';
 import { ShareDialog } from '@/components/sharing/share-dialog';
 import { safeExternalUrl, cn } from '@/lib/utils';
+import { useLayoutMode } from '@/hooks/use-layout-mode';
 
 function computeDepreciation(
   purchasePrice: number,
@@ -346,6 +347,10 @@ function LedgerRow({
 }
 
 export function ItemDetail() {
+  // Above every early return: this component bails out for loading and error
+  // states, and a hook called after one of those runs on some renders and not
+  // others — React counts hooks per render and throws when the count changes.
+  const split = useLayoutMode() === 'sidebar';
   const { itemId } = useParams<{ itemId: string }>();
   const id = Number(itemId);
 
@@ -478,21 +483,45 @@ export function ItemDetail() {
     ?.breadcrumb ?? [];
 
   return (
-    <div className="flex flex-col gap-4 pb-24 lg:pb-8">
+    <div className={cn(
+      'flex flex-col gap-4 pb-24 lg:pb-8',
+      // At a desk the identity and the actions become a column of their own and
+      // the ledger takes the rest. The ledger's own rule is NOT split — it runs
+      // top to bottom inside its column exactly as it does on a phone, which is
+      // the constraint the single-column note below is protecting. What changes
+      // is that a 1400px page no longer puts a label and its value 1300px apart
+      // with nothing in between.
+      split && 'lg:grid lg:grid-cols-[minmax(280px,340px)_minmax(0,1fr)] lg:items-start lg:gap-8 lg:pb-8',
+    )}>
       {/* Breadcrumbs */}
-      <Breadcrumbs items={breadcrumbItems} />
+      <div className={cn(split && 'lg:col-span-2')}>
+        <Breadcrumbs items={breadcrumbItems} />
+      </div>
+
+      {/* Identity + actions: one column at a desk, sticky so the object you are
+          reading about stays on screen while its ledger scrolls. */}
+      <div className={cn('flex flex-col gap-4', split && 'lg:sticky lg:top-4')}>
 
       {/* Identity: the photograph, then the name and the three stamps that
           identify it — code, condition, state. The picture leads because it is
           the fastest way to know you are looking at the right object; the
           ledger below carries everything else. */}
-      <div className="animate-fade-up flex items-start gap-3">
+      <div className={cn(
+        'animate-fade-up flex items-start gap-3',
+        // Stacked at a desk: the column is 340px, so a thumbnail beside a name
+        // wastes it. The photograph is the fastest way to know you are looking
+        // at the right object, so given room it leads at full width.
+        split && 'lg:flex-col lg:gap-3',
+      )}>
         {photo ? (
           <button
             type="button"
             onClick={() => setPhotoOpen(true)}
             aria-label="View photo"
-            className="shrink-0 w-16 h-16 rounded-[var(--radius-sm)] overflow-hidden border border-[var(--color-rule)]"
+            className={cn(
+              'shrink-0 rounded-[var(--radius-sm)] overflow-hidden border border-[var(--color-rule)]',
+              split ? 'w-full aspect-square h-auto' : 'w-16 h-16',
+            )}
           >
             <img src={photo} alt={item.name} className="w-full h-full object-cover" />
           </button>
@@ -501,9 +530,12 @@ export function ItemDetail() {
             type="button"
             onClick={() => photoInput.current?.click()}
             aria-label="Add a photo"
-            className="shrink-0 w-16 h-16 rounded-[var(--radius-sm)] border border-dashed border-[var(--color-text-muted)] flex items-center justify-center text-[var(--color-text-muted)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)]"
+            className={cn(
+              'shrink-0 rounded-[var(--radius-sm)] border border-dashed border-[var(--color-text-muted)] flex items-center justify-center text-[var(--color-text-muted)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)]',
+              split ? 'w-full aspect-square h-auto' : 'w-16 h-16',
+            )}
           >
-            <Camera className="w-5 h-5" />
+            <Camera className={cn(split ? 'w-8 h-8' : 'w-5 h-5')} />
           </button>
         )}
 
@@ -581,6 +613,12 @@ export function ItemDetail() {
           onDelete={() => setDeleteOpen(true)}
         />
       </div>
+      </div>
+
+      {/* The ledger column. Capped rather than full-bleed: a receipt line is
+          only legible while the label and its value stay within a glance of
+          each other. */}
+      <div className={cn('flex flex-col gap-4', split && 'lg:max-w-[720px]')}>
 
       {/* THE LEDGER. Every fact on one rule, present or not. An absent fact
           keeps its row and ends in "+ add", so the page states what it could
@@ -893,6 +931,7 @@ export function ItemDetail() {
           );
         }}
       />
+      </div>
     </div>
   );
 }
