@@ -87,6 +87,9 @@ CREATE TABLE IF NOT EXISTS product_matches (
     CANDIDATES           JSON          NULL,
     SELECTED_PRODUCT_ID  INT           NULL,
     ATTEMPTS             INT           NOT NULL DEFAULT 0,
+    -- Paid searches actually fired, not attempts: a cap-refused run in
+    -- runNow() does not search. The daily cost cap (§8) sums this column.
+    SEARCH_COUNT         INT           NOT NULL DEFAULT 0,
     LAST_ERROR           VARCHAR(500)  NULL,
     SEARCH_STARTED_AT    DATETIME      NULL,
     CREATED_AT           DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -185,7 +188,19 @@ The runner sets `searching` + `SEARCH_STARTED_AT`, performs the call, and writes
 exceeding `MATCH_MAX_ATTEMPTS` becomes `failed`. This is `sweepStaleClaims` from
 the print module, for the same reason — this app has nowhere to run a cron, and
 a lazy sweep on read is self-healing without one. The attempts cap exists so a
-query that reliably kills the runner cannot loop forever.
+query that reliably kills the runner cannot loop forever. The sweep is scoped
+to the property being listed, not global — an unscoped UPDATE across every
+user's rows on every worklist GET has no reason to exist.
+
+**The sweep only reaches `searching`.** A row a runner set back to `queued`
+after a failure needs a second trigger, or it sits there forever: nothing
+polls, and `runNow`'s only other caller is the queue route, on a fresh row.
+So `list()` is also the recovery path for `queued` rows — after the sweep and
+after reading the rows for the response, it re-fires `runNow` (unawaited) for
+up to 5 `queued` rows under `MATCH_MAX_ATTEMPTS` from the same query it just
+ran. `runNow` increments `ATTEMPTS` (and `SEARCH_COUNT`) on every attempt, not
+only on failure, so this batch retry is what actually makes the cap — and
+`failed` — reachable.
 
 **The runner must not carry an abort-on-disconnect handler.** Vision identify
 was once broken exactly this way: a `req.on('close')` handler aborted every call
@@ -198,9 +213,14 @@ becomes a surprise bill:
 
 1. **The gate** (§4) — unbranded objects never search.
 2. **`config.match.dailyPerUser`** (default 100) — counted from
-   `product_matches` by `CREATED_BY` over 24h, checked in the runner before the
-   call. Exceeding it writes `failed` with a clear `LAST_ERROR`, visible in the
-   worklist rather than silent.
+   `SUM(SEARCH_COUNT)` on `product_matches` by `CREATED_BY` over the rows
+   `UPDATED_AT` in the last 24h, not `COUNT(*)`: a re-queue upserts the same
+   row and fires another paid search without inserting a new one, so counting
+   rows undercounts the spend. Checked in `queue()` before a row is even
+   inserted, AND inside `runNow()` before every call — `runNow` is where the
+   spend actually happens, and `list()`'s batch retry (§7) is a path into it
+   that never goes through `queue()`. Exceeding it writes `failed` with a
+   clear `LAST_ERROR`, visible in the worklist rather than silent.
 3. **`config.match.enabled`** — `MATCH_ENABLED=false` kills the feature without
    touching the vault, mirroring `VISION_ENABLED`. With it off, capture behaves
    exactly as it does today.
@@ -237,8 +257,9 @@ Nothing here can block capture, and nothing disappears silently.
 |---|---|---|
 | Candidates found | `ready` | The item, with up to 3 candidates |
 | Search ran, found nothing | `none` | "No match found", with *scan barcode* and *search manually* |
-| Call failed, under cap | `queued` | Nothing yet; retried on next sweep |
-| Call failed, at cap | `failed` | "Couldn't look this up", with the same two actions |
+| Call failed, attempts under `MATCH_MAX_ATTEMPTS` | `queued` | Nothing yet; retried the next time the worklist is read — `list()`'s own lazy retry, capped at 5 rows per call (§7), not the sweep |
+| Call failed, attempts at `MATCH_MAX_ATTEMPTS` | `failed` | "Couldn't look this up", with the same two actions |
+| Daily cap reached | `failed` | "Couldn't look this up", with the same two actions — `LAST_ERROR` names the cap |
 | Feature disabled | no row | Today's flow, barcode step included |
 
 `none` and `failed` appearing in the worklist is deliberate. If a failed lookup
@@ -310,7 +331,14 @@ so the scoping holds by construction rather than by remembering to add it.
 - **`capture.tsx`** — when a photo was taken and vision returned high confidence
   with a brand, step 2 is skipped and a *product pending* chip is shown in its
   place. Everything else about the flow is unchanged. When the feature is off,
-  or the gate fails, step 2 appears exactly as today.
+  or the gate fails, step 2 appears exactly as today. "Off" has to reach the
+  client, not just the server: `POST /_y_/matches` returning 503 is too late —
+  by then step 2 is already hidden and the item has no barcode, no product and
+  no worklist row. So `identify-photo`'s response carries a `matchAvailable`
+  flag (`config.match.enabled`, computed independently of vision's own
+  `available`, since `MATCH_ENABLED` and `VISION_ENABLED` are separate
+  switches) and `canMatch` requires it, exactly like `available` already gates
+  the vision panel.
 - **`/matches`** — new page using the existing `SplitView`: pending items left,
   candidates right. Each candidate card shows image, name, brand, model, UPC and
   price. `none`/`failed` rows offer *scan barcode* and *search manually*, both
@@ -328,11 +356,18 @@ so the scoping holds by construction rather than by remembering to add it.
 - candidate normalisation: cap of 3, UPC digit-length validation, non-https
   `sourceUrl` rejected, candidate without `name` dropped
 - an SDK failure yields `failed`/`queued`, never a thrown error out of the runner
-- the sweep: `searching` past the timeout requeues; attempts cap lands `failed`
-- the daily cap blocks the call and records a readable `LAST_ERROR`
+- the sweep: `searching` past the timeout requeues; attempts cap lands `failed`;
+  scoped to the property being listed
+- `list()`'s lazy retry: a `queued` row under the attempts cap is re-run; a row
+  at the cap is not; a row that fails `MATCH_MAX_ATTEMPTS` times lands `failed`
+  with `LAST_ERROR` set
+- the daily cap blocks the call and records a readable `LAST_ERROR`, both from
+  `queue()` and from inside `runNow()`
 - resolve links an existing product when the UPC is already in the catalog, and
   inserts when it is not
 - resolve surfaces an existing owned item via `checkDuplicate`
+- resolve's catalog write, item link and match resolution commit as one
+  transaction
 - privacy: a user outside the property sees no rows and cannot resolve
 
 **Client:** `tsc --noEmit` and `npm run build` (there is no client ESLint in this
@@ -352,8 +387,10 @@ Deliberate omissions, each with the reason:
 - **No auto-apply**, even for a single exact UPC. A wrong product carries a UPC,
   a price and a spec sheet that all look like fact — the same reasoning that
   keeps `estimatedValue` from auto-applying into the insurance report.
-- **No bulk accept** and **no manual re-run button.** The sweep already retries
-  failures; both are cheap to add later if the worklist proves tedious.
+- **No bulk accept** and **no manual re-run button.** `list()`'s own lazy
+  retry (§7) already re-fires a `queued` row under the attempts cap on the
+  next worklist read; both are cheap to add later if the worklist proves
+  tedious.
 
 ## 15. Risks
 
