@@ -36,6 +36,12 @@ test('accepts every valid GTIN length', () => {
   }
 });
 
+test('a 16-digit UPC is dropped, not truncated into a fake 14-digit GTIN', () => {
+  const [c] = normaliseCandidates(
+    [{ name: 'A', sourceUrl: 'https://e.com/a', upc: '1234567890123456' }], 3);
+  assert.equal(c.upc, null, 'validation must run on the untruncated value');
+});
+
 test('derives sourceDomain from the URL, ignoring what the model claimed', () => {
   const [c] = normaliseCandidates([{
     name: 'A', sourceUrl: 'https://www.walmart.com/ip/123', sourceDomain: 'amazon.com',
@@ -48,6 +54,13 @@ test('caps the list at max', () => {
     name: `P${i}`, sourceUrl: `https://e.com/${i}`,
   }));
   assert.equal(normaliseCandidates(many, 3).length, 3);
+});
+
+test('a max of 0 returns zero candidates', () => {
+  const many = Array.from({ length: 9 }, (_, i) => ({
+    name: `P${i}`, sourceUrl: `https://e.com/${i}`,
+  }));
+  assert.equal(normaliseCandidates(many, 0).length, 0);
 });
 
 test('a non-array is an empty list, not a throw', () => {

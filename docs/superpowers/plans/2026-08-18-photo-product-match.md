@@ -237,6 +237,12 @@ test('accepts every valid GTIN length', () => {
   }
 });
 
+test('a 16-digit UPC is dropped, not truncated into a fake 14-digit GTIN', () => {
+  const [c] = normaliseCandidates(
+    [{ name: 'A', sourceUrl: 'https://e.com/a', upc: '1234567890123456' }], 3);
+  assert.equal(c.upc, null, 'validation must run on the untruncated value');
+});
+
 test('derives sourceDomain from the URL, ignoring what the model claimed', () => {
   const [c] = normaliseCandidates([{
     name: 'A', sourceUrl: 'https://www.walmart.com/ip/123', sourceDomain: 'amazon.com',
@@ -249,6 +255,13 @@ test('caps the list at max', () => {
     name: `P${i}`, sourceUrl: `https://e.com/${i}`,
   }));
   assert.equal(normaliseCandidates(many, 3).length, 3);
+});
+
+test('a max of 0 returns zero candidates', () => {
+  const many = Array.from({ length: 9 }, (_, i) => ({
+    name: `P${i}`, sourceUrl: `https://e.com/${i}`,
+  }));
+  assert.equal(normaliseCandidates(many, 0).length, 0);
 });
 
 test('a non-array is an empty list, not a throw', () => {
@@ -308,18 +321,22 @@ function normaliseCandidates(raw, max) {
   if (!Array.isArray(raw)) return [];
   const out = [];
   for (const c of raw) {
+    if (out.length >= max) break;             // holds for every max, including 0
     if (!c || typeof c !== 'object') continue;
     const name = str(c.name, 255);
     const source = httpsUrl(c.sourceUrl);
     if (!name || !source) continue;          // both are required
-    const upc = str(c.upc, 14);
+    // Validated on the untruncated value: slicing first and testing the GTIN
+    // regex second would accept a 16-digit string by trimming it down to a
+    // fake 14-digit one — inventing a barcode the model never returned.
+    const upcRaw = typeof c.upc === 'string' ? c.upc.trim() : null;
     const price = typeof c.priceUsd === 'number' && isFinite(c.priceUsd) && c.priceUsd > 0
       ? Math.round(c.priceUsd * 100) / 100 : null;
     out.push({
       name,
       brand: str(c.brand, 255),
       model: str(c.model, 255),
-      upc: upc && GTIN.test(upc) ? upc : null,
+      upc: upcRaw && GTIN.test(upcRaw) ? upcRaw : null,
       priceUsd: price,
       imageUrl: httpsUrl(c.imageUrl)?.toString() ?? null,
       sourceUrl: source.toString(),
@@ -327,7 +344,6 @@ function normaliseCandidates(raw, max) {
       // to judge whether a source is credible, so it must match the real URL.
       sourceDomain: source.hostname.replace(/^www\./, ''),
     });
-    if (out.length >= max) break;
   }
   return out;
 }
@@ -381,6 +397,19 @@ function queryText({ brand, name, category, description }) {
   ].filter(Boolean).join('\n');
 }
 
+// Built once and reused, the same as vision-identify.js's getClient(): the
+// apiKey does not change between calls, so there is nothing to gain from
+// reconstructing the client every time, and one thing to lose. Retries
+// multiply wall clock — the SDK default is 2 retries, which could stretch a
+// single search to nearly three times config.match.timeoutMs, long enough to
+// look hung and long enough to confuse the retry/backoff Task 3 layers on
+// top of this call. maxRetries: 0 is what makes `timeout` mean what it says.
+let client = null;
+function getClient(apiKey) {
+  if (!client) client = new SDK({ apiKey, maxRetries: 0 });
+  return client;
+}
+
 /**
  * One Claude call with web search. Resolves to {candidates}; an unusable
  * response resolves to an empty list rather than throwing, because "found
@@ -389,8 +418,7 @@ function queryText({ brand, name, category, description }) {
  * retry can happen.
  */
 async function search(input, { config, logger }) {
-  const client = new SDK({ apiKey: config.vision.apiKey });
-  const res = await client.messages.create({
+  const res = await getClient(config.vision.apiKey).messages.create({
     model: config.match.model,
     max_tokens: 2000,
     thinking: { type: 'adaptive' },
@@ -402,7 +430,7 @@ async function search(input, { config, logger }) {
 
   const text = (res.content || [])
     .filter((b) => b.type === 'text').map((b) => b.text).join('');
-  let parsed = null;
+  let parsed;
   try { parsed = JSON.parse(text); } catch {
     logger?.warn('product match returned non-JSON', { stopReason: res.stop_reason });
     return { candidates: [] };
@@ -419,7 +447,7 @@ module.exports = { search, normaliseCandidates };
 cd server && npm test -- test/product-match.test.js
 ```
 
-Expected: all 9 PASS.
+Expected: all 11 PASS.
 
 - [ ] **Step 6: Lint and commit**
 
