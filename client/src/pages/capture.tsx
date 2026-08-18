@@ -245,18 +245,33 @@ export function Capture() {
   // The model was asked and had nothing useful to say. Distinct from failure
   // (the request broke) and from the feature being off (nothing was asked).
   const [visionEmpty, setVisionEmpty] = React.useState(false);
+  /**
+   * Whether the SERVER actually has product matching turned on
+   * (`config.match.enabled`), read off identify-photo's own response.
+   *
+   * The queue route's own 503 when the feature is off arrives too late — by
+   * then step 2 has already been replaced by "Finding this product" and the
+   * item ends with no barcode, no product and no worklist row. Independent of
+   * `vision`'s own availability: MATCH_ENABLED and VISION_ENABLED are two
+   * separate switches, so this must not be inferred from a suggestion having
+   * arrived. Defaults to false — the same "nothing asked yet" default the
+   * kill switch needs — until a real answer says otherwise.
+   */
+  const [matchAvailable, setMatchAvailable] = React.useState(false);
 
   /**
-   * The gate: high confidence AND a brand. The brand is the real signal — the
-   * vision prompt forbids inventing one it cannot read, so a brand coming
-   * back means text was legible on the object, exactly when a product search
-   * can resolve to one product. An unbranded mug never searches.
+   * The gate: high confidence AND a brand AND the server confirming the
+   * feature is actually on. The brand is the real signal — the vision prompt
+   * forbids inventing one it cannot read, so a brand coming back means text
+   * was legible on the object, exactly when a product search can resolve to
+   * one product. An unbranded mug never searches. `matchAvailable` is the
+   * kill switch: with it false, step 2 must appear exactly as it does today.
    *
    * True only means step 2 CAN be skipped for a background search — it is
    * recomputed (not reused) at the point commit() actually queues one, since
    * this value and the state it reads can each change up to that moment.
    */
-  const canMatch = vision?.confidence === 'high' && !!vision.brand;
+  const canMatch = matchAvailable && vision?.confidence === 'high' && !!vision.brand;
 
   /**
    * Clear everything belonging to the item just finished (or abandoned).
@@ -425,6 +440,18 @@ export function Capture() {
           name: vision.name ?? name,
           category: vision.category,
           description: vision.description,
+        }, {
+          // Every 503/429/400/network failure used to vanish here — after
+          // step 2 was already skipped in favor of "Finding this product",
+          // so the item ended with no barcode, no product AND no worklist
+          // row, and nobody was ever told. The item itself is unaffected
+          // (already saved above); only the background search never started,
+          // so it will not show up to pick a product from later — the same
+          // thing a `failed` worklist row would say, said up front instead.
+          onError: () => toast.error(
+            `${created.name} saved, but won't appear in the product worklist — `
+            + 'scan its barcode or search for it another time',
+          ),
         });
       }
 
@@ -635,7 +662,13 @@ export function Capture() {
         setVisionFailed(true);
         return;
       }
-      const data = await parseEnvelope<{ available: boolean; suggestion: Vision | null }>(res);
+      const data = await parseEnvelope<{
+        available: boolean; suggestion: Vision | null; matchAvailable: boolean;
+      }>(res);
+      // Set regardless of whether a suggestion arrived: this is a capability
+      // flag (does the SERVER have MATCH_ENABLED on), not a fact about this
+      // one photo, and canMatch needs it even on a call that finds nothing.
+      setMatchAvailable(!!data?.matchAvailable);
       if (!data?.suggestion) {
         // Two very different things used to look the same here, and telling
         // them apart from the outside cost hours: the feature being switched

@@ -33,11 +33,22 @@ function photoUpload(req, res, next) {
   });
 }
 
-function makeHandler(VisionService) {
+function makeHandler(VisionService, config) {
   return async function identifyPhotoHandler(req, res) {
+    // Rides every response from this route, success or empty, so the client
+    // can gate the match feature before it ever calls POST /matches — that
+    // route's own 503 arrives too late, after step 2 has already been hidden
+    // in favor of "finding this product". Computed straight from config, not
+    // from VisionService: MATCH_ENABLED and VISION_ENABLED are independent
+    // switches (a household may run one without the other), so this must not
+    // be derived from vision's own availability.
+    const matchAvailable = !!(config && config.match && config.match.enabled);
+
     // Answered before the file is even looked at, so a fresh install with no key
     // costs one round trip and nothing else.
-    if (!VisionService.isEnabled()) return success(res, { available: false, suggestion: null });
+    if (!VisionService.isEnabled()) {
+      return success(res, { available: false, suggestion: null, matchAvailable });
+    }
     if (!req.file) return error(res, 'A photo is required', 422);
 
     // The declared type is the client's claim; the bytes are the fact, and the
@@ -70,7 +81,7 @@ function makeHandler(VisionService) {
     const result = await VisionService.identify(
       req.file.buffer, sniffed, req.user.id, controller.signal,
     );
-    return success(res, result);
+    return success(res, { ...result, matchAvailable });
   };
 }
 

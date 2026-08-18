@@ -426,6 +426,76 @@ test('a normal request reaches the model with a LIVE signal', async () => {
   }
 });
 
+// ── IMPORTANT 2: matchAvailable rides identify-photo's response ─────────────
+//
+// The kill switch has to reach the client BEFORE it decides to skip step 2 —
+// POST /matches' own 503 arrives too late. identify-photo is the only call
+// capture.tsx makes before that decision, so config.match.enabled has to ride
+// its response, independent of vision's own on/off state (they are two
+// separate switches: MATCH_ENABLED vs VISION_ENABLED).
+
+async function postPhoto(app) {
+  const server = app.listen(0);
+  await new Promise((r) => server.once('listening', r));
+  try {
+    const form = new FormData();
+    const jpeg = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(2048)]);
+    form.append('file', new Blob([jpeg], { type: 'image/jpeg' }), 'p.jpg');
+    const res = await fetch(`http://127.0.0.1:${server.address().port}/t`, { method: 'POST', body: form });
+    return { status: res.status, body: await res.json() };
+  } finally {
+    server.close();
+  }
+}
+
+test('matchAvailable is true when config.match.enabled is true, even with vision off', async () => {
+  const express = require('express');
+  const { photoUpload, makeHandler } = require('../src/modules/products/vision.http');
+  const stubService = { isEnabled: () => false };
+
+  const app = express();
+  app.use((req, _res, next) => { req.user = { id: 1 }; next(); });
+  app.post('/t', photoUpload, makeHandler(stubService, { match: { enabled: true } }));
+
+  const { status, body } = await postPhoto(app);
+  assert.equal(status, 200);
+  assert.deepEqual(body.data, { available: false, suggestion: null, matchAvailable: true },
+    'match can be available even though vision itself answered nothing this time');
+});
+
+test('matchAvailable is false when MATCH_ENABLED is off, even though vision found a suggestion', async () => {
+  const express = require('express');
+  const { photoUpload, makeHandler } = require('../src/modules/products/vision.http');
+  const stubService = {
+    isEnabled: () => true,
+    identify: async () => ({ available: true, suggestion: { name: 'Drill', brand: 'DeWalt' } }),
+  };
+
+  const app = express();
+  app.use((req, _res, next) => { req.user = { id: 1 }; next(); });
+  app.post('/t', photoUpload, makeHandler(stubService, { match: { enabled: false } }));
+
+  const { status, body } = await postPhoto(app);
+  assert.equal(status, 200);
+  assert.equal(body.data.suggestion.name, 'Drill', 'vision\'s own result is untouched');
+  assert.equal(body.data.matchAvailable, false,
+    'MATCH_ENABLED=false must reach the client even when vision is on and found something');
+});
+
+test('matchAvailable defaults to false rather than throwing when config is omitted', async () => {
+  const express = require('express');
+  const { photoUpload, makeHandler } = require('../src/modules/products/vision.http');
+  const stubService = { isEnabled: () => false };
+
+  const app = express();
+  app.use((req, _res, next) => { req.user = { id: 1 }; next(); });
+  app.post('/t', photoUpload, makeHandler(stubService));   // no config argument
+
+  const { status, body } = await postPhoto(app);
+  assert.equal(status, 200);
+  assert.equal(body.data.matchAvailable, false);
+});
+
 // ── the output schema ────────────────────────────────────────────────────────
 
 test('no property combines an enum with a union type', () => {

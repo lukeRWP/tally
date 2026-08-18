@@ -36,7 +36,7 @@ module.exports = function productsRoutes({ app, db, logger, config }) {
     visionBurst,
     visionDaily,
     photoUpload,
-    makeHandler(VisionService),
+    makeHandler(VisionService, config),
   );
 
   // ── Get by Barcode (local only) ───────────────────────────────────────────
