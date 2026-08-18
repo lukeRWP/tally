@@ -36,7 +36,6 @@ import { useLayoutMode } from '@/hooks/use-layout-mode';
  * turned into a real product later at /matches (see notifications.tsx for the
  * Alerts entry that points there). See `canMatch` below for the exact gate.
  *
-
  * Step 3 is the one that cannot be skipped. Identifying something says WHAT it
  * is and never where it belongs, so nothing is written until it has been put
  * somewhere — an item that appears in a bin nobody chose for it is worse than
@@ -338,6 +337,18 @@ export function Capture() {
       productId: id ?? d.productId,
       barcode: typeof product.barcode === 'string' && product.barcode ? product.barcode : d.barcode,
     }));
+    // A hand-picked product is a fact about this exact object, exactly like a
+    // barcode's catalogue hit below — drop the photo's guess rather than let
+    // it linger and satisfy the match-queue gate for an item that already has
+    // a real product (see the identical comment and `setVision(null)` on the
+    // barcode path). catalogueHit also has to flip here, not just vision:
+    // identifyPhoto() can still be in flight when a product is picked by
+    // hand, and decideSuggestion() consults this ref — not the vision state —
+    // to refuse a late-arriving suggestion. See vision-decision.ts's own
+    // comment on why both orders of arrival matter.
+    catalogueHit.current = true;
+    setVision(null);
+    setReviewOpen(false);
     setIdentifying(false);
   }
 
@@ -400,7 +411,14 @@ export function Capture() {
       // queue failure must never block the capture — mutate() is
       // fire-and-forget and the item is already saved either way; it can
       // still be scanned by hand later.
-      if (vision?.confidence === 'high' && vision.brand) {
+      //
+      // `!d.productId` is a second, independent gate: adoptProduct() clears
+      // `vision` the moment a product is picked by hand, but requiring this
+      // here too means the commit itself can never queue a redundant search
+      // for an item that already resolved to a real product — no future path
+      // that sets productId without remembering to clear vision can reopen
+      // this hole.
+      if (vision?.confidence === 'high' && vision.brand && !d.productId) {
         queueMatch.mutate({
           itemId: created.id,
           brand: vision.brand,
