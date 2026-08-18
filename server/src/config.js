@@ -116,6 +116,19 @@ const config = Object.freeze({
     dailyPerUser: parseInt(process.env.VISION_DAILY_PER_USER || '250', 10),
   },
 
+  match: {
+    model: process.env.MATCH_MODEL || 'claude-sonnet-5',
+    // Shares vision's key. Two ways off, same as vision: no key, or the flag.
+    enabled: !!process.env.ANTHROPIC_API_KEY && process.env.MATCH_ENABLED !== 'false',
+    // Far longer than vision's 12s: a call that runs several web searches
+    // legitimately takes tens of seconds, and nobody is waiting on it.
+    timeoutMs: parseInt(process.env.MATCH_TIMEOUT_MS || '45000', 10),
+    dailyPerUser: parseInt(process.env.MATCH_DAILY_PER_USER || '100', 10),
+    maxCandidates: parseInt(process.env.MATCH_MAX_CANDIDATES || '3', 10),
+    staleMinutes: parseInt(process.env.MATCH_STALE_MINUTES || '5', 10),
+    maxAttempts: parseInt(process.env.MATCH_MAX_ATTEMPTS || '3', 10),
+  },
+
   logging: {
     level: process.env.LOG_LEVEL || (isProduction ? 'info' : 'debug'),
     toFile: process.env.LOG_TO_FILE === 'true',
