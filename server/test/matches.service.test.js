@@ -243,6 +243,14 @@ test('list sweeps before reading', async () => {
   assert.equal(order[0], 'sweep', 'a stranded row is recovered before it is listed');
 });
 
+// Distinguishes the two products.BARCODE lookups resolve itself issues
+// ('SELECT ID, NAME, BRAND FROM TALLY.products WHERE BARCODE...') from the
+// same substring appearing inside checkDuplicate's subquery
+// ('i.PRODUCT_ID = (SELECT ID FROM TALLY.products WHERE BARCODE...)') —
+// the two must route to different mock branches.
+const BARCODE_LOOKUP = /SELECT ID, NAME, BRAND FROM TALLY\.products WHERE BARCODE/;
+const CHECK_DUPLICATE = /i\.PRODUCT_ID = \(SELECT ID FROM TALLY\.products WHERE BARCODE/;
+
 test('resolve links the existing catalog row when the UPC is known', async () => {
   const writes = [];
   Matches.init({
@@ -253,8 +261,12 @@ test('resolve links the existing catalog row when the UPC is known', async () =>
                     upc: '885911474764', sourceUrl: 'https://e.com/a',
                     sourceDomain: 'e.com', model: null, priceUsd: null, imageUrl: null }]) }];
       }
-      if (/FROM TALLY\.products WHERE BARCODE/.test(sql)) return [{ ID: 99 }];
-      if (/SELECT i\.ID/.test(sql)) return [];              // checkDuplicate
+      if (BARCODE_LOOKUP.test(sql)) {
+        // Deliberately different from the candidate's guess: proves the
+        // response echoes the catalog row, not the candidate.
+        return [{ ID: 99, NAME: 'DeWalt 20V MAX Drill/Driver Kit', BRAND: 'DeWalt' }];
+      }
+      if (CHECK_DUPLICATE.test(sql)) return [];              // checkDuplicate
       writes.push({ sql, params });
       return { affectedRows: 1, insertId: 0 };
     }),
@@ -263,6 +275,8 @@ test('resolve links the existing catalog row when the UPC is known', async () =>
 
   const out = await Matches.resolve(5, 42, { candidateIndex: 0 });
   assert.equal(out.product.id, 99, 'links the existing product, does not insert');
+  assert.equal(out.product.name, 'DeWalt 20V MAX Drill/Driver Kit',
+    'returns the catalog row\'s own stored name, not the candidate\'s guess');
   assert.ok(!writes.some((w) => /INSERT INTO TALLY\.products/.test(w.sql)),
     'no second catalog row for a barcode that already exists');
   assert.ok(writes.some((w) => /UPDATE TALLY\.items/.test(w.sql) && w.params.includes(99)),
@@ -277,10 +291,10 @@ test('resolve inserts a new product with vision_match provenance', async () => {
         return [{ ID: 5, ITEM_ID: 7, STATUS: 'ready',
                   CANDIDATES: JSON.stringify([{ name: 'Drill', brand: 'DeWalt',
                     upc: null, sourceUrl: 'https://e.com/a', sourceDomain: 'e.com',
-                    model: null, priceUsd: null, imageUrl: null }]) }];
+                    model: null, priceUsd: 129.99, imageUrl: null }]) }];
       }
-      if (/FROM TALLY\.products WHERE BARCODE/.test(sql)) return [];
-      if (/SELECT i\.ID/.test(sql)) return [];
+      if (BARCODE_LOOKUP.test(sql)) return [];
+      if (CHECK_DUPLICATE.test(sql)) return [];
       writes.push({ sql, params });
       return { affectedRows: 1, insertId: 123 };
     }),
@@ -289,11 +303,56 @@ test('resolve inserts a new product with vision_match provenance', async () => {
 
   const out = await Matches.resolve(5, 42, { candidateIndex: 0 });
   assert.equal(out.product.id, 123);
+  assert.equal(out.product.name, 'Drill', 'a freshly inserted row echoes what was just written');
   const insert = writes.find((w) => /INSERT INTO TALLY\.products/.test(w.sql));
   assert.ok(insert, 'a new catalog row is created');
   assert.ok(insert.params.includes('vision_match'), 'provenance is recorded honestly');
-  assert.ok(insert.params.some((p) => typeof p === 'string' && /e\.com/.test(p)),
-    'the source URL is kept in RETAIL_LINKS');
+  // {url, domain} was dead on arrival: item-detail.tsx and scan-result.tsx
+  // read {retailer, url, price} (see products.schema.js's Joi shape), so
+  // assert the actual keys rather than just that the URL string appears
+  // somewhere in the stringified param.
+  const retailLinksParam = insert.params.find((p) => typeof p === 'string' && p.startsWith('['));
+  assert.deepEqual(JSON.parse(retailLinksParam), [
+    { retailer: 'e.com', url: 'https://e.com/a', price: 129.99 },
+  ], 'RETAIL_LINKS is written in the {retailer, url, price} shape the client reads');
+});
+
+test('resolve recovers when a concurrent resolve wins the insert race on the same UPC', async () => {
+  const writes = [];
+  let barcodeLookups = 0;
+  Matches.init({
+    db: fakeDb((sql, params) => {
+      if (/FROM TALLY\.product_matches/.test(sql) && /SELECT/i.test(sql)) {
+        return [{ ID: 5, ITEM_ID: 7, STATUS: 'ready',
+                  CANDIDATES: JSON.stringify([{ name: 'Drill', brand: 'DeWalt',
+                    upc: '885911474764', sourceUrl: 'https://e.com/a',
+                    sourceDomain: 'e.com', model: null, priceUsd: null, imageUrl: null }]) }];
+      }
+      if (BARCODE_LOOKUP.test(sql)) {
+        barcodeLookups += 1;
+        // First look misses — nobody has inserted the barcode yet. The
+        // re-select after the duplicate-key error finds the row a
+        // concurrent resolve just won.
+        if (barcodeLookups === 1) return [];
+        return [{ ID: 77, NAME: 'DeWalt Drill (won by concurrent resolve)', BRAND: 'DeWalt' }];
+      }
+      if (CHECK_DUPLICATE.test(sql)) return [];
+      if (/INSERT INTO TALLY\.products/.test(sql)) {
+        const err = new Error("Duplicate entry '885911474764' for key 'uq_products_barcode'");
+        err.code = 'ER_DUP_ENTRY';
+        throw err;
+      }
+      writes.push({ sql, params });
+      return { affectedRows: 1 };
+    }),
+    logger, config,
+  });
+
+  const out = await Matches.resolve(5, 42, { candidateIndex: 0 });
+  assert.equal(out.product.id, 77, 'links the row the concurrent resolve created');
+  assert.equal(out.product.name, 'DeWalt Drill (won by concurrent resolve)');
+  assert.ok(writes.some((w) => /UPDATE TALLY\.items/.test(w.sql) && w.params.includes(77)),
+    'the loser still ends up linked to the winning row, not stuck on an unhandled error');
 });
 
 test('resolve refuses a match the caller cannot reach', async () => {
@@ -301,6 +360,47 @@ test('resolve refuses a match the caller cannot reach', async () => {
   await assert.rejects(
     () => Matches.resolve(5, 999, { candidateIndex: 0 }),
     /not found/i
+  );
+});
+
+test('resolve refuses to resolve an already-resolved match', async () => {
+  Matches.init({
+    db: fakeDb((sql) => {
+      if (/FROM TALLY\.product_matches/.test(sql) && /SELECT/i.test(sql)) {
+        return [{ ID: 5, ITEM_ID: 7, STATUS: 'resolved', CANDIDATES: '[]' }];
+      }
+      return { affectedRows: 1 };
+    }),
+    logger, config,
+  });
+  await assert.rejects(
+    () => Matches.resolve(5, 42, { candidateIndex: 0 }),
+    (err) => {
+      assert.match(err.message, /already resolved/i);
+      assert.equal(err.status, 409);
+      return true;
+    }
+  );
+});
+
+test('resolve refuses to dismiss an already-resolved match', async () => {
+  Matches.init({
+    db: fakeDb((sql) => {
+      if (/FROM TALLY\.product_matches/.test(sql) && /SELECT/i.test(sql)) {
+        return [{ ID: 5, ITEM_ID: 7, STATUS: 'resolved', CANDIDATES: '[]' }];
+      }
+      return { affectedRows: 1 };
+    }),
+    logger, config,
+  });
+  await assert.rejects(
+    () => Matches.resolve(5, 42, { dismiss: true }),
+    (err) => {
+      assert.match(err.message, /already resolved/i);
+      assert.equal(err.status, 409);
+      return true;
+    },
+    'dismissing after resolve would leave items.PRODUCT_ID pointing at the resolved product while STATUS says dismissed'
   );
 });
 
@@ -321,4 +421,53 @@ test('dismiss writes no product', async () => {
   assert.equal(out.product, null);
   assert.ok(!writes.some((w) => /INSERT INTO TALLY\.products/.test(w.sql)));
   assert.ok(writes.some((w) => /STATUS = 'dismissed'/.test(w.sql)));
+});
+
+test('resolve\'s duplicates carry the full location chain duplicate-check.tsx renders', async () => {
+  Matches.init({
+    db: fakeDb((sql) => {
+      if (/FROM TALLY\.product_matches/.test(sql) && /SELECT/i.test(sql)) {
+        return [{ ID: 5, ITEM_ID: 7, STATUS: 'ready',
+                  CANDIDATES: JSON.stringify([{ name: 'Drill', brand: 'DeWalt',
+                    upc: '885911474764', sourceUrl: 'https://e.com/a',
+                    sourceDomain: 'e.com', model: null, priceUsd: null, imageUrl: null }]) }];
+      }
+      if (BARCODE_LOOKUP.test(sql)) return [{ ID: 99, NAME: 'Drill', BRAND: 'DeWalt' }];
+      if (CHECK_DUPLICATE.test(sql)) {
+        return [{ ID: 3, NAME: 'Drill', CONTAINER_NAME: 'Garage Shelf',
+                  AREA_NAME: 'Garage', PROPERTY_NAME: 'Home' }];
+      }
+      return { affectedRows: 1 };
+    }),
+    logger, config,
+  });
+
+  const out = await Matches.resolve(5, 42, { candidateIndex: 0 });
+  assert.deepEqual(out.duplicates, [{
+    id: 3, name: 'Drill', containerName: 'Garage Shelf',
+    areaName: 'Garage', propertyName: 'Home',
+  }], 'areaName/propertyName survive — duplicate-check.tsx renders propertyName > areaName > containerName');
+});
+
+test('resolve checks for duplicates before linking this item, so it cannot appear as its own duplicate', async () => {
+  const order = [];
+  Matches.init({
+    db: fakeDb((sql) => {
+      if (/FROM TALLY\.product_matches/.test(sql) && /SELECT/i.test(sql)) {
+        return [{ ID: 5, ITEM_ID: 7, STATUS: 'ready',
+                  CANDIDATES: JSON.stringify([{ name: 'Drill', brand: 'DeWalt',
+                    upc: '885911474764', sourceUrl: 'https://e.com/a',
+                    sourceDomain: 'e.com', model: null, priceUsd: null, imageUrl: null }]) }];
+      }
+      if (BARCODE_LOOKUP.test(sql)) return [{ ID: 99, NAME: 'Drill', BRAND: 'DeWalt' }];
+      if (CHECK_DUPLICATE.test(sql)) { order.push('checkDuplicate'); return []; }
+      if (/UPDATE TALLY\.items/.test(sql)) { order.push('linkItem'); return { affectedRows: 1 }; }
+      return { affectedRows: 1 };
+    }),
+    logger, config,
+  });
+
+  await Matches.resolve(5, 42, { candidateIndex: 0 });
+  assert.deepEqual(order, ['checkDuplicate', 'linkItem'],
+    'checkDuplicate has no ID-exclusion param, so it must run before this item claims the product');
 });

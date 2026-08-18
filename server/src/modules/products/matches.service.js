@@ -1,4 +1,5 @@
 const productMatch = require('./lookup/product-match');
+const ProductsService = require('./products.service');
 
 let _db = null;
 let _logger = null;
@@ -12,6 +13,11 @@ const MatchesService = {
     _logger = logger;
     _config = config;
     _search = searcher || ((input) => productMatch.search(input, { config, logger }));
+    // Same rationale as ContainersService.init calling RecycleService.init:
+    // resolve() reuses checkDuplicate's own membership-scoped query rather
+    // than keep a second copy, and initializing it here means that works
+    // regardless of whether products.routes has registered yet.
+    ProductsService.init({ db, logger });
   },
 
   async countToday(userId) {
@@ -254,6 +260,18 @@ const MatchesService = {
     }
     const match = rows[0];
 
+    // A decision was already made on this match. Resolving it again would
+    // silently reassign items.PRODUCT_ID out from under whoever acted on the
+    // first decision; dismissing it after that would flip STATUS to
+    // 'dismissed' while PRODUCT_ID kept pointing at the resolved product —
+    // the two tables would disagree. Same terminal set queue already treats
+    // as untouchable.
+    if (match.STATUS === 'resolved' || match.STATUS === 'dismissed') {
+      const err = new Error(`Match is already ${match.STATUS}`);
+      err.status = 409;
+      throw err;
+    }
+
     if (dismiss) {
       await _db.query(
         `UPDATE TALLY.product_matches
@@ -272,25 +290,66 @@ const MatchesService = {
       throw err;
     }
 
-    // Converge on the catalog before inserting.
+    // Converge on the catalog before inserting. productName/productBrand
+    // default to the candidate's own guess, but are overwritten with the
+    // stored row's values whenever we link to a product we did not just
+    // create — the response must describe the row actually linked, never a
+    // candidate that may disagree with a catalog entry another flow wrote.
     let productId = null;
+    let productName = chosen.name;
+    let productBrand = chosen.brand;
     if (chosen.upc) {
       const existing = await _db.query(
-        'SELECT ID FROM TALLY.products WHERE BARCODE = ?', [chosen.upc]
+        'SELECT ID, NAME, BRAND FROM TALLY.products WHERE BARCODE = ?', [chosen.upc]
       );
-      if (existing.length > 0) productId = existing[0].ID;
+      if (existing.length > 0) {
+        productId = existing[0].ID;
+        productName = existing[0].NAME;
+        productBrand = existing[0].BRAND;
+      }
     }
 
     if (productId == null) {
-      const res = await _db.query(
-        `INSERT INTO TALLY.products
-           (BARCODE, NAME, BRAND, IMAGE_URL, RETAIL_PRICE, RETAIL_LINKS, DATA_SOURCE)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        [chosen.upc, chosen.name, chosen.brand, chosen.imageUrl, chosen.priceUsd,
-         JSON.stringify([{ url: chosen.sourceUrl, domain: chosen.sourceDomain }]),
-         'vision_match']
-      );
-      productId = res.insertId;
+      try {
+        const res = await _db.query(
+          `INSERT INTO TALLY.products
+             (BARCODE, NAME, BRAND, IMAGE_URL, RETAIL_PRICE, RETAIL_LINKS, DATA_SOURCE)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          [chosen.upc, chosen.name, chosen.brand, chosen.imageUrl, chosen.priceUsd,
+           JSON.stringify([{ retailer: chosen.sourceDomain, url: chosen.sourceUrl,
+                             price: chosen.priceUsd }]),
+           'vision_match']
+        );
+        productId = res.insertId;
+      } catch (err) {
+        // Nothing holds a lock between the SELECT above and this INSERT, so
+        // two concurrent resolves of the same UPC can both miss and both
+        // reach here. products.BARCODE is UNIQUE — the loser re-selects and
+        // links the winner's row instead of surfacing a raw duplicate-key
+        // error, which is exactly the convergence this function exists for.
+        if (err.code !== 'ER_DUP_ENTRY' || !chosen.upc) throw err;
+        const winner = await _db.query(
+          'SELECT ID, NAME, BRAND FROM TALLY.products WHERE BARCODE = ?', [chosen.upc]
+        );
+        if (winner.length === 0) throw err;
+        productId = winner[0].ID;
+        productName = winner[0].NAME;
+        productBrand = winner[0].BRAND;
+      }
+    }
+
+    // Duplicate detection lands HERE, not at capture: this is the first
+    // moment a barcode exists to check against. Reuses ProductsService's own
+    // checkDuplicate — same membership-scoped join, same {id, name,
+    // containerName, areaName, propertyName} shape duplicate-check.tsx
+    // renders — rather than keeping a second copy of the query. Run BEFORE
+    // this item is linked below: checkDuplicate has no ID-exclusion
+    // parameter (the scan flow that owns it calls it before the item being
+    // checked even exists), so running it first is what keeps this item from
+    // appearing as a "duplicate" of itself.
+    let duplicates = [];
+    if (chosen.upc) {
+      duplicates = await ProductsService.checkDuplicate(chosen.upc, userId);
     }
 
     await _db.query(
@@ -303,30 +362,8 @@ const MatchesService = {
       [productId, matchId]
     );
 
-    // Duplicate detection lands HERE, not at capture: this is the first moment
-    // a barcode exists to check against. Same four-level join, so a duplicate
-    // hiding behind a soft-deleted container/area/property is not reported.
-    let duplicates = [];
-    if (chosen.upc) {
-      const dupes = await _db.query(
-        `SELECT i.ID, i.NAME, c.NAME AS CONTAINER_NAME
-           FROM TALLY.items i
-           JOIN TALLY.containers c ON i.CONTAINER_ID = c.ID
-           JOIN TALLY.areas a ON c.AREA_ID = a.ID
-           JOIN TALLY.properties p ON a.PROPERTY_ID = p.ID
-           JOIN TALLY.property_members pm ON p.ID = pm.PROPERTY_ID
-          WHERE i.PRODUCT_ID = ? AND pm.USER_ID = ?
-            AND i.ID <> ? AND i.DELETED_AT IS NULL
-            AND c.DELETED_AT IS NULL AND a.DELETED_AT IS NULL AND p.DELETED_AT IS NULL`,
-        [productId, userId, match.ITEM_ID]
-      );
-      duplicates = dupes.map((d) => ({
-        id: d.ID, name: d.NAME, containerName: d.CONTAINER_NAME,
-      }));
-    }
-
     return {
-      product: { id: productId, name: chosen.name, brand: chosen.brand, barcode: chosen.upc },
+      product: { id: productId, name: productName, brand: productBrand, barcode: chosen.upc },
       duplicates,
     };
   },
