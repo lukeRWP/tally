@@ -35,8 +35,13 @@ CREATE TABLE IF NOT EXISTS product_matches (
     -- One match per item: a double-fired queue call cannot create two.
     UNIQUE KEY uq_product_matches_item (ITEM_ID),
     KEY ix_product_matches_status (STATUS),
-    -- Serves the per-user daily cap count.
-    KEY ix_product_matches_creator (CREATED_BY, CREATED_AT),
+    -- Serves the per-user daily cap count (countToday, in matches.service.js)
+    -- on CREATED_BY + UPDATED_AT — the column set that query actually filters
+    -- on, and it runs on every queue() call and every runNow() attempt.
+    -- Keyed on UPDATED_AT, not CREATED_AT: a search fired long after a row
+    -- was first created (a re-queue) still has to land in today's count, and
+    -- UPDATED_AT is the column a search attempt actually touches.
+    KEY ix_product_matches_creator (CREATED_BY, UPDATED_AT),
     -- Items are soft-deleted normally, but the recycle bin's 30-day purge is a
     -- hard DELETE, and a match must not outlive its item.
     CONSTRAINT fk_product_matches_item
@@ -46,6 +51,29 @@ CREATE TABLE IF NOT EXISTS product_matches (
     CONSTRAINT fk_product_matches_user
         FOREIGN KEY (CREATED_BY) REFERENCES users (ID)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- SEARCH_COUNT was added to the CREATE TABLE above after this file's first
+-- version shipped. CREATE TABLE IF NOT EXISTS is a no-op against a database
+-- that already ran the earlier copy, so on THAT database the column would
+-- silently never exist and every SEARCH_COUNT query would 500 — the same
+-- class of mistake rule 16 exists to prevent. MySQL 8 has no
+-- "ADD COLUMN IF NOT EXISTS", so guard it the same way DATA_SOURCE is guarded
+-- below: check information_schema first, ALTER only if it is actually
+-- missing. A fresh install already has the column from the CREATE TABLE
+-- above, so this is a no-op there.
+SET @has_search_count := (
+  SELECT COUNT(*) FROM information_schema.COLUMNS
+   WHERE TABLE_SCHEMA = DATABASE()
+     AND TABLE_NAME   = 'product_matches'
+     AND COLUMN_NAME  = 'SEARCH_COUNT'
+);
+SET @ddl := IF(@has_search_count = 0,
+  'ALTER TABLE product_matches ADD COLUMN SEARCH_COUNT INT NOT NULL DEFAULT 0 AFTER ATTEMPTS',
+  'DO 0'
+);
+PREPARE stmt FROM @ddl;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
 
 -- products.DATA_SOURCE gains 'vision_match'. MySQL 8 has no
 -- "ADD VALUE IF NOT EXISTS", so read the current type and only ALTER when the

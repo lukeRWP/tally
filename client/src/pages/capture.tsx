@@ -427,13 +427,19 @@ export function Capture() {
       // fire-and-forget and the item is already saved either way; it can
       // still be scanned by hand later.
       //
+      // `matchAvailable` MUST be repeated here, not just in `canMatch` up
+      // above: this condition decides whether the POST fires at all, and
+      // without it a capture with the kill switch off would still queue —
+      // 503, then the onError toast below fires on every branded capture,
+      // which is worse than the silent version this replaced.
+      //
       // `!d.productId` is a second, independent gate: adoptProduct() clears
       // `vision` the moment a product is picked by hand, but requiring this
       // here too means the commit itself can never queue a redundant search
       // for an item that already resolved to a real product — no future path
       // that sets productId without remembering to clear vision can reopen
       // this hole.
-      if (vision?.confidence === 'high' && vision.brand && !d.productId) {
+      if (matchAvailable && vision?.confidence === 'high' && vision.brand && !d.productId) {
         queueMatch.mutate({
           itemId: created.id,
           brand: vision.brand,

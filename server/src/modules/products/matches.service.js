@@ -435,8 +435,15 @@ const MatchesService = {
           // A duplicate-key error does not abort an InnoDB transaction, so
           // this recovery still works from inside one.
           if (err.code !== 'ER_DUP_ENTRY' || !chosen.upc) throw err;
+          // FOR UPDATE, unlike the plain reads elsewhere in this function: the
+          // transaction runs at MySQL's default REPEATABLE READ, so a plain
+          // SELECT here would read the snapshot taken at this transaction's
+          // first read — before the winner's row existed — and see nothing,
+          // making the duplicate-key error re-throw instead of converging. A
+          // locking read always reads the latest COMMITTED row regardless of
+          // the snapshot, which is what this recovery actually needs.
           const winner = await tx.query(
-            'SELECT ID, NAME, BRAND FROM TALLY.products WHERE BARCODE = ?', [chosen.upc]
+            'SELECT ID, NAME, BRAND FROM TALLY.products WHERE BARCODE = ? FOR UPDATE', [chosen.upc]
           );
           if (winner.length === 0) throw err;
           productId = winner[0].ID;

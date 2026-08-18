@@ -98,7 +98,7 @@ CREATE TABLE IF NOT EXISTS product_matches (
     PRIMARY KEY (ID),
     UNIQUE KEY uq_product_matches_item (ITEM_ID),
     KEY ix_product_matches_status (STATUS),
-    KEY ix_product_matches_creator (CREATED_BY, CREATED_AT),
+    KEY ix_product_matches_creator (CREATED_BY, UPDATED_AT),
     CONSTRAINT fk_product_matches_item
         FOREIGN KEY (ITEM_ID) REFERENCES items (ID) ON DELETE CASCADE,
     CONSTRAINT fk_product_matches_product
@@ -111,7 +111,10 @@ CREATE TABLE IF NOT EXISTS product_matches (
 `SEARCH_QUERY`, not `QUERY` — avoids any argument with the parser.
 `UNIQUE (ITEM_ID)` — one match record per item, so a double-fire cannot create
 two. `CREATED_BY` exists for the per-user daily cap (§8) and for audit;
-`ix_product_matches_creator` serves that count.
+`ix_product_matches_creator` serves that count — keyed on `UPDATED_AT`, not
+`CREATED_AT`, because `countToday` filters on `UPDATED_AT` (a re-queue's new
+search has to land in today's count even long after the row was first
+created).
 `ON DELETE CASCADE` matters for purge: items are soft-deleted normally, but the
 recycle bin's 30-day purge hard-deletes, and a match row must not outlive its
 item.

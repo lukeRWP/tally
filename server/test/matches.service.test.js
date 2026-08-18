@@ -590,6 +590,7 @@ test('resolve inserts a new product with vision_match provenance', async () => {
 test('resolve recovers when a concurrent resolve wins the insert race on the same UPC', async () => {
   const writes = [];
   let barcodeLookups = 0;
+  const barcodeLookupSql = [];
   Matches.init({
     db: fakeDb((sql, params) => {
       if (/FROM TALLY\.product_matches/.test(sql) && /SELECT/i.test(sql)) {
@@ -600,6 +601,7 @@ test('resolve recovers when a concurrent resolve wins the insert race on the sam
       }
       if (BARCODE_LOOKUP.test(sql)) {
         barcodeLookups += 1;
+        barcodeLookupSql.push(sql);
         // First look misses — nobody has inserted the barcode yet. The
         // re-select after the duplicate-key error finds the row a
         // concurrent resolve just won.
@@ -623,6 +625,18 @@ test('resolve recovers when a concurrent resolve wins the insert race on the sam
   assert.equal(out.product.name, 'DeWalt Drill (won by concurrent resolve)');
   assert.ok(writes.some((w) => /UPDATE TALLY\.items/.test(w.sql) && w.params.includes(77)),
     'the loser still ends up linked to the winning row, not stuck on an unhandled error');
+
+  // Regression guard: the transaction runs at REPEATABLE READ, so a plain
+  // SELECT for the recovery read would see the snapshot from before the
+  // winner committed and miss forever — the duplicate-key error would
+  // re-throw instead of converging. FOR UPDATE forces a read of the latest
+  // committed row. Only the RECOVERY read needs it — the first, pre-insert
+  // lookup is untouched.
+  assert.equal(barcodeLookupSql.length, 2);
+  assert.ok(!/FOR UPDATE/.test(barcodeLookupSql[0]),
+    'the first, pre-insert lookup is a plain read — no reason to lock before we know we need to');
+  assert.match(barcodeLookupSql[1], /FOR UPDATE/,
+    'the post-duplicate-key recovery read must not be a stale snapshot read');
 });
 
 test('resolve refuses a match the caller cannot reach', async () => {
