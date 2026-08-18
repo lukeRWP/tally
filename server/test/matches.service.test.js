@@ -79,7 +79,7 @@ test('queue refuses when the daily cap is reached', async () => {
   );
 });
 
-test('queue re-queuing a resolved row keeps its status and does not reset it', async () => {
+test('queue re-queuing a resolved row keeps its status and its LAST_ERROR untouched', async () => {
   let insertSql = '';
   Matches.init({
     db: fakeDb((sql) => {
@@ -97,9 +97,11 @@ test('queue re-queuing a resolved row keeps its status and does not reset it', a
     'the caller sees the row\'s real status, not a hardcoded queued');
   assert.match(insertSql, /STATUS = CASE WHEN STATUS IN \('resolved', 'dismissed'\) THEN STATUS/,
     'a terminal row is not blindly reset to queued');
+  assert.match(insertSql, /LAST_ERROR = CASE WHEN STATUS IN \('resolved', 'dismissed'\) THEN LAST_ERROR ELSE NULL END/,
+    'a terminal row keeps whatever LAST_ERROR it had');
 });
 
-test('queue re-queuing a non-terminal row resets to queued, zeroes attempts, and refreshes the query', async () => {
+test('queue re-queuing a failed row resets to queued, zeroes attempts, clears LAST_ERROR, and refreshes the query', async () => {
   let insertSql = '';
   let insertParams = [];
   Matches.init({
@@ -119,6 +121,8 @@ test('queue re-queuing a non-terminal row resets to queued, zeroes attempts, and
     'the new query overwrites the stale one');
   assert.match(insertSql, /ATTEMPTS = CASE WHEN STATUS IN \('resolved', 'dismissed'\) THEN ATTEMPTS ELSE 0 END/,
     'attempts are zeroed for a non-terminal re-queue');
+  assert.match(insertSql, /LAST_ERROR = CASE WHEN STATUS IN \('resolved', 'dismissed'\) THEN LAST_ERROR ELSE NULL END/,
+    'a row coming back to queued starts with a clean LAST_ERROR, not a stale one');
   assert.ok(insertParams.some((p) => typeof p === 'string' && /Makita/.test(p)),
     'the refreshed brand/name reaches the stored query');
 });

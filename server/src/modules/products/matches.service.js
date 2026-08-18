@@ -71,13 +71,16 @@ const MatchesService = {
     // better information (a retaken photo, a corrected brand), and the old
     // query has no further use once a new one has arrived.
     //
-    // STATUS and ATTEMPTS only reset to 'queued'/0 when the row is not
-    // already 'resolved' or 'dismissed': someone already made a decision on
-    // this match, and a re-queue must not quietly undo it. The CASE's STATUS
-    // reference reads the same whether MySQL evaluates it against the row's
-    // pre- or post-assignment value in this statement, because a terminal
-    // status always maps to itself and every non-terminal status always maps
-    // to 'queued' — the predicate is not order-sensitive.
+    // STATUS, ATTEMPTS and LAST_ERROR only reset when the row is not already
+    // 'resolved' or 'dismissed': someone already made a decision on this
+    // match, and a re-queue must not quietly undo it. A row coming back to
+    // 'queued' starts clean — carrying over a stale LAST_ERROR would show a
+    // leftover "Couldn't look this up" on a match that is, as of this call,
+    // freshly in progress. The CASE's STATUS reference reads the same whether
+    // MySQL evaluates it against the row's pre- or post-assignment value in
+    // this statement, because a terminal status always maps to itself and
+    // every non-terminal status always maps to 'queued' — the predicate is
+    // not order-sensitive.
     const res = await _db.query(
       `INSERT INTO TALLY.product_matches (ITEM_ID, CREATED_BY, STATUS, SEARCH_QUERY)
             VALUES (?, ?, 'queued', ?)
@@ -85,7 +88,8 @@ const MatchesService = {
          ID = LAST_INSERT_ID(ID),
          SEARCH_QUERY = VALUES(SEARCH_QUERY),
          STATUS = CASE WHEN STATUS IN ('resolved', 'dismissed') THEN STATUS ELSE 'queued' END,
-         ATTEMPTS = CASE WHEN STATUS IN ('resolved', 'dismissed') THEN ATTEMPTS ELSE 0 END`,
+         ATTEMPTS = CASE WHEN STATUS IN ('resolved', 'dismissed') THEN ATTEMPTS ELSE 0 END,
+         LAST_ERROR = CASE WHEN STATUS IN ('resolved', 'dismissed') THEN LAST_ERROR ELSE NULL END`,
       [itemId, userId, JSON.stringify(query)]
     );
 
