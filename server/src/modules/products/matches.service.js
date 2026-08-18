@@ -31,6 +31,10 @@ const MatchesService = {
    * checked here through the membership join, like every other read.
    */
   async queue({ itemId, brand, name, category, description }, userId) {
+    // Same join chain as items.service.js's getRecent (~line 476): a soft
+    // delete anywhere above the item — container, area, property — must hide
+    // it the same way it hides the item itself, or a match can be queued
+    // (spending against the daily cap) for an item that is no longer reachable.
     const owned = await _db.query(
       `SELECT i.ID
          FROM TALLY.items i
@@ -38,7 +42,11 @@ const MatchesService = {
          JOIN TALLY.areas a ON c.AREA_ID = a.ID
          JOIN TALLY.properties p ON a.PROPERTY_ID = p.ID
          JOIN TALLY.property_members pm ON p.ID = pm.PROPERTY_ID
-        WHERE i.ID = ? AND pm.USER_ID = ? AND i.DELETED_AT IS NULL`,
+        WHERE i.ID = ? AND pm.USER_ID = ?
+          AND i.DELETED_AT IS NULL
+          AND c.DELETED_AT IS NULL
+          AND a.DELETED_AT IS NULL
+          AND p.DELETED_AT IS NULL`,
       [itemId, userId]
     );
     if (owned.length === 0) {
@@ -58,13 +66,37 @@ const MatchesService = {
 
     // ON DUPLICATE KEY: the UNIQUE on ITEM_ID makes a re-queue idempotent
     // rather than an error, which is what a retrying client should get.
+    //
+    // SEARCH_QUERY is always refreshed — a second attempt usually means
+    // better information (a retaken photo, a corrected brand), and the old
+    // query has no further use once a new one has arrived.
+    //
+    // STATUS and ATTEMPTS only reset to 'queued'/0 when the row is not
+    // already 'resolved' or 'dismissed': someone already made a decision on
+    // this match, and a re-queue must not quietly undo it. The CASE's STATUS
+    // reference reads the same whether MySQL evaluates it against the row's
+    // pre- or post-assignment value in this statement, because a terminal
+    // status always maps to itself and every non-terminal status always maps
+    // to 'queued' — the predicate is not order-sensitive.
     const res = await _db.query(
       `INSERT INTO TALLY.product_matches (ITEM_ID, CREATED_BY, STATUS, SEARCH_QUERY)
             VALUES (?, ?, 'queued', ?)
-       ON DUPLICATE KEY UPDATE ID = LAST_INSERT_ID(ID)`,
+       ON DUPLICATE KEY UPDATE
+         ID = LAST_INSERT_ID(ID),
+         SEARCH_QUERY = VALUES(SEARCH_QUERY),
+         STATUS = CASE WHEN STATUS IN ('resolved', 'dismissed') THEN STATUS ELSE 'queued' END,
+         ATTEMPTS = CASE WHEN STATUS IN ('resolved', 'dismissed') THEN ATTEMPTS ELSE 0 END`,
       [itemId, userId, JSON.stringify(query)]
     );
-    return { id: res.insertId, status: 'queued' };
+
+    // The row's real status, not a hardcoded 'queued' — a re-queue of an
+    // already-resolved/dismissed row stays resolved/dismissed. Task 5's route
+    // reads this to decide whether to fire the runner at all.
+    const rows = await _db.query(
+      `SELECT STATUS FROM TALLY.product_matches WHERE ID = ?`,
+      [res.insertId]
+    );
+    return { id: res.insertId, status: rows[0].STATUS };
   },
 
   /**

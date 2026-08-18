@@ -22,7 +22,9 @@ test('queue verifies item ownership through property_members', async () => {
     db: fakeDb((sql, params) => {
       seen.push({ sql, params });
       if (/SELECT/i.test(sql) && /property_members/.test(sql)) return [{ ID: 7 }];
-      return { insertId: 1, affectedRows: 1 };
+      if (/INSERT/i.test(sql)) return { insertId: 1, affectedRows: 1 };
+      // countToday's COUNT and the post-upsert status readback both land here.
+      return [{ N: 0, STATUS: 'queued' }];
     }),
     logger, config,
   });
@@ -33,6 +35,25 @@ test('queue verifies item ownership through property_members', async () => {
   assert.ok(guard, 'ownership is checked before insert');
   assert.match(guard.sql, /pm\.USER_ID = \?/);
   assert.ok(guard.params.includes(42), 'the caller id is bound');
+});
+
+test('queue excludes items under a soft-deleted container, area or property', async () => {
+  let guardSql = '';
+  Matches.init({
+    db: fakeDb((sql) => {
+      if (/property_members/.test(sql)) { guardSql = sql; return []; }
+      return [];
+    }),
+    logger, config,
+  });
+
+  await assert.rejects(
+    () => Matches.queue({ itemId: 7, brand: 'X', name: 'Y' }, 42),
+    /not found/i
+  );
+  assert.match(guardSql, /c\.DELETED_AT IS NULL/, 'container soft-delete is checked');
+  assert.match(guardSql, /a\.DELETED_AT IS NULL/, 'area soft-delete is checked');
+  assert.match(guardSql, /p\.DELETED_AT IS NULL/, 'property soft-delete is checked');
 });
 
 test('queue refuses an item the caller cannot reach', async () => {
@@ -56,6 +77,50 @@ test('queue refuses when the daily cap is reached', async () => {
     () => Matches.queue({ itemId: 7, brand: 'X', name: 'Y' }, 42),
     /daily/i
   );
+});
+
+test('queue re-queuing a resolved row keeps its status and does not reset it', async () => {
+  let insertSql = '';
+  Matches.init({
+    db: fakeDb((sql) => {
+      if (/property_members/.test(sql)) return [{ ID: 7 }];
+      if (/INSERT/i.test(sql)) { insertSql = sql; return { insertId: 9, affectedRows: 1 }; }
+      if (/SELECT STATUS/i.test(sql)) return [{ STATUS: 'resolved' }];
+      return [{ N: 0 }]; // countToday
+    }),
+    logger, config,
+  });
+
+  const result = await Matches.queue({ itemId: 7, brand: 'DeWalt', name: 'Drill' }, 42);
+
+  assert.equal(result.status, 'resolved',
+    'the caller sees the row\'s real status, not a hardcoded queued');
+  assert.match(insertSql, /STATUS = CASE WHEN STATUS IN \('resolved', 'dismissed'\) THEN STATUS/,
+    'a terminal row is not blindly reset to queued');
+});
+
+test('queue re-queuing a non-terminal row resets to queued, zeroes attempts, and refreshes the query', async () => {
+  let insertSql = '';
+  let insertParams = [];
+  Matches.init({
+    db: fakeDb((sql, params) => {
+      if (/property_members/.test(sql)) return [{ ID: 7 }];
+      if (/INSERT/i.test(sql)) { insertSql = sql; insertParams = params; return { insertId: 9, affectedRows: 1 }; }
+      if (/SELECT STATUS/i.test(sql)) return [{ STATUS: 'queued' }];
+      return [{ N: 0 }]; // countToday
+    }),
+    logger, config,
+  });
+
+  const result = await Matches.queue({ itemId: 7, brand: 'Makita', name: 'Impact Driver' }, 42);
+
+  assert.equal(result.status, 'queued');
+  assert.match(insertSql, /SEARCH_QUERY = VALUES\(SEARCH_QUERY\)/,
+    'the new query overwrites the stale one');
+  assert.match(insertSql, /ATTEMPTS = CASE WHEN STATUS IN \('resolved', 'dismissed'\) THEN ATTEMPTS ELSE 0 END/,
+    'attempts are zeroed for a non-terminal re-queue');
+  assert.ok(insertParams.some((p) => typeof p === 'string' && /Makita/.test(p)),
+    'the refreshed brand/name reaches the stored query');
 });
 
 test('sweepStale requeues under the cap and fails at it', async () => {
@@ -125,4 +190,22 @@ test('runNow never throws when the search does, and records the error', async ()
   assert.match(final.sql, /ATTEMPTS = ATTEMPTS \+ 1/);
   assert.ok(final.params.some((p) => typeof p === 'string' && /exploded/.test(p)),
     'the error text is recorded for the worklist to show');
+});
+
+test('runNow never rejects even when the failure-recording write also throws', async () => {
+  // The searcher fails AND every write fails, including the one inside the
+  // catch that tries to record the failure. This is the scenario the
+  // never-reject invariant actually depends on: runNow is called without
+  // await, so a rejection here would be an unhandled rejection with nobody
+  // left to catch it.
+  Matches.init({
+    db: fakeDb((sql) => {
+      if (/SELECT/i.test(sql)) return [{ ID: 5, SEARCH_QUERY: '{"name":"X"}' }];
+      throw new Error('db is down');
+    }),
+    logger, config,
+    searcher: async () => { throw new Error('upstream exploded'); },
+  });
+
+  await assert.doesNotReject(() => Matches.runNow(5));
 });
