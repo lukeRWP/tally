@@ -1105,6 +1105,8 @@ Create `server/src/modules/products/matches.routes.js`:
 ```js
 const rateLimit = require('express-rate-limit');
 const MatchesService = require('./matches.service');
+// success(res, data) and error(res, message, status) take res FIRST and send
+// the response themselves — they do not return a body to be passed to json().
 const { success, error } = require('../../utils/response');
 const validate = require('../../middleware/validate');
 const { queueSchema, listQuerySchema, resolveSchema } = require('./matches.schema');
@@ -1122,7 +1124,7 @@ module.exports = ({ app, db, logger, config }) => {
     app.locals.requireAuth, matchBurst, matchDaily, validate(queueSchema),
     async (req, res) => {
       if (!config.match.enabled) {
-        return res.status(503).json(error('Product matching is disabled'));
+        return error(res, 'Product matching is disabled', 503);
       }
       try {
         const out = await MatchesService.queue(req.body, req.user.id);
@@ -1130,10 +1132,10 @@ module.exports = ({ app, db, logger, config }) => {
         // search, and there is deliberately no abort-on-disconnect wiring —
         // that pattern aborted every vision call at 0ms.
         void MatchesService.runNow(out.id);
-        return res.json(success(out));
+        return success(res, out);
       } catch (err) {
         logger.warn('queue match failed', { error: err.message });
-        return res.status(err.status || 500).json(error(err.message));
+        return error(res, err.message, err.status || 500);
       }
     });
 
@@ -1144,10 +1146,10 @@ module.exports = ({ app, db, logger, config }) => {
       try {
         const matches = await MatchesService.list(
           Number(req.query.propertyId), req.user.id);
-        return res.json(success(matches));
+        return success(res, matches);
       } catch (err) {
         logger.error('list matches failed', { error: err.message });
-        return res.status(500).json(error('Could not load product matches'));
+        return error(res, 'Could not load product matches', 500);
       }
     });
 
@@ -1158,10 +1160,10 @@ module.exports = ({ app, db, logger, config }) => {
       try {
         const out = await MatchesService.resolve(
           Number(req.params.id), req.user.id, req.body);
-        return res.json(success(out));
+        return success(res, out);
       } catch (err) {
         logger.warn('resolve match failed', { error: err.message });
-        return res.status(err.status || 500).json(error(err.message));
+        return error(res, err.message, err.status || 500);
       }
     });
 };
@@ -1185,7 +1187,9 @@ npm run lint
 
 Expected: `loads`, the whole suite green, lint clean.
 
-Confirm `validate` supports a source argument before using `validate(listQuerySchema, 'query')` — read `server/src/middleware/validate.js`. If it validates `req.body` only, validate `propertyId` inline in the handler instead and delete the query schema.
+`validate(schema, source = 'body')` already takes a source argument, so
+`validate(listQuerySchema, 'query')` is correct as written — it also coerces
+and strips, so `req.query.propertyId` arrives as a number.
 
 - [ ] **Step 5: Commit**
 
@@ -1290,7 +1294,9 @@ Structure:
 
 ```tsx
 export default function MatchesPage() {
-  const propertyId = usePropertyId();                  // same hook other pages use
+  // Same pattern as print-queue.tsx: the first property the user belongs to.
+  const { data: properties } = useProperties();
+  const propertyId = properties?.[0]?.id;
   const { data: matches, isLoading } = useMatches(propertyId);
   const [selected, setSelected] = React.useState<number | null>(null);
   const resolve = useResolveMatch(propertyId);
@@ -1491,4 +1497,9 @@ Compare against the local `client/dist/assets/index-*.js`.
 
 **Type consistency:** `Candidate` fields in Task 2 match `MatchCandidate` in Task 6 (`name, brand, model, upc, priceUsd, imageUrl, sourceUrl, sourceDomain`). `Match` from `list` in Task 4 matches `ProductMatch` in Task 6. `resolve`'s `{candidateIndex, dismiss}` matches the Joi `xor` in Task 5 and the mutation in Task 6.
 
-**Known gap:** `usePropertyId()` in Task 6 is written as "the same hook other pages use" — the implementer must copy the actual pattern from `pages/print-queue.tsx`, which solves the same problem.
+**Verified against the codebase while reviewing:** `validate(schema, source)`
+does take a source argument (Task 5 relies on it); `success`/`error` take `res`
+first and send the response themselves (Task 5's handlers were corrected to
+match — the earlier `res.json(success(out))` form would have serialised the
+Response object); and `propertyId` comes from `useProperties()?.[0]?.id`, the
+pattern `print-queue.tsx` uses, not an invented `usePropertyId()` hook.
