@@ -36,7 +36,9 @@ CREATE TABLE IF NOT EXISTS product_matches (
     CONSTRAINT fk_product_matches_item
         FOREIGN KEY (ITEM_ID) REFERENCES items (ID) ON DELETE CASCADE,
     CONSTRAINT fk_product_matches_product
-        FOREIGN KEY (SELECTED_PRODUCT_ID) REFERENCES products (ID)
+        FOREIGN KEY (SELECTED_PRODUCT_ID) REFERENCES products (ID),
+    CONSTRAINT fk_product_matches_user
+        FOREIGN KEY (CREATED_BY) REFERENCES users (ID)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- products.DATA_SOURCE gains 'vision_match'. MySQL 8 has no
