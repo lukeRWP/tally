@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Camera, Check, X, Printer, Plus, MapPin, SkipForward, List, AlertTriangle, Search, ImagePlus } from 'lucide-react';
+import { Camera, Check, X, Printer, Plus, MapPin, SkipForward, List, AlertTriangle, Search, ImagePlus, Sparkles } from 'lucide-react';
 import { ProductScanner } from '@/components/scanner/product-scanner';
 import { TagScanner } from '@/components/scanner/tag-scanner';
 import { ProductSearch } from '@/components/scanner/product-search';
@@ -14,6 +14,7 @@ import { findOrCreateLooseContainer } from '@/hooks/use-put-down';
 import { DestinationPicker } from '@/components/inventory/destination-picker';
 import { useCreateItem } from '@/hooks/use-inventory';
 import { useUploadFile } from '@/hooks/use-files';
+import { useQueueMatch } from '@/hooks/use-matches';
 import { usePrinters, useCreatePrintJob } from '@/hooks/use-print';
 import { usePrintQueueStore } from '@/store/print-queue-store';
 import { cn } from '@/lib/utils';
@@ -26,8 +27,16 @@ import { useLayoutMode } from '@/hooks/use-layout-mode';
  * The capture flow: PICTURE → SCAN → SCAN → DONE.
  *
  * The photo captures the thing, the product barcode names it, the tag files
- * it. All three steps run for every item.
+ * it. All three steps run for every item — except step 2 is skipped when the
+ * photo already named it with confidence: a HIGH-confidence suggestion that
+ * also carries a brand means text was legible on the object, which is
+ * exactly when a background product search can resolve to one real catalogue
+ * row. Step 2 then becomes a "finding this product" chip instead of the
+ * barcode scanner, the flow proceeds straight to step 3, and the match gets
+ * turned into a real product later at /matches (see notifications.tsx for the
+ * Alerts entry that points there). See `canMatch` below for the exact gate.
  *
+
  * Step 3 is the one that cannot be skipped. Identifying something says WHAT it
  * is and never where it belongs, so nothing is written until it has been put
  * somewhere — an item that appears in a bin nobody chose for it is worse than
@@ -239,6 +248,18 @@ export function Capture() {
   const [visionEmpty, setVisionEmpty] = React.useState(false);
 
   /**
+   * The gate: high confidence AND a brand. The brand is the real signal — the
+   * vision prompt forbids inventing one it cannot read, so a brand coming
+   * back means text was legible on the object, exactly when a product search
+   * can resolve to one product. An unbranded mug never searches.
+   *
+   * True only means step 2 CAN be skipped for a background search — it is
+   * recomputed (not reused) at the point commit() actually queues one, since
+   * this value and the state it reads can each change up to that moment.
+   */
+  const canMatch = vision?.confidence === 'high' && !!vision.brand;
+
+  /**
    * Clear everything belonging to the item just finished (or abandoned).
    *
    * A helper rather than three inline resets because the suggestion is the easy
@@ -260,6 +281,7 @@ export function Capture() {
 
   const createItem = useCreateItem();
   const uploadFile = useUploadFile();
+  const queueMatch = useQueueMatch();
   const createPrintJob = useCreatePrintJob();
   const stage = usePrintQueueStore((s) => s.add);
   const stageMany = usePrintQueueStore((s) => s.addMany);
@@ -371,6 +393,22 @@ export function Capture() {
       });
       const created = res?.item;
       if (!created) throw new Error('Create returned no item');
+
+      // Re-checked here (not read off the `canMatch` closed over by the
+      // render) so this reads the vision state as of the moment the item
+      // actually landed, and so `vision.brand` narrows for TypeScript. A
+      // queue failure must never block the capture — mutate() is
+      // fire-and-forget and the item is already saved either way; it can
+      // still be scanned by hand later.
+      if (vision?.confidence === 'high' && vision.brand) {
+        queueMatch.mutate({
+          itemId: created.id,
+          brand: vision.brand,
+          name: vision.name ?? name,
+          category: vision.category,
+          description: vision.description,
+        });
+      }
 
       const receipt: Receipt = {
         id: created.id,
@@ -982,6 +1020,16 @@ export function Capture() {
               }}
               onClose={() => setPicking(false)}
             />
+          ) : phase === 'identify' && canMatch ? (
+            // The photo already named this with a brand attached — a real
+            // product search is running in the background (queued on commit,
+            // see below). Step 2 becomes a status chip instead of asking for
+            // a barcode; "Search" and the name field below still work as the
+            // manual escape hatch, unchanged.
+            <div className="flex items-center gap-2 border border-[var(--color-rule)] rounded-[var(--radius-sm)] px-3 py-2">
+              <Sparkles className="h-4 w-4 text-[var(--color-primary)]" />
+              <span className="text-sm">Finding this product — pick it later in Alerts</span>
+            </div>
           ) : phase === 'identify' ? (
             <ProductScanner
               label={busy ?? 'Scan product barcode'}
