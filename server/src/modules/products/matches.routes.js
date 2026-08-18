@@ -1,4 +1,5 @@
 const rateLimit = require('express-rate-limit');
+const { ipKeyGenerator } = require('express-rate-limit');
 const MatchesService = require('./matches.service');
 // success(res, data) and error(res, message, status) take res FIRST and send
 // the response themselves — they do not return a body to be passed to json().
@@ -9,9 +10,18 @@ const { queueSchema, listQuerySchema, resolveSchema } = require('./matches.schem
 module.exports = ({ app, db, logger, config }) => {
   MatchesService.init({ db, logger, config });
 
-  const matchBurst = rateLimit({ windowMs: 60 * 1000, max: 30,
+  // Same reasoning, and the same shape, as products.routes.js's own `perUser`:
+  // a household behind one NAT is a single IP, so one person's capture session
+  // must not throttle their partner's. Duplicated rather than imported because
+  // products.routes.js does not export it — see the report for where a shared
+  // home for this would go. The ip fallback is unreachable behind requireAuth
+  // and exists only so the limiter can never throw on a malformed request.
+  const perUser = (req) => (req.user?.id ? `u:${req.user.id}` : ipKeyGenerator(req.ip));
+
+  const matchBurst = rateLimit({ windowMs: 60 * 1000, max: 30, keyGenerator: perUser,
     message: { success: false, message: 'Too many product matches, slow down' } });
   const matchDaily = rateLimit({ windowMs: 24 * 60 * 60 * 1000, max: config.match.dailyPerUser,
+    keyGenerator: perUser,
     message: { success: false, message: 'Daily product-match limit reached' } });
 
   // POST /api/products/_y_/matches — queue and return immediately.
