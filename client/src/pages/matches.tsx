@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, ExternalLink, Package, PackageSearch } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -10,6 +10,7 @@ import { TitleBar } from '@/components/ui/title-bar';
 import { RuledRow } from '@/components/ui/ruled-row';
 import { SplitView, SplitEmpty } from '@/components/layout/split-view';
 import { toast } from '@/components/ui/toast';
+import { ApiError } from '@/lib/api';
 import { useProperties } from '@/hooks/use-inventory';
 import { useLayoutMode } from '@/hooks/use-layout-mode';
 import { cn, safeExternalUrl } from '@/lib/utils';
@@ -172,32 +173,57 @@ export function MatchesPage() {
   const { data: properties } = useProperties();
   const propertyId = properties?.[0]?.id;
   const { data: matches, isLoading } = useMatches(propertyId);
-  const [selected, setSelected] = React.useState<number | null>(null);
+  const [searchParams, setSearchParams] = useSearchParams();
   const resolve = useResolveMatch(propertyId);
 
+  // Selection lives in the URL, exactly like search.tsx's `sel` param: browser
+  // back works, a refresh keeps the pane you were on, and a link to one match
+  // is shareable. `select` MERGES into the existing params rather than
+  // rebuilding the query string from scratch — search.tsx's own first draft
+  // reconstructed it from a couple of known params and silently dropped every
+  // other one that happened to be in the URL.
+  const selectedId = searchParams.get('sel') ? Number(searchParams.get('sel')) : null;
+  const select = React.useCallback((id: number | null) => {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      if (id == null) next.delete('sel'); else next.set('sel', String(id));
+      return next;
+    }, { replace: true });
+  }, [setSearchParams]);
+
   const rows = matches ?? [];
-  const current = rows.find((m) => m.id === selected) ?? null;
+  const current = rows.find((m) => m.id === selectedId) ?? null;
 
   function handlePick(index: number) {
     if (!current) return;
     resolve.mutate({ id: current.id, candidateIndex: index }, {
       onSuccess: (res) => {
-        setSelected(null);
+        select(null);
         if (res?.duplicates?.length) {
           toast(`Linked — you may already have one in ${res.duplicates[0].containerName}`);
         } else {
           toast(`Linked to ${res?.product?.name ?? 'that product'}`);
         }
       },
-      onError: (err) => toast(err instanceof Error ? err.message : 'Could not resolve that match'),
+      onError: (err) => {
+        // Someone else already resolved or dismissed this one — the hook has
+        // already invalidated the list, so clearing the selection here just
+        // moves the panel back to empty in step with the row disappearing,
+        // instead of leaving a still-clickable panel for a row that's gone.
+        if (err instanceof ApiError && err.status === 409) select(null);
+        toast(err instanceof Error ? err.message : 'Could not resolve that match');
+      },
     });
   }
 
   function handleDismiss() {
     if (!current) return;
     resolve.mutate({ id: current.id, dismiss: true }, {
-      onSuccess: () => { setSelected(null); toast('Dismissed'); },
-      onError: (err) => toast(err instanceof Error ? err.message : 'Could not dismiss that match'),
+      onSuccess: () => { select(null); toast('Dismissed'); },
+      onError: (err) => {
+        if (err instanceof ApiError && err.status === 409) select(null);
+        toast(err instanceof Error ? err.message : 'Could not dismiss that match');
+      },
     });
   }
 
@@ -211,14 +237,14 @@ export function MatchesPage() {
           key={m.id}
           className={cn(
             'rounded-[var(--radius-sm)]',
-            split && selected === m.id && 'bg-[var(--color-elevated)] ring-1 ring-[var(--color-text)]',
+            split && selectedId === m.id && 'bg-[var(--color-elevated)] ring-1 ring-[var(--color-text)]',
           )}
         >
           <RuledRow
             title={m.itemName}
             meta={m.containerName}
             trailing={<StatusBadge status={m.status} count={m.candidates.length} />}
-            onNavigate={() => setSelected(m.id)}
+            onNavigate={() => select(m.id)}
           />
         </div>
       ))}
@@ -231,7 +257,7 @@ export function MatchesPage() {
       onPick={handlePick}
       onDismiss={handleDismiss}
       resolving={resolve.isPending}
-      onBack={!split ? () => setSelected(null) : undefined}
+      onBack={!split ? () => select(null) : undefined}
     />
   ) : (
     <SplitEmpty hint="the list stays put while you look">Pick an item to see its matches.</SplitEmpty>

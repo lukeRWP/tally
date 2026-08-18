@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { api } from '@/lib/api';
+import { api, ApiError } from '@/lib/api';
 
 export interface MatchCandidate {
   name: string;
@@ -59,6 +59,19 @@ export function useResolveMatch(propertyId?: number) {
       qc.invalidateQueries({ queryKey: matchKeys.list(propertyId ?? 0) });
       // The item now has a product; anything showing items is stale.
       qc.invalidateQueries({ queryKey: ['items'] });
+    },
+    onError: (err) => {
+      // 409 means someone else — another tab, another person in the
+      // household — already resolved or dismissed this match. The row is no
+      // longer queued/searching, so useMatches' own polling has already
+      // stopped and will never rescue it: without this, the stale row (and
+      // its now-wrong candidate panel) would sit in the list until the next
+      // manual refresh. Invalidate so it clears itself. Any other error
+      // (network blip, 500) is left alone — the list stays exactly as the
+      // user was looking at it.
+      if (err instanceof ApiError && err.status === 409) {
+        qc.invalidateQueries({ queryKey: matchKeys.list(propertyId ?? 0) });
+      }
     },
   });
 }
