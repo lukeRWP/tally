@@ -2,8 +2,21 @@ name: 'Setup Node.js'
 description: 'Install Node.js and configure npm with caching'
 inputs:
   node-version:
+    # 22, because the client's own devDependencies refuse to run below it:
+    # jsdom@30 requires ^22.22.2 and undici@8 requires >=22.19.0, and npm has
+    # been printing EBADENGINE for both on every `npm ci` here.
+    #
+    # That warning was harmless for as long as no test actually loaded jsdom —
+    # every client test was a pure logic test. The first test to render a
+    # component pulled jsdom → undici and died with
+    # "webidl.util.markAsUncloneable is not a function", which reads like a
+    # broken test and is really a runtime too old for the dependency tree.
+    #
+    # This also closes a gap against CI/CD rule 7: developers run 22 locally, so
+    # a CI pinned to 20 was a second build pipeline that could disagree with the
+    # first for reasons no one would think to look for.
     description: 'Node.js version'
-    default: '20'
+    default: '22'
 runs:
   using: 'composite'
   steps:
