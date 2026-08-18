@@ -36,8 +36,9 @@ remains mandatory and untouched.
 replaced by a *product pending* chip → bin → next item. Nothing blocks on the
 network. The user never waits for a search.
 
-**Background.** Item creation queues a match. A fire-and-forget runner performs
-one Claude call with web search and stores the candidates.
+**Background.** Immediately after creating the item, the capture flow queues a
+match, passing the vision suggestion it already holds. A fire-and-forget runner
+performs one Claude call with web search and stores the candidates.
 
 **Desk, later.** Alerts shows "N items need a product". `/matches` presents the
 pending items in the existing split view — list left, candidates right. Tap a
@@ -69,8 +70,14 @@ rules 15–17).
 
 ### 5.1 `product_matches`
 
+Migration DDL uses **unqualified** table names and `TABLE_SCHEMA = DATABASE()`,
+matching 002–007. The migrate-all playbook selects the database with `-D TALLY`,
+so a hardcoded schema name is both redundant and a hazard if the target is ever
+named differently. (Service code still writes `TALLY.` prefixes in its queries —
+that is a different convention and stays as it is.)
+
 ```sql
-CREATE TABLE IF NOT EXISTS TALLY.product_matches (
+CREATE TABLE IF NOT EXISTS product_matches (
     ID                   INT           NOT NULL AUTO_INCREMENT,
     ITEM_ID              INT           NOT NULL,
     CREATED_BY           INT           NOT NULL,
@@ -111,15 +118,19 @@ this honestly needs a new value. MySQL 8 has no `ADD VALUE IF NOT EXISTS`, so
 guard with `information_schema` plus a prepared statement, matching 002:
 
 ```sql
-SET @col := (SELECT COLUMN_TYPE FROM information_schema.COLUMNS
-              WHERE TABLE_SCHEMA = 'TALLY'
-                AND TABLE_NAME = 'products'
-                AND COLUMN_NAME = 'DATA_SOURCE');
-SET @sql := IF(@col IS NOT NULL AND LOCATE('vision_match', @col) = 0,
-    "ALTER TABLE TALLY.products MODIFY COLUMN DATA_SOURCE
-       ENUM('upc_db','open_food_facts','scrape','manual','vision_match') NULL",
-    'SELECT 1');
-PREPARE s FROM @sql; EXECUTE s; DEALLOCATE PREPARE s;
+SET @col := (
+  SELECT COLUMN_TYPE FROM information_schema.COLUMNS
+   WHERE TABLE_SCHEMA = DATABASE()
+     AND TABLE_NAME   = 'products'
+     AND COLUMN_NAME  = 'DATA_SOURCE'
+);
+SET @ddl := IF(LOCATE('vision_match', COALESCE(@col, 'vision_match')) = 0,
+  "ALTER TABLE products MODIFY COLUMN DATA_SOURCE ENUM('upc_db','open_food_facts','scrape','manual','vision_match') NULL",
+  'DO 0'
+);
+PREPARE stmt FROM @ddl;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
 ```
 
 **This migration runs before the code that needs it merges.** Merge-first caused
@@ -162,7 +173,8 @@ from.
 
 ## 7. The runner, and why there is no scheduler
 
-Item creation inserts a `queued` row and kicks a fire-and-forget async runner.
+`POST /_y_/matches` inserts a `queued` row and kicks a fire-and-forget async
+runner, then responds immediately — the client never waits for the search.
 The runner sets `searching` + `SEARCH_STARTED_AT`, performs the call, and writes
 `ready` with candidates, or `none`, or `failed`.
 
@@ -262,8 +274,20 @@ Registered in the products module as `matches.routes.js` / `matches.service.js` 
 
 | Route | Guards | Returns |
 |---|---|---|
+| `POST /api/products/_y_/matches` | `requireAuth`, burst, daily | `{id, status}` — queues and returns at once |
 | `GET /api/products/_x_/matches?propertyId=` | `requireAuth` | Pending matches with candidates |
 | `POST /api/products/_y_/matches/:id/resolve` | `requireAuth` | The linked/created product |
+
+**Why the queue is its own route rather than a side effect of item creation.**
+`items` has no `BRAND` column, so the vision brand is discarded at create time
+and the server cannot apply the gate from the item alone. Passing vision fields
+through the inventory create payload would couple inventory to a products
+concern for no gain. The capture flow already holds the suggestion, so it posts
+it here directly, and `items.service.js` is untouched by this feature.
+
+The queue route verifies the caller owns the item through the membership join
+before inserting — the gate is advisory (the client applies it), but ownership
+never is.
 
 Both mirror `identify-photo`'s guard order: `requireAuth` first so `req.user`
 exists, then limiters. Registered in `server/index.js` with the standard
