@@ -181,6 +181,155 @@ const MatchesService = {
     );
     return res.affectedRows;
   },
+
+  /**
+   * The worklist. Sweeps first so a row stranded by a dead runner is recovered
+   * before it is listed, rather than sitting in 'searching' forever.
+   *
+   * 'none' and 'failed' are included deliberately: if a failed lookup vanished
+   * from the list, nobody would ever learn it failed.
+   */
+  async list(propertyId, userId) {
+    await MatchesService.sweepStale();
+    const rows = await _db.query(
+      `SELECT m.ID, m.ITEM_ID, m.STATUS, m.CANDIDATES, m.LAST_ERROR, m.CREATED_AT,
+              i.NAME AS ITEM_NAME, c.NAME AS CONTAINER_NAME
+         FROM TALLY.product_matches m
+         JOIN TALLY.items i ON m.ITEM_ID = i.ID
+         JOIN TALLY.containers c ON i.CONTAINER_ID = c.ID
+         JOIN TALLY.areas a ON c.AREA_ID = a.ID
+         JOIN TALLY.properties p ON a.PROPERTY_ID = p.ID
+         JOIN TALLY.property_members pm ON p.ID = pm.PROPERTY_ID
+        WHERE pm.USER_ID = ? AND p.ID = ?
+          AND i.DELETED_AT IS NULL
+          AND c.DELETED_AT IS NULL
+          AND a.DELETED_AT IS NULL
+          AND p.DELETED_AT IS NULL
+          AND m.STATUS IN ('queued','searching','ready','none','failed')
+        ORDER BY m.CREATED_AT DESC`,
+      [userId, propertyId]
+    );
+    return rows.map((r) => ({
+      id: r.ID,
+      itemId: r.ITEM_ID,
+      itemName: r.ITEM_NAME,
+      containerName: r.CONTAINER_NAME,
+      status: r.STATUS,
+      candidates: typeof r.CANDIDATES === 'string'
+        ? JSON.parse(r.CANDIDATES || '[]') : (r.CANDIDATES || []),
+      lastError: r.LAST_ERROR,
+      createdAt: r.CREATED_AT,
+    }));
+  },
+
+  /**
+   * Attach a chosen candidate, or dismiss the match.
+   *
+   * Convergence: products.BARCODE is UNIQUE, so a known UPC links the existing
+   * catalog row instead of racing the barcode path to create a second one.
+   */
+  async resolve(matchId, userId, { candidateIndex, dismiss }) {
+    // Same four-level join as queue and items.service.js's getRecent: a soft
+    // delete anywhere above the item must hide the match the same way it
+    // hides the item, or a caller could resolve a match they cannot reach.
+    const rows = await _db.query(
+      `SELECT m.ID, m.ITEM_ID, m.STATUS, m.CANDIDATES
+         FROM TALLY.product_matches m
+         JOIN TALLY.items i ON m.ITEM_ID = i.ID
+         JOIN TALLY.containers c ON i.CONTAINER_ID = c.ID
+         JOIN TALLY.areas a ON c.AREA_ID = a.ID
+         JOIN TALLY.properties p ON a.PROPERTY_ID = p.ID
+         JOIN TALLY.property_members pm ON p.ID = pm.PROPERTY_ID
+        WHERE m.ID = ? AND pm.USER_ID = ?
+          AND i.DELETED_AT IS NULL
+          AND c.DELETED_AT IS NULL
+          AND a.DELETED_AT IS NULL
+          AND p.DELETED_AT IS NULL`,
+      [matchId, userId]
+    );
+    if (rows.length === 0) {
+      const err = new Error('Match not found');
+      err.status = 404;
+      throw err;
+    }
+    const match = rows[0];
+
+    if (dismiss) {
+      await _db.query(
+        `UPDATE TALLY.product_matches
+            SET STATUS = 'dismissed', RESOLVED_AT = NOW() WHERE ID = ?`,
+        [matchId]
+      );
+      return { product: null, duplicates: [] };
+    }
+
+    const candidates = typeof match.CANDIDATES === 'string'
+      ? JSON.parse(match.CANDIDATES || '[]') : (match.CANDIDATES || []);
+    const chosen = candidates[candidateIndex];
+    if (!chosen) {
+      const err = new Error('No such candidate');
+      err.status = 400;
+      throw err;
+    }
+
+    // Converge on the catalog before inserting.
+    let productId = null;
+    if (chosen.upc) {
+      const existing = await _db.query(
+        'SELECT ID FROM TALLY.products WHERE BARCODE = ?', [chosen.upc]
+      );
+      if (existing.length > 0) productId = existing[0].ID;
+    }
+
+    if (productId == null) {
+      const res = await _db.query(
+        `INSERT INTO TALLY.products
+           (BARCODE, NAME, BRAND, IMAGE_URL, RETAIL_PRICE, RETAIL_LINKS, DATA_SOURCE)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [chosen.upc, chosen.name, chosen.brand, chosen.imageUrl, chosen.priceUsd,
+         JSON.stringify([{ url: chosen.sourceUrl, domain: chosen.sourceDomain }]),
+         'vision_match']
+      );
+      productId = res.insertId;
+    }
+
+    await _db.query(
+      'UPDATE TALLY.items SET PRODUCT_ID = ? WHERE ID = ?', [productId, match.ITEM_ID]
+    );
+    await _db.query(
+      `UPDATE TALLY.product_matches
+          SET STATUS = 'resolved', SELECTED_PRODUCT_ID = ?, RESOLVED_AT = NOW()
+        WHERE ID = ?`,
+      [productId, matchId]
+    );
+
+    // Duplicate detection lands HERE, not at capture: this is the first moment
+    // a barcode exists to check against. Same four-level join, so a duplicate
+    // hiding behind a soft-deleted container/area/property is not reported.
+    let duplicates = [];
+    if (chosen.upc) {
+      const dupes = await _db.query(
+        `SELECT i.ID, i.NAME, c.NAME AS CONTAINER_NAME
+           FROM TALLY.items i
+           JOIN TALLY.containers c ON i.CONTAINER_ID = c.ID
+           JOIN TALLY.areas a ON c.AREA_ID = a.ID
+           JOIN TALLY.properties p ON a.PROPERTY_ID = p.ID
+           JOIN TALLY.property_members pm ON p.ID = pm.PROPERTY_ID
+          WHERE i.PRODUCT_ID = ? AND pm.USER_ID = ?
+            AND i.ID <> ? AND i.DELETED_AT IS NULL
+            AND c.DELETED_AT IS NULL AND a.DELETED_AT IS NULL AND p.DELETED_AT IS NULL`,
+        [productId, userId, match.ITEM_ID]
+      );
+      duplicates = dupes.map((d) => ({
+        id: d.ID, name: d.NAME, containerName: d.CONTAINER_NAME,
+      }));
+    }
+
+    return {
+      product: { id: productId, name: chosen.name, brand: chosen.brand, barcode: chosen.upc },
+      duplicates,
+    };
+  },
 };
 
 module.exports = MatchesService;

@@ -213,3 +213,112 @@ test('runNow never rejects even when the failure-recording write also throws', a
 
   await assert.doesNotReject(() => Matches.runNow(5));
 });
+
+test('list scopes to the caller via property_members', async () => {
+  let sql = '';
+  let params = null;
+  Matches.init({
+    db: fakeDb((s, p) => {
+      if (/UPDATE/i.test(s)) return { affectedRows: 0 };   // the sweep
+      sql = s; params = p; return [];
+    }),
+    logger, config,
+  });
+  await Matches.list(1, 42);
+  assert.match(sql, /property_members/);
+  assert.match(sql, /pm\.USER_ID = \?/);
+  assert.ok(params.includes(42));
+});
+
+test('list sweeps before reading', async () => {
+  const order = [];
+  Matches.init({
+    db: fakeDb((s) => {
+      order.push(/UPDATE/i.test(s) ? 'sweep' : 'read');
+      return /UPDATE/i.test(s) ? { affectedRows: 0 } : [];
+    }),
+    logger, config,
+  });
+  await Matches.list(1, 42);
+  assert.equal(order[0], 'sweep', 'a stranded row is recovered before it is listed');
+});
+
+test('resolve links the existing catalog row when the UPC is known', async () => {
+  const writes = [];
+  Matches.init({
+    db: fakeDb((sql, params) => {
+      if (/FROM TALLY\.product_matches/.test(sql) && /SELECT/i.test(sql)) {
+        return [{ ID: 5, ITEM_ID: 7, STATUS: 'ready',
+                  CANDIDATES: JSON.stringify([{ name: 'Drill', brand: 'DeWalt',
+                    upc: '885911474764', sourceUrl: 'https://e.com/a',
+                    sourceDomain: 'e.com', model: null, priceUsd: null, imageUrl: null }]) }];
+      }
+      if (/FROM TALLY\.products WHERE BARCODE/.test(sql)) return [{ ID: 99 }];
+      if (/SELECT i\.ID/.test(sql)) return [];              // checkDuplicate
+      writes.push({ sql, params });
+      return { affectedRows: 1, insertId: 0 };
+    }),
+    logger, config,
+  });
+
+  const out = await Matches.resolve(5, 42, { candidateIndex: 0 });
+  assert.equal(out.product.id, 99, 'links the existing product, does not insert');
+  assert.ok(!writes.some((w) => /INSERT INTO TALLY\.products/.test(w.sql)),
+    'no second catalog row for a barcode that already exists');
+  assert.ok(writes.some((w) => /UPDATE TALLY\.items/.test(w.sql) && w.params.includes(99)),
+    'the item is linked to the product');
+});
+
+test('resolve inserts a new product with vision_match provenance', async () => {
+  const writes = [];
+  Matches.init({
+    db: fakeDb((sql, params) => {
+      if (/FROM TALLY\.product_matches/.test(sql) && /SELECT/i.test(sql)) {
+        return [{ ID: 5, ITEM_ID: 7, STATUS: 'ready',
+                  CANDIDATES: JSON.stringify([{ name: 'Drill', brand: 'DeWalt',
+                    upc: null, sourceUrl: 'https://e.com/a', sourceDomain: 'e.com',
+                    model: null, priceUsd: null, imageUrl: null }]) }];
+      }
+      if (/FROM TALLY\.products WHERE BARCODE/.test(sql)) return [];
+      if (/SELECT i\.ID/.test(sql)) return [];
+      writes.push({ sql, params });
+      return { affectedRows: 1, insertId: 123 };
+    }),
+    logger, config,
+  });
+
+  const out = await Matches.resolve(5, 42, { candidateIndex: 0 });
+  assert.equal(out.product.id, 123);
+  const insert = writes.find((w) => /INSERT INTO TALLY\.products/.test(w.sql));
+  assert.ok(insert, 'a new catalog row is created');
+  assert.ok(insert.params.includes('vision_match'), 'provenance is recorded honestly');
+  assert.ok(insert.params.some((p) => typeof p === 'string' && /e\.com/.test(p)),
+    'the source URL is kept in RETAIL_LINKS');
+});
+
+test('resolve refuses a match the caller cannot reach', async () => {
+  Matches.init({ db: fakeDb(() => []), logger, config });
+  await assert.rejects(
+    () => Matches.resolve(5, 999, { candidateIndex: 0 }),
+    /not found/i
+  );
+});
+
+test('dismiss writes no product', async () => {
+  const writes = [];
+  Matches.init({
+    db: fakeDb((sql, params) => {
+      if (/FROM TALLY\.product_matches/.test(sql) && /SELECT/i.test(sql)) {
+        return [{ ID: 5, ITEM_ID: 7, STATUS: 'ready', CANDIDATES: '[]' }];
+      }
+      writes.push({ sql, params });
+      return { affectedRows: 1 };
+    }),
+    logger, config,
+  });
+
+  const out = await Matches.resolve(5, 42, { dismiss: true });
+  assert.equal(out.product, null);
+  assert.ok(!writes.some((w) => /INSERT INTO TALLY\.products/.test(w.sql)));
+  assert.ok(writes.some((w) => /STATUS = 'dismissed'/.test(w.sql)));
+});
