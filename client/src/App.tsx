@@ -17,6 +17,7 @@ import { PutDown } from '@/pages/put-down';
 import { Capture } from '@/pages/capture';
 import { Reports } from '@/pages/reports';
 import { PrintQueuePage } from '@/pages/print-queue';
+import { MatchesPage } from '@/pages/matches';
 import { SearchPage } from '@/pages/search';
 import { SettingsPage } from '@/pages/settings';
 import { NotificationListPage } from '@/pages/notifications';
@@ -46,6 +47,7 @@ export function App() {
         <Route path="/capture" element={<Capture />} />
         <Route path="/reports" element={<Reports />} />
         <Route path="/print" element={<PrintQueuePage />} />
+        <Route path="/matches" element={<MatchesPage />} />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="/notifications" element={<NotificationListPage />} />
         <Route path="/recycle-bin" element={<RecycleBin />} />
