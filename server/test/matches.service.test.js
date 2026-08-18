@@ -2,10 +2,17 @@ const test = require('node:test');
 const assert = require('node:assert');
 const Matches = require('../src/modules/products/matches.service');
 
-// Same fakeDb shape as labels.test.js / lending.test.js: a scriptable query()
-// that both captures SQL and returns whatever the case needs.
+// Same fakeDb shape as lending.test.js: a scriptable query() that both
+// captures SQL and returns whatever the case needs, plus a withTransaction
+// that runs its callback against the SAME handler — resolve()'s writes now go
+// through tx.query() instead of db.query() directly, and this keeps every
+// existing SQL-matching branch working without caring which one it came from.
 function fakeDb(handler) {
-  return { query: async (sql, params) => handler(sql, params) };
+  const db = {
+    query: async (sql, params) => handler(sql, params),
+    withTransaction: async (fn) => fn({ query: db.query }),
+  };
+  return db;
 }
 const logger = { warn() {}, info() {}, error() {} };
 const config = {
@@ -15,6 +22,28 @@ const config = {
     dailyPerUser: 100, maxCandidates: 3, staleMinutes: 5, maxAttempts: 3,
   },
 };
+
+// ── IMPORTANT 4: the daily cap counts spend, not rows ────────────────────────
+
+test('countToday sums SEARCH_COUNT, not COUNT(*) of rows', async () => {
+  // A re-queue upserts the same row (UNIQUE on ITEM_ID) and fires another
+  // paid search without inserting a new one — counting rows undercounts the
+  // actual spend. This asserts the SQL shape directly rather than just the
+  // returned number, so a regression back to COUNT(*) would fail even if it
+  // happened to return the same value in a test with one row.
+  let sql = '';
+  let params = null;
+  Matches.init({
+    db: fakeDb((s, p) => { sql = s; params = p; return [{ N: 7 }]; }),
+    logger, config,
+  });
+  const n = await Matches.countToday(42);
+  assert.equal(n, 7);
+  assert.match(sql, /SUM\(SEARCH_COUNT\)/, 'sums the paid-search counter, not COUNT(*)');
+  assert.match(sql, /UPDATED_AT > DATE_SUB/, 'a re-queue that fires a new search touches UPDATED_AT');
+  assert.match(sql, /CREATED_BY = \?/);
+  assert.ok(params.includes(42));
+});
 
 test('queue verifies item ownership through property_members', async () => {
   const seen = [];
@@ -127,17 +156,22 @@ test('queue re-queuing a failed row resets to queued, zeroes attempts, clears LA
     'the refreshed brand/name reaches the stored query');
 });
 
-test('sweepStale requeues under the cap and fails at it', async () => {
+test('sweepStale requeues under the cap and fails at it, scoped to one property', async () => {
   let sql = '';
+  let params = null;
   Matches.init({
-    db: fakeDb((s) => { sql = s; return { affectedRows: 2 }; }),
+    db: fakeDb((s, p) => { sql = s; params = p; return { affectedRows: 2 }; }),
     logger, config,
   });
-  const n = await Matches.sweepStale();
+  const n = await Matches.sweepStale(9);
   assert.equal(n, 2);
   assert.match(sql, /STATUS = 'searching'/, 'only sweeps rows left mid-search');
   assert.match(sql, /ATTEMPTS \+ 1 >= \?/, 'the attempts cap is applied in the sweep');
   assert.match(sql, /SEARCH_STARTED_AT < DATE_SUB/, 'only rows past the timeout');
+  // MINOR 6: an unscoped UPDATE across every user's rows on every worklist GET
+  // has no reason to exist — this must join down to the property being listed.
+  assert.match(sql, /PROPERTY_ID = \?/, 'scoped to one property, not every row');
+  assert.ok(params.includes(9), 'the property id is actually bound');
 });
 
 test('runNow writes ready with candidates on success', async () => {
@@ -190,10 +224,52 @@ test('runNow never throws when the search does, and records the error', async ()
   });
 
   await Matches.runNow(5);   // must not reject: it is fire-and-forget
+
+  // CRITICAL 1: ATTEMPTS now moves on the 'searching' transition (every
+  // attempt), not only in the failure branch — otherwise the cap is never
+  // reached and 'failed' is unreachable. That means it is the FIRST write
+  // here, not necessarily the last.
+  const searching = writes.find((w) => /STATUS = 'searching'/.test(w.sql));
+  assert.ok(searching, 'the run must move to searching before calling the searcher');
+  assert.match(searching.sql, /ATTEMPTS = ATTEMPTS \+ 1/, 'the attempt is counted up front');
+  assert.match(searching.sql, /SEARCH_COUNT = SEARCH_COUNT \+ 1/,
+    'IMPORTANT 4: the paid attempt is counted for the daily cost cap too');
+
+  // The failure write must NOT increment ATTEMPTS a second time — it was
+  // already spent above — so it compares the column as-is, not ATTEMPTS + 1.
   const final = writes[writes.length - 1];
-  assert.match(final.sql, /ATTEMPTS = ATTEMPTS \+ 1/);
+  assert.match(final.sql, /STATUS = CASE WHEN ATTEMPTS >= \? THEN 'failed' ELSE 'queued' END/);
+  assert.ok(!/ATTEMPTS = ATTEMPTS \+ 1/.test(final.sql),
+    'ATTEMPTS must not be bumped twice for one failed attempt');
   assert.ok(final.params.some((p) => typeof p === 'string' && /exploded/.test(p)),
     'the error text is recorded for the worklist to show');
+});
+
+test('runNow counts a failure that happens before the searching transition as one attempt', async () => {
+  // The initial read (or the cap check) can itself fail — e.g. a DB blip —
+  // before ATTEMPTS is ever bumped. That failure still has to count, exactly
+  // as the pre-fix code always did, or a row that keeps failing at that early
+  // point never reaches the attempts cap.
+  const writes = [];
+  let selects = 0;
+  Matches.init({
+    db: fakeDb((sql, params) => {
+      if (/SELECT/i.test(sql)) {
+        selects++;
+        if (selects === 1) return [{ ID: 5, SEARCH_QUERY: '{"name":"X"}', CREATED_BY: 1 }];
+        throw new Error('db blipped');   // the countToday SELECT this time
+      }
+      writes.push({ sql, params });
+      return { affectedRows: 1 };
+    }),
+    logger, config,
+  });
+
+  await Matches.runNow(5);
+  assert.equal(writes.length, 1, 'only the failure-recording write happens — searching is never reached');
+  assert.match(writes[0].sql, /ATTEMPTS = ATTEMPTS \+ 1/,
+    'a failure before the searching transition still spends an attempt');
+  assert.match(writes[0].sql, /CASE WHEN ATTEMPTS \+ 1 >= \?/);
 });
 
 test('runNow never rejects even when the failure-recording write also throws', async () => {
@@ -212,6 +288,97 @@ test('runNow never rejects even when the failure-recording write also throws', a
   });
 
   await assert.doesNotReject(() => Matches.runNow(5));
+});
+
+// ── IMPORTANT 4: the daily cap is enforced in runNow too, not only queue() ───
+
+test('runNow refuses to search once the daily cap is reached, and ends failed', async () => {
+  const writes = [];
+  let searcherCalled = false;
+  Matches.init({
+    db: fakeDb((sql, params) => {
+      if (/SELECT ID, SEARCH_QUERY/i.test(sql)) {
+        return [{ ID: 5, SEARCH_QUERY: '{"name":"X"}', CREATED_BY: 42 }];
+      }
+      if (/SUM\(SEARCH_COUNT\)/.test(sql)) return [{ N: 100 }];   // already at the cap
+      writes.push({ sql, params });
+      return { affectedRows: 1 };
+    }),
+    logger, config,
+    searcher: async () => { searcherCalled = true; return { candidates: [] }; },
+  });
+
+  await Matches.runNow(5);
+
+  assert.equal(searcherCalled, false, 'a capped run must not spend a paid search');
+  assert.equal(writes.length, 1, 'only the refusal write happens — no searching transition');
+  assert.match(writes[0].sql, /STATUS = 'failed'/,
+    'terminal rather than left queued, or list()\'s batch retry would hit the cap forever');
+  assert.ok(writes[0].params.some((p) => /daily/i.test(String(p))),
+    'LAST_ERROR names the cap so the worklist shows why, per IMPORTANT 4');
+});
+
+test('runNow under the cap proceeds to search normally', async () => {
+  const writes = [];
+  Matches.init({
+    db: fakeDb((sql, params) => {
+      if (/SELECT ID, SEARCH_QUERY/i.test(sql)) {
+        return [{ ID: 5, SEARCH_QUERY: '{"name":"X"}', CREATED_BY: 42 }];
+      }
+      if (/SUM\(SEARCH_COUNT\)/.test(sql)) return [{ N: 99 }];   // one under the cap
+      writes.push({ sql, params });
+      return { affectedRows: 1 };
+    }),
+    logger, config,
+    searcher: async () => ({ candidates: [] }),
+  });
+
+  await Matches.runNow(5);
+  assert.ok(writes.some((w) => /STATUS = 'searching'/.test(w.sql)), 'a run under the cap still searches');
+  assert.ok(writes.some((w) => /STATUS = 'none'/.test(w.sql)), 'and completes normally');
+});
+
+// ── CRITICAL 1: a queued row must eventually reach failed ────────────────────
+
+test('a row that fails MATCH_MAX_ATTEMPTS times ends failed with LAST_ERROR set', async () => {
+  // A small stateful fake standing in for one row across three separate
+  // runNow() calls — this is the scenario the whole fix exists for: nothing
+  // else in the real system ever calls runNow on a 'queued' row except
+  // list()'s own retry (tested separately below), so this proves the
+  // increment-on-every-attempt logic actually gets a row to 'failed' rather
+  // than looping at 'queued' forever.
+  const row = { ATTEMPTS: 0, STATUS: 'queued', LAST_ERROR: null };
+  Matches.init({
+    db: fakeDb((sql, params) => {
+      if (/SELECT ID, SEARCH_QUERY/i.test(sql)) {
+        return [{ ID: 5, SEARCH_QUERY: '{"name":"X"}', CREATED_BY: 42 }];
+      }
+      if (/SUM\(SEARCH_COUNT\)/.test(sql)) return [{ N: 0 }];   // never capped here
+      if (/STATUS = 'searching'/.test(sql)) {
+        row.ATTEMPTS += 1;
+        row.STATUS = 'searching';
+        return { affectedRows: 1 };
+      }
+      // the failure-recording write, evaluated against the CURRENT (already
+      // incremented) ATTEMPTS — exactly what the real CASE expression reads.
+      row.STATUS = row.ATTEMPTS >= config.match.maxAttempts ? 'failed' : 'queued';
+      row.LAST_ERROR = params[1];
+      return { affectedRows: 1 };
+    }),
+    logger, config,
+    searcher: async () => { throw new Error('upstream exploded'); },
+  });
+
+  await Matches.runNow(5);
+  assert.deepEqual([row.STATUS, row.ATTEMPTS], ['queued', 1]);
+
+  await Matches.runNow(5);
+  assert.deepEqual([row.STATUS, row.ATTEMPTS], ['queued', 2]);
+
+  await Matches.runNow(5);
+  assert.equal(row.STATUS, 'failed', 'the third failure reaches MATCH_MAX_ATTEMPTS (3)');
+  assert.equal(row.ATTEMPTS, 3);
+  assert.match(row.LAST_ERROR, /exploded/, 'LAST_ERROR records what actually failed');
 });
 
 test('list scopes to the caller via property_members', async () => {
@@ -241,6 +408,109 @@ test('list sweeps before reading', async () => {
   });
   await Matches.list(1, 42);
   assert.equal(order[0], 'sweep', 'a stranded row is recovered before it is listed');
+});
+
+// ── CRITICAL 1: list() is the recovery trigger for a 'queued' row ────────────
+//
+// runNow's only other caller is the queue route, on a fresh row, and the
+// sweep only reaches 'searching' — so without this, a row a failed run set
+// back to 'queued' is never picked up again. These monkeypatch
+// MatchesService.runNow itself (the same self-reference list() calls through,
+// like sweepStale already does) so the assertion is "was it fired", not a
+// second copy of runNow's own behaviour.
+
+test('list() fires runNow for a queued row under the attempts cap', async () => {
+  Matches.init({
+    db: fakeDb((s) => {
+      if (/UPDATE/i.test(s)) return { affectedRows: 0 };   // the sweep
+      return [{ ID: 11, ITEM_ID: 1, STATUS: 'queued', CANDIDATES: null, LAST_ERROR: null,
+                ATTEMPTS: 1, CREATED_AT: new Date(), ITEM_NAME: 'Drill', CONTAINER_NAME: 'Shelf' }];
+    }),
+    logger, config,
+  });
+
+  const ran = [];
+  const original = Matches.runNow;
+  Matches.runNow = async (id) => { ran.push(id); };
+  try {
+    await Matches.list(1, 42);
+  } finally {
+    Matches.runNow = original;
+  }
+  assert.deepEqual(ran, [11], 'a queued row under the cap (ATTEMPTS 1 < maxAttempts 3) is re-run');
+});
+
+test('list() does not fire runNow for a queued row already at the attempts cap', async () => {
+  Matches.init({
+    db: fakeDb((s) => {
+      if (/UPDATE/i.test(s)) return { affectedRows: 0 };
+      return [{ ID: 12, ITEM_ID: 1, STATUS: 'queued', CANDIDATES: null, LAST_ERROR: 'boom',
+                ATTEMPTS: 3, CREATED_AT: new Date(), ITEM_NAME: 'Drill', CONTAINER_NAME: 'Shelf' }];
+    }),
+    logger, config,
+  });
+
+  const ran = [];
+  const original = Matches.runNow;
+  Matches.runNow = async (id) => { ran.push(id); };
+  try {
+    await Matches.list(1, 42);
+  } finally {
+    Matches.runNow = original;
+  }
+  assert.deepEqual(ran, [], 'a row already at the cap is left for the sweep to fail, not retried here');
+});
+
+test('list() only retries queued rows, never searching/ready/none/failed', async () => {
+  Matches.init({
+    db: fakeDb((s) => {
+      if (/UPDATE/i.test(s)) return { affectedRows: 0 };
+      const base = { ITEM_ID: 1, CANDIDATES: null, LAST_ERROR: null, ATTEMPTS: 0,
+                     CREATED_AT: new Date(), ITEM_NAME: 'X', CONTAINER_NAME: 'S' };
+      return [
+        { ...base, ID: 1, STATUS: 'searching' },
+        { ...base, ID: 2, STATUS: 'ready', CANDIDATES: '[]' },
+        { ...base, ID: 3, STATUS: 'none' },
+        { ...base, ID: 4, STATUS: 'failed', ATTEMPTS: 3, LAST_ERROR: 'x' },
+      ];
+    }),
+    logger, config,
+  });
+
+  const ran = [];
+  const original = Matches.runNow;
+  Matches.runNow = async (id) => { ran.push(id); };
+  try {
+    await Matches.list(1, 42);
+  } finally {
+    Matches.runNow = original;
+  }
+  assert.deepEqual(ran, [], 'only queued rows are ever retried from list()');
+});
+
+test('list() retries at most 5 queued rows per call', async () => {
+  const eleven = Array.from({ length: 11 }, (_, i) => ({
+    ID: i + 1, ITEM_ID: i + 1, STATUS: 'queued', CANDIDATES: null, LAST_ERROR: null,
+    ATTEMPTS: 0, CREATED_AT: new Date(), ITEM_NAME: `Item ${i}`, CONTAINER_NAME: 'Shelf',
+  }));
+  Matches.init({
+    db: fakeDb((s) => {
+      if (/UPDATE/i.test(s)) return { affectedRows: 0 };
+      return eleven;
+    }),
+    logger, config,
+  });
+
+  const ran = [];
+  const original = Matches.runNow;
+  Matches.runNow = async (id) => { ran.push(id); };
+  try {
+    await Matches.list(1, 42);
+  } finally {
+    Matches.runNow = original;
+  }
+  assert.equal(ran.length, 5,
+    'a big backlog must not fire dozens of concurrent runner calls from one GET');
 });
 
 // Distinguishes the two products.BARCODE lookups resolve itself issues
@@ -471,3 +741,105 @@ test('resolve checks for duplicates before linking this item, so it cannot appea
   assert.deepEqual(order, ['checkDuplicate', 'linkItem'],
     'checkDuplicate has no ID-exclusion param, so it must run before this item claims the product');
 });
+
+// ── IMPORTANT 5: resolve's write sequence is one transaction ────────────────
+
+test('resolve wraps the catalog write, item link and match resolution in one transaction', async () => {
+  let transactionCalls = 0;
+  const dbHandler = (sql) => {
+    if (/FROM TALLY\.product_matches/.test(sql) && /SELECT/i.test(sql)) {
+      return [{ ID: 5, ITEM_ID: 7, STATUS: 'ready',
+                CANDIDATES: JSON.stringify([{ name: 'Drill', brand: 'DeWalt',
+                  upc: null, sourceUrl: 'https://e.com/a', sourceDomain: 'e.com',
+                  model: null, priceUsd: null, imageUrl: null }]) }];
+    }
+    if (CHECK_DUPLICATE.test(sql)) return [];
+    return { affectedRows: 1, insertId: 55 };
+  };
+  const db = {
+    query: async (sql, params) => dbHandler(sql, params),
+    withTransaction: async (fn) => {
+      transactionCalls += 1;
+      return fn({ query: db.query });
+    },
+  };
+  Matches.init({ db, logger, config });
+
+  const out = await Matches.resolve(5, 42, { candidateIndex: 0 });
+  assert.equal(transactionCalls, 1,
+    'the catalog write, the item link and the match resolution share one transaction');
+  assert.equal(out.product.id, 55);
+});
+
+test('resolve does not touch the catalog, the item or the match outside the transaction', async () => {
+  // A regression guard for the shape of the fix, not just its outcome: if a
+  // future edit moved one of the three writes back onto db.query() directly,
+  // this fails even though a happy-path result would still look correct.
+  let outsideWrites = 0;
+  let insideWrites = 0;
+  const dbHandler = (sql) => {
+    if (/FROM TALLY\.product_matches/.test(sql) && /SELECT/i.test(sql)) {
+      return [{ ID: 5, ITEM_ID: 7, STATUS: 'ready',
+                CANDIDATES: JSON.stringify([{ name: 'Drill', brand: 'DeWalt',
+                  upc: null, sourceUrl: 'https://e.com/a', sourceDomain: 'e.com',
+                  model: null, priceUsd: null, imageUrl: null }]) }];
+    }
+    if (CHECK_DUPLICATE.test(sql)) return [];
+    return { affectedRows: 1, insertId: 55 };
+  };
+  const db = {
+    query: async (sql, params) => {
+      if (/INSERT INTO TALLY\.products/.test(sql) || /UPDATE TALLY\.items/.test(sql)
+          || (/UPDATE TALLY\.product_matches/.test(sql) && /'resolved'/.test(sql))) {
+        outsideWrites += 1;
+      }
+      return dbHandler(sql, params);
+    },
+    withTransaction: async (fn) => fn({
+      query: async (sql, params) => {
+        if (/INSERT INTO TALLY\.products/.test(sql) || /UPDATE TALLY\.items/.test(sql)
+            || (/UPDATE TALLY\.product_matches/.test(sql) && /'resolved'/.test(sql))) {
+          insideWrites += 1;
+        }
+        return dbHandler(sql, params);
+      },
+    }),
+  };
+  Matches.init({ db, logger, config });
+
+  await Matches.resolve(5, 42, { candidateIndex: 0 });
+  assert.equal(outsideWrites, 0, 'the catalog insert, item link and match resolve must not use db.query directly');
+  assert.equal(insideWrites, 3, 'all three writes (insert, item link, match resolve) go through the transaction');
+});
+
+test('resolve propagates a failure inside the transaction instead of reporting success on a half-written row', async () => {
+  // Simulates a failure between the items UPDATE and the product_matches
+  // UPDATE — the exact gap the finding names. A real DB rolls the whole
+  // transaction back; what this test proves is the failure actually reaches
+  // resolve()'s caller (the route returns 500, the client is told it failed)
+  // instead of being swallowed with a response that claims success while the
+  // item is linked and the match still reads 'ready'.
+  Matches.init({
+    db: fakeDb((sql) => {
+      if (/FROM TALLY\.product_matches/.test(sql) && /SELECT/i.test(sql)) {
+        return [{ ID: 5, ITEM_ID: 7, STATUS: 'ready',
+                  CANDIDATES: JSON.stringify([{ name: 'Drill', brand: 'DeWalt',
+                    upc: null, sourceUrl: 'https://e.com/a', sourceDomain: 'e.com',
+                    model: null, priceUsd: null, imageUrl: null }]) }];
+      }
+      if (CHECK_DUPLICATE.test(sql)) return [];
+      if (/INSERT INTO TALLY\.products/.test(sql)) return { insertId: 55 };
+      if (/UPDATE TALLY\.product_matches/.test(sql) && /'resolved'/.test(sql)) {
+        throw new Error('connection dropped mid-transaction');
+      }
+      return { affectedRows: 1 };
+    }),
+    logger, config,
+  });
+
+  await assert.rejects(
+    () => Matches.resolve(5, 42, { candidateIndex: 0 }),
+    /connection dropped/,
+  );
+});
+

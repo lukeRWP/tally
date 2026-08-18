@@ -20,6 +20,12 @@ CREATE TABLE IF NOT EXISTS product_matches (
     CANDIDATES           JSON          NULL,
     SELECTED_PRODUCT_ID  INT           NULL,
     ATTEMPTS             INT           NOT NULL DEFAULT 0,
+    -- Paid searches actually fired for this row, distinct from ATTEMPTS: a
+    -- cap-refused run in runNow() does not search, so it must not count here.
+    -- The daily cost cap sums THIS column, not COUNT(*) of rows — a re-queue
+    -- upserts the same row (no new row) but still fires another paid search,
+    -- and rows-created was blind to that spend.
+    SEARCH_COUNT         INT           NOT NULL DEFAULT 0,
     LAST_ERROR           VARCHAR(500)  NULL,
     SEARCH_STARTED_AT    DATETIME      NULL,
     CREATED_AT           DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
