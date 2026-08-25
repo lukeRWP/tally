@@ -2,6 +2,7 @@ const { generateCode } = require('../../utils/qr');
 const ClosureTableService = require('./closure-table.service');
 const AuditService = require('../audit/audit.service');
 const RecycleService = require('../recycle/recycle.service');
+const Reconcile = require('./move-reconcile.service');
 
 let _db = null;
 let _logger = null;
@@ -225,13 +226,29 @@ const ContainersService = {
     return ContainersService.getById(id);
   },
 
-  async move(id, newParentContainerId, newAreaId, userId) {
+  async move(id, newParentContainerId, newAreaId, userId, opts = {}) {
     // A container can never be moved into itself — cheap to reject up front.
     if (newParentContainerId && Number(newParentContainerId) === Number(id)) {
       const err = new Error('A container cannot be moved into itself');
       err.statusCode = 400;
       throw err;
     }
+
+    // Cross-property: the move and its reconciliation commit or roll back
+    // together — a moved subtree with stranded tag/accessory rows would be
+    // worse than a refused move. `consequences` is a plain closure variable
+    // (matching items.service.js's move()) rather than a property stapled
+    // onto the caller's opts object — mutating the caller's own argument is a
+    // trap for whoever calls this next.
+    let consequences = null;
+    const moveArgs = opts.crossProperty && {
+      srcPropertyId: opts.crossProperty.srcPropertyId,
+      destPropertyId: opts.crossProperty.destPropertyId,
+      userId,
+      rootType: 'container',
+      rootId: Number(id),
+      moveChanges: { parentContainerId: newParentContainerId, areaId: newAreaId },
+    };
 
     // Everything that decides the move must happen INSIDE the transaction under
     // row locks. The cycle check was previously a check-then-act OUTSIDE the tx:
@@ -328,12 +345,32 @@ const ContainersService = {
           [effectiveAreaId, id]
         );
       }
+
+      // Cross-property: reconciliation rides the SAME transaction as the move
+      // itself — runs after the cascade so movingSet's closure-table walk
+      // (and the item lookup it does per container) sees the subtree's final
+      // AREA_ID, though only CONTAINER_ID membership in the closure table
+      // actually matters for the set it collects.
+      if (moveArgs) {
+        const set = await Reconcile.movingSet(tx, 'container', id);
+        consequences = await Reconcile.reconcile(tx, set, moveArgs);
+      }
     });
+
+    if (moveArgs) {
+      // Audited AFTER the transaction resolves — logChange writes through a
+      // plain pool connection, not tx, so writing it any earlier would let
+      // audit rows outlive a rollback (see move-reconcile.service.js). The
+      // plain single-property 'moved' audit below would also be a THIRD,
+      // misleading event (it names neither property) if it fired here too.
+      Reconcile.auditMove(moveArgs);
+      return { container: await ContainersService.getById(id), consequences };
+    }
 
     const propertyId = await ContainersService.getPropertyIdForContainer(id);
     AuditService.logChange(userId, 'container', id, 'moved', { parentContainerId: newParentContainerId, areaId: newAreaId }, propertyId);
 
-    return ContainersService.getById(id);
+    return { container: await ContainersService.getById(id), consequences: null };
   },
 
   async softDelete(id, userId) {

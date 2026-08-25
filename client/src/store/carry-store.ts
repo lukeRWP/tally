@@ -38,6 +38,13 @@ export interface CompletedMove {
   items: CarriedItem[];
   toContainerId: number;
   toContainerName: string;
+  /**
+   * Set when the move crossed properties and had to sever cross-property
+   * accessory links to go through. Undo puts the load back in its old
+   * container, but it cannot re-link what was severed — the undo toast has
+   * to say so rather than imply a full undo.
+   */
+  unlinkedCount?: number;
 }
 
 interface CarryState {
@@ -50,6 +57,14 @@ interface CarryState {
   drop: (id: number) => void;
   clear: () => void;
   recordMove: (move: CompletedMove) => void;
+  /**
+   * The partial-batch-move counterpart to recordMove: drops exactly the
+   * entities that actually moved and arms undo for just those, leaving
+   * everything else (skipped past a declined confirm, or never reached
+   * because the batch stopped on a real error) sitting in `carried` — a
+   * batch move is not all-or-nothing, so ending the carry can't be either.
+   */
+  completeMove: (movedIds: number[], move: CompletedMove) => void;
   clearLastMove: () => void;
 }
 
@@ -68,8 +83,14 @@ export const useCarryStore = create<CarryState>((set, get) => ({
 
   clear: () => set({ carried: [] }),
 
-  // Recording a move both ends the carry and arms the undo.
+  // Recording a move both ends the carry and arms the undo. Only correct when
+  // the WHOLE load moved — see completeMove for a partial batch.
   recordMove: (move) => set({ carried: [], lastMove: move }),
+
+  completeMove: (movedIds, move) => set((s) => ({
+    carried: s.carried.filter((c) => !movedIds.includes(c.id)),
+    lastMove: move,
+  })),
 
   clearLastMove: () => set({ lastMove: null }),
 }));

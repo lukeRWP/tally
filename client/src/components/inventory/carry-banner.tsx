@@ -61,11 +61,13 @@ export function CarryBanner() {
       );
       const skipped = lastMove.items.length - reversible.length;
       toast(
-        skipped > 0
-          ? `Put ${reversible.length} back — ${skipped} had no previous home`
-          : reversible.length === 1
-            ? `${reversible[0].name} put back`
-            : `${describeLoad(reversible)} put back`,
+        lastMove.unlinkedCount && lastMove.unlinkedCount > 0
+          ? 'Moved back · unlinked accessories were not restored'
+          : skipped > 0
+            ? `Put ${reversible.length} back — ${skipped} had no previous home`
+            : reversible.length === 1
+              ? `${reversible[0].name} put back`
+              : `${describeLoad(reversible)} put back`,
       );
       clearLastMove();
     } catch (err) {
