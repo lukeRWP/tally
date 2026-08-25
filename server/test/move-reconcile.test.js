@@ -85,16 +85,41 @@ test('accessory links survive intra-set and break half-out, reported by name', a
   assert.deepEqual(del.params.sort(), [901, 902], 'deletes exactly the half-out links by ID');
 });
 
-test('audit is written to BOTH properties, once per root', async () => {
+// ── reconcile() is data-only — no audit rides the transaction ──────────────
+// Fix round 1 finding: logChange writes through AuditService's module-global
+// _db.query, a plain pool connection, NOT the caller's tx. Writing it inside
+// reconcile() let an audit row commit durably mid-transaction, so a rollback
+// left audit rows describing a move that never happened. reconcile() now
+// only touches tags/accessories; auditing moved to the auditMove() export
+// below, for callers to invoke themselves once their transaction resolves.
+
+test('reconcile touches only tags/accessories — it never calls logChange itself', async () => {
+  const AuditService = require('../src/modules/audit/audit.service');
+  const orig = AuditService.logChange;
+  let called = false;
+  AuditService.logChange = async () => { called = true; };
+  try {
+    const tx = fakeTx([[/entity_tags/, []], [/item_accessories/, []]]);
+    const out = await Reconcile.reconcile(tx, { containerIds: [], itemIds: [7] },
+      { srcPropertyId: 1, destPropertyId: 2, userId: 42, rootType: 'item', rootId: 7,
+        moveChanges: { containerId: 30 } });
+    assert.equal(called, false, 'reconcile() must not audit — that would write outside the caller\'s tx');
+    assert.ok(out, 'the consequence payload is still returned');
+  } finally { AuditService.logChange = orig; }
+});
+
+// ── auditMove — the two audit rows a cross-property move writes ────────────
+
+test('auditMove writes to BOTH properties, once per root', async () => {
   const audits = [];
   const AuditService = require('../src/modules/audit/audit.service');
   const orig = AuditService.logChange;
   AuditService.logChange = async (...args) => { audits.push(args); };
   try {
-    const tx = fakeTx([[/entity_tags/, []], [/item_accessories/, []]]);
-    await Reconcile.reconcile(tx, { containerIds: [], itemIds: [7] },
-      { srcPropertyId: 1, destPropertyId: 2, userId: 42, rootType: 'item', rootId: 7,
-        moveChanges: { containerId: 30 } });
+    await Reconcile.auditMove({
+      srcPropertyId: 1, destPropertyId: 2, userId: 42, rootType: 'item', rootId: 7,
+      moveChanges: { containerId: 30 },
+    });
     assert.equal(audits.length, 2);
     const [out_, in_] = audits;
     assert.equal(out_[3], 'moved-out'); assert.equal(out_[5], 1);

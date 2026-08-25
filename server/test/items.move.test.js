@@ -131,16 +131,14 @@ test('cross-property move logs exactly moved-out and moved-in — never a plain 
   const origMovingSet = Reconcile.movingSet;
   const origReconcile = Reconcile.reconcile;
   Reconcile.movingSet = async (tx, entityType, entityId) => ({ containerIds: [], itemIds: [Number(entityId)] });
-  // Mirrors move-reconcile.service.js's own dual-audit contract (verified in
-  // move-reconcile.test.js) so this test proves items.service.js's move()
-  // itself never ALSO fires the same-property 'moved' event on this path.
-  Reconcile.reconcile = async (tx, set, { srcPropertyId, destPropertyId, userId, rootType, rootId, moveChanges }) => {
-    await AuditService.logChange(userId, rootType, rootId, 'moved-out', { ...moveChanges, toPropertyId: destPropertyId }, srcPropertyId);
-    await AuditService.logChange(userId, rootType, rootId, 'moved-in', { ...moveChanges, fromPropertyId: srcPropertyId }, destPropertyId);
-    return { unlinked: [], tagsCarried: 0, tagsCreated: 0 };
-  };
+  // reconcile() is data-only (tags/accessories) — it never audits (pinned in
+  // move-reconcile.test.js). Left unmocked here would still be fine since it
+  // no longer touches AuditService at all; canned to skip its own DB queries.
+  Reconcile.reconcile = async () => ({ unlinked: [], tagsCarried: 0, tagsCreated: 0 });
 
   try {
+    // Reconcile.auditMove itself is REAL here — this exercises the actual
+    // call items.service.js makes, not a stand-in for it.
     await Items.move(5, 30, 42, { crossProperty: { srcPropertyId: 1, destPropertyId: 2 } });
     assert.equal(audits.length, 2, 'exactly two audit entries');
     assert.equal(audits[0][3], 'moved-out');
@@ -150,6 +148,44 @@ test('cross-property move logs exactly moved-out and moved-in — never a plain 
     AuditService.logChange = origLog;
     Reconcile.movingSet = origMovingSet;
     Reconcile.reconcile = origReconcile;
+  }
+});
+
+// ── Fix round 1: audit must happen AFTER the transaction resolves ──────────
+// logChange writes through AuditService's module-global _db.query — a plain
+// pool connection, not the transaction's tx handle — so calling it from
+// INSIDE the transaction would let an audit row commit durably even if the
+// transaction later rolled back. auditMove must only be invoked once
+// _db.withTransaction has already resolved.
+
+test('cross-property move calls Reconcile.auditMove only AFTER the transaction has resolved', async () => {
+  const order = [];
+  const db = txDb([
+    [GET_BY_ID, [{ ID: 5, NAME: 'Widget', CONTAINER_ID: 30 }]],
+  ]);
+  const origWithTransaction = db.withTransaction;
+  db.withTransaction = async (fn) => {
+    const result = await origWithTransaction(fn);
+    order.push('tx-resolved');
+    return result;
+  };
+  Items.init({ db, logger: noop });
+
+  const origMovingSet = Reconcile.movingSet;
+  const origReconcile = Reconcile.reconcile;
+  const origAuditMove = Reconcile.auditMove;
+  Reconcile.movingSet = async (tx, entityType, entityId) => ({ containerIds: [], itemIds: [Number(entityId)] });
+  Reconcile.reconcile = async () => ({ unlinked: [], tagsCarried: 0, tagsCreated: 0 });
+  Reconcile.auditMove = async () => { order.push('auditMove-called'); };
+
+  try {
+    await Items.move(5, 30, 42, { crossProperty: { srcPropertyId: 1, destPropertyId: 2 } });
+    assert.deepEqual(order, ['tx-resolved', 'auditMove-called'],
+      'auditMove is called strictly after withTransaction resolves, never from inside it');
+  } finally {
+    Reconcile.movingSet = origMovingSet;
+    Reconcile.reconcile = origReconcile;
+    Reconcile.auditMove = origAuditMove;
   }
 });
 

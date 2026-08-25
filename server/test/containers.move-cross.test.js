@@ -150,6 +150,48 @@ test('cross-property move runs reconciliation INSIDE the existing transaction, o
   }
 });
 
+// ── Fix round 1: audit must happen AFTER the transaction resolves ──────────
+// logChange writes through AuditService's module-global _db.query — a plain
+// pool connection, not the transaction's tx handle — so calling it from
+// INSIDE the transaction would let an audit row commit durably even if the
+// transaction later rolled back. auditMove must only be invoked once
+// _db.withTransaction has already resolved (mirrors items.move.test.js's
+// equivalent test for the item path).
+
+test('cross-property move calls Reconcile.auditMove only AFTER the transaction has resolved', async () => {
+  const order = [];
+  const db = txDb([
+    [LOCK, (sql, params) => params.map((id) => ({ ID: id }))],
+    [CYCLE, []],
+    [PARENT_AREA, [{ AREA_ID: 7 }]],
+    [GET_BY_ID, [{ ID: 5, NAME: 'Bin', AREA_ID: 7 }]],
+  ]);
+  const origWithTransaction = db.withTransaction;
+  db.withTransaction = async (fn) => {
+    const result = await origWithTransaction(fn);
+    order.push('tx-resolved');
+    return result;
+  };
+  Containers.init({ db, logger: noop });
+
+  const origMovingSet = Reconcile.movingSet;
+  const origReconcile = Reconcile.reconcile;
+  const origAuditMove = Reconcile.auditMove;
+  Reconcile.movingSet = async () => ({ containerIds: [5], itemIds: [] });
+  Reconcile.reconcile = async () => ({ unlinked: [], tagsCarried: 0, tagsCreated: 0 });
+  Reconcile.auditMove = async () => { order.push('auditMove-called'); };
+
+  try {
+    await Containers.move(5, 3, undefined, 42, { crossProperty: { srcPropertyId: 1, destPropertyId: 2 } });
+    assert.deepEqual(order, ['tx-resolved', 'auditMove-called'],
+      'auditMove is called strictly after withTransaction resolves, never from inside it');
+  } finally {
+    Reconcile.movingSet = origMovingSet;
+    Reconcile.reconcile = origReconcile;
+    Reconcile.auditMove = origAuditMove;
+  }
+});
+
 // ── Cross-property: movingSet walks the closure table; payload covers the
 //    whole subtree, not just the root ────────────────────────────────────
 

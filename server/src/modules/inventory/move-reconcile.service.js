@@ -105,7 +105,13 @@ function needsConfirm(consequences, confirm) {
   return !confirm && consequences.unlinked.length > 0;
 }
 
-async function reconcile(tx, set, { srcPropertyId, destPropertyId, userId, rootType, rootId, moveChanges }) {
+// Data-only: tags + accessories. Callers audit separately via auditMove,
+// after their transaction resolves — see the comment there. The options
+// object still accepts the full move-bookkeeping shape (srcPropertyId,
+// userId, rootType, rootId, moveChanges) so callers can build one options
+// object and pass it to both reconcile() and auditMove(); only destPropertyId
+// is actually read here.
+async function reconcile(tx, set, { destPropertyId }) {
   // Tags: find-or-create in the destination, then repoint each attachment row.
   const { attached, byName, toCreate } = await tagPlan(tx, set, destPropertyId);
   for (const name of toCreate) {
@@ -132,13 +138,30 @@ async function reconcile(tx, set, { srcPropertyId, destPropertyId, userId, rootT
     );
   }
 
-  // Audit both sides, once per moved root — a subtree move is one event.
+  // No audit here — see auditMove below for why.
+  return { unlinked, tagsCarried: attached.length, tagsCreated: toCreate.length };
+}
+
+// Audits both sides of a cross-property move, once per moved root — a
+// subtree move is one event on each side.
+//
+// Deliberately NOT called from inside reconcile(): logChange writes through
+// AuditService's module-global _db.query — a plain pool connection, not the
+// caller's tx — so an audit row written mid-transaction commits durably the
+// instant it's written, independent of whether the move transaction that
+// "happened" ever actually commits. A rollback would then leave two audit
+// rows describing a move that never took place, while the tag/accessory
+// changes they describe vanished. Every other audited op in this codebase
+// (items/containers/areas) follows the same rule reconcile() now follows:
+// commit the operation first, THEN audit best-effort after — logChange
+// swallows its own failures, and an audit failure never rolls back an
+// operation. Callers invoke this exactly where the same-property path
+// invokes its own single 'moved' audit: after their withTransaction resolves.
+async function auditMove({ userId, rootType, rootId, srcPropertyId, destPropertyId, moveChanges }) {
   await AuditService.logChange(userId, rootType, rootId, 'moved-out',
     { ...moveChanges, toPropertyId: destPropertyId }, srcPropertyId);
   await AuditService.logChange(userId, rootType, rootId, 'moved-in',
     { ...moveChanges, fromPropertyId: srcPropertyId }, destPropertyId);
-
-  return { unlinked, tagsCarried: attached.length, tagsCreated: toCreate.length };
 }
 
-module.exports = { movingSet, previewConsequences, reconcile, needsConfirm };
+module.exports = { movingSet, previewConsequences, reconcile, needsConfirm, auditMove };

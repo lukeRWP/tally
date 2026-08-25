@@ -318,21 +318,26 @@ const ItemsService = {
     // together — a moved item with stranded tag rows would be worse than a
     // refused move.
     let consequences = null;
+    const moveArgs = {
+      srcPropertyId: cross.srcPropertyId,
+      destPropertyId: cross.destPropertyId,
+      userId,
+      rootType: 'item',
+      rootId: Number(id),
+      moveChanges: { containerId: newContainerId },
+    };
     await _db.withTransaction(async (tx) => {
       await tx.query(
         'UPDATE TALLY.items SET CONTAINER_ID = ? WHERE ID = ?',
         [newContainerId, id]
       );
       const set = await Reconcile.movingSet(tx, 'item', id);
-      consequences = await Reconcile.reconcile(tx, set, {
-        srcPropertyId: cross.srcPropertyId,
-        destPropertyId: cross.destPropertyId,
-        userId,
-        rootType: 'item',
-        rootId: Number(id),
-        moveChanges: { containerId: newContainerId },
-      });
+      consequences = await Reconcile.reconcile(tx, set, moveArgs);
     });
+    // Audited AFTER the transaction resolves, same as the same-property path
+    // above — logChange writes through a plain pool connection, not tx, so
+    // writing it any earlier would let audit rows outlive a rollback.
+    Reconcile.auditMove(moveArgs);
     return { item: await ItemsService.getById(id), consequences };
   },
 
