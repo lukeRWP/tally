@@ -83,18 +83,55 @@ export function PutDown() {
   // The loop that's paused lives inside usePutDown's Promise chain, not in
   // this component — this is the resume handle for it.
   const decisionRef = React.useRef<((decision: 'confirm' | 'cancel') => void) | null>(null);
+  // Set false in the SAME unmount cleanup that resolves a pending decision as
+  // cancel (below) — land() checks it after putDown resolves so that an
+  // unmount mid-batch (browser Back while the confirm sheet is up, a
+  // bottom-nav tap) can't still navigate the user forward or toast on a page
+  // they've already left. completeMove (inside usePutDown) already ran by
+  // then and is NOT gated on this — only the navigation/UI tail is.
+  const mountedRef = React.useRef(true);
 
   // The property switcher only appears with more than one property — most
   // households have exactly one, and that case must render today's UI with
   // no new elements at all.
   const { data: properties } = useProperties();
   const [selectedPropertyId, setSelectedPropertyId] = React.useState(0);
+  const showSwitcher = (properties?.length ?? 0) > 1;
+
+  // The load's OWN property — derived from where it was picked up, exactly
+  // the way DestinationPicker itself resolves a seeded area's property
+  // (same endpoint, same shape). Needed here too so the switcher can default
+  // to the CURRENT property instead of an arbitrary properties[0] (that was
+  // the regression: a two-property user's ordinary same-property desk move
+  // started in the wrong property), and so seedAreaId below is only handed
+  // to the picker when the selected property actually matches the area it
+  // names — undefined while unresolved, null once resolved-but-unknown (no
+  // carried origin, or the lookup failed) so the properties[0] fallback
+  // waits for it instead of racing it.
+  const carriedFromAreaId = carried[0]?.fromAreaId;
+  const [homePropertyId, setHomePropertyId] = React.useState<number | null | undefined>(undefined);
   React.useEffect(() => {
-    if (!selectedPropertyId && properties && properties.length > 0) {
+    if (!carriedFromAreaId) { setHomePropertyId(null); return; }
+    setHomePropertyId(undefined);
+    let cancelled = false;
+    (async () => {
+      try {
+        const { area } = await api.get<{ area: { propertyId: number } }>(`/api/areas/_x_/${carriedFromAreaId}`);
+        if (!cancelled) setHomePropertyId(area?.propertyId ?? null);
+      } catch {
+        if (!cancelled) setHomePropertyId(null);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [carriedFromAreaId]);
+
+  React.useEffect(() => {
+    if (selectedPropertyId) return;
+    if (homePropertyId) { setSelectedPropertyId(homePropertyId); return; }
+    if (homePropertyId === null && properties && properties.length > 0) {
       setSelectedPropertyId(properties[0].id);
     }
-  }, [properties, selectedPropertyId]);
-  const showSwitcher = (properties?.length ?? 0) > 1;
+  }, [homePropertyId, properties, selectedPropertyId]);
 
   // The scanner callback is handed to the camera once, so it must not close
   // over a stale load.
@@ -139,6 +176,7 @@ export function PutDown() {
   // The paused entity ends up skipped; completeMove (inside usePutDown)
   // still reconciles whatever DID move before the pause.
   React.useEffect(() => () => {
+    mountedRef.current = false;
     decisionRef.current?.('cancel');
     decisionRef.current = null;
   }, []);
@@ -154,6 +192,11 @@ export function PutDown() {
     setBusyBoth(true);
     try {
       const result = await putDown(carriedRef.current, dest, confirmPrompt);
+      // Unmounted while putDown was paused on a confirm (or just mid-flight)
+      // — state reconciliation already happened inside putDown, but this
+      // page is gone, so no navigation and no toast for whoever isn't here
+      // to see it.
+      if (!mountedRef.current) return;
       if (!result) {
         toast(`Already in ${dest.name}`);
         return;
@@ -189,6 +232,7 @@ export function PutDown() {
       if (dest.type === 'area') navigate(`/area/${dest.id}`);
       else navigate(`/container/${dest.id}`);
     } catch (err) {
+      if (!mountedRef.current) return;
       toast.error(err instanceof Error ? err.message : 'Could not move it there');
     } finally {
       setBusyBoth(false);
@@ -339,17 +383,25 @@ export function PutDown() {
             </div>
             {/* Remounted on property change (via key) so the picker's own
                 area/container state resets instead of showing the old
-                property's bins under the new one's areas. */}
+                property's bins under the new one's areas. showPropertySelector
+                is false — the switcher above is the ONLY property control, or
+                the two would desync the moment either one changed. seedAreaId
+                only travels along when the switcher is still on the load's
+                own (home) property: on any OTHER property, that area belongs
+                to a different property than the one selected and must not be
+                force-fed into the picker's area select. */}
             <DestinationPicker
               key={selectedPropertyId}
               seedPropertyId={selectedPropertyId || undefined}
+              seedAreaId={selectedPropertyId === homePropertyId ? carriedFromAreaId : undefined}
+              showPropertySelector={false}
               onPick={(bin) => { setPicking(false); void land({ type: 'container', id: bin.id, name: bin.name }); }}
               onClose={() => setPicking(false)}
             />
           </div>
         ) : (
           <DestinationPicker
-            seedAreaId={carried[0]?.fromAreaId}
+            seedAreaId={carriedFromAreaId}
             onPick={(bin) => { setPicking(false); void land({ type: 'container', id: bin.id, name: bin.name }); }}
             onClose={() => setPicking(false)}
           />
@@ -385,6 +437,7 @@ export function PutDown() {
           entityName={pendingConfirm.entityName}
           progress={{ index: pendingConfirm.index, total: pendingConfirm.total }}
           consequences={pendingConfirm.consequences}
+          isPending={moveItem.isPending || moveContainer.isPending}
           onConfirm={() => decide('confirm')}
           onCancel={() => decide('cancel')}
         />

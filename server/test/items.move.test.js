@@ -213,3 +213,183 @@ test('move() with crossProperty returns {item, consequences}, with the reconcile
     Reconcile.reconcile = origReconcile;
   }
 });
+
+// ── Route-ordering pins (mirrors containers.move-cross.test.js) ────────────
+// items.routes.js's move handler has the identical 403 → liveness → preview/
+// confirm structure as the container route, but lacked route-level coverage
+// for it — only the service-level tests above existed. Same idiom: a fake
+// app records route registrations, the final handler (past requireAuth/
+// resolveProperty*/requireRole) is extracted and invoked directly.
+
+const ContainersServiceForRoutes = require('../src/modules/inventory/containers.service');
+
+function registerItemRoutes(db) {
+  const routes = [];
+  const record = (m) => (p, ...handlers) => routes.push({ method: m, path: p, handlers });
+  const app = {
+    locals: {
+      requireAuth: (req, res, next) => next(),
+      resolvePropertyRole: (req, res, next) => next(),
+      requireRole: () => (req, res, next) => next(),
+    },
+    get: record('GET'), post: record('POST'), put: record('PUT'),
+    patch: record('PATCH'), delete: record('DELETE'),
+  };
+  require('../src/modules/inventory/items.routes')({ app, db, logger: noop });
+  return routes;
+}
+
+function moveRouteHandler(routes) {
+  const r = routes.find((r) => r.method === 'PATCH' && r.path === '/api/items/_p_/:itemId/move');
+  const handlers = r.handlers;
+  return handlers[handlers.length - 1]; // the route's own async (req, res) => {...}
+}
+
+function mockRes() {
+  return {
+    statusCode: null,
+    body: null,
+    status(code) { this.statusCode = code; return this; },
+    json(body) { this.body = body; return this; },
+  };
+}
+
+// getPropertyIdForContainer's and getActiveAreaId's SELECTs, distinguishable
+// by their leading column list — same markers containers.move-cross.test.js
+// uses for the container-side equivalents.
+const DEST_PROPERTY_ID = /SELECT a\.PROPERTY_ID/;
+const DEST_LIVE = /SELECT c\.AREA_ID FROM TALLY\.containers c/;
+
+test('route: destination container in another property — 403 without destination membership, proceeds with editor membership', async () => {
+  let memberRows = [];
+  const db = {
+    query: async (sql) => {
+      if (DEST_PROPERTY_ID.test(sql)) return [{ PROPERTY_ID: 2 }];
+      if (/SELECT ROLE FROM TALLY\.property_members/.test(sql)) return memberRows;
+      if (DEST_LIVE.test(sql)) return [{ AREA_ID: 7 }]; // destination container is live
+      return [];
+    },
+    withTransaction: async (fn) => fn({ query: async () => [] }),
+  };
+  ContainersServiceForRoutes.init({ db, logger: noop });
+
+  const handler = moveRouteHandler(registerItemRoutes(db));
+  const baseReq = {
+    params: { itemId: 5, propertyId: 1 }, // srcPropertyId as resolved by the (bypassed) middleware
+    user: { id: 42 },
+  };
+
+  // No membership at the destination property → 403, and the preview must
+  // never run first (it would leak the destination's shape to a non-member).
+  memberRows = [];
+  const origMovingSet = Reconcile.movingSet;
+  Reconcile.movingSet = async () => { throw new Error('preview must not run before the 403 gate'); };
+  try {
+    const res = mockRes();
+    await handler({ ...baseReq, body: { containerId: 30 } }, res);
+    assert.equal(res.statusCode, 403);
+    assert.match(res.body.message, /editor access to the destination property/);
+  } finally {
+    Reconcile.movingSet = origMovingSet;
+  }
+
+  // Editor membership at the destination → past the gate, move is reached.
+  memberRows = [{ ROLE: 'editor' }];
+  const origMove = Items.move;
+  let moveArgs = null;
+  Items.move = async (...args) => { moveArgs = args; return { item: { id: 5 }, consequences: null }; };
+  try {
+    const res = mockRes();
+    // confirm:true sidesteps the preview branch — that gate is covered separately below.
+    await handler({ ...baseReq, body: { containerId: 30, confirm: true } }, res);
+    assert.equal(res.statusCode, 200);
+    assert.ok(moveArgs, 'ItemsService.move was reached');
+    assert.deepEqual(moveArgs[3], { crossProperty: { srcPropertyId: 1, destPropertyId: 2 } });
+  } finally {
+    Items.move = origMove;
+  }
+});
+
+test('route: unconfirmed lossy cross-property move is 409 with the consequence payload; confirm:true proceeds to 200', async () => {
+  const db = {
+    query: async (sql) => {
+      if (DEST_PROPERTY_ID.test(sql)) return [{ PROPERTY_ID: 2 }];
+      if (/SELECT ROLE FROM TALLY\.property_members/.test(sql)) return [{ ROLE: 'editor' }];
+      if (DEST_LIVE.test(sql)) return [{ AREA_ID: 7 }];
+      return [];
+    },
+    withTransaction: async (fn) => fn({ query: async () => [] }),
+  };
+  ContainersServiceForRoutes.init({ db, logger: noop });
+
+  const handler = moveRouteHandler(registerItemRoutes(db));
+  const req = {
+    params: { itemId: 5, propertyId: 1 },
+    body: { containerId: 30 },
+    user: { id: 42 },
+  };
+
+  const canned = { unlinked: [{ itemId: 9, name: 'Charger' }], tagsCarried: 1, tagsCreated: 0 };
+  const origMovingSet = Reconcile.movingSet;
+  const origPreview = Reconcile.previewConsequences;
+  Reconcile.movingSet = async () => ({ containerIds: [], itemIds: [5] });
+  Reconcile.previewConsequences = async () => canned;
+
+  const origMove = Items.move;
+  let moveCalled = false;
+  Items.move = async () => { moveCalled = true; return { item: { id: 5 }, consequences: canned }; };
+
+  try {
+    // Unconfirmed → 409, move never runs.
+    const res1 = mockRes();
+    await handler(req, res1);
+    assert.equal(res1.statusCode, 409);
+    assert.deepEqual(res1.body.errors, canned, 'the 409 payload is exactly the preview');
+    assert.equal(moveCalled, false, 'the move never runs when confirmation is needed');
+
+    // confirm:true → 200, move runs.
+    const res2 = mockRes();
+    await handler({ ...req, body: { ...req.body, confirm: true } }, res2);
+    assert.equal(res2.statusCode, 200);
+    assert.ok(moveCalled, 'the move runs once confirmed');
+  } finally {
+    Reconcile.movingSet = origMovingSet;
+    Reconcile.previewConsequences = origPreview;
+    Items.move = origMove;
+  }
+});
+
+// ── Route: destination liveness is checked BEFORE the preview/confirm gate ─
+// Mirrors the container route's equivalent pin: confirming a lossy move must
+// never dead-end in a 404 the caller had no way to see coming.
+
+test('route: a recycled destination container 404s before the preview ever runs', async () => {
+  const db = {
+    query: async (sql) => {
+      if (DEST_PROPERTY_ID.test(sql)) return [{ PROPERTY_ID: 2 }];
+      if (/SELECT ROLE FROM TALLY\.property_members/.test(sql)) return [{ ROLE: 'editor' }];
+      // No row: the destination container is gone (soft-deleted or never existed).
+      if (DEST_LIVE.test(sql)) return [];
+      return [];
+    },
+    withTransaction: async (fn) => fn({ query: async () => [] }),
+  };
+  ContainersServiceForRoutes.init({ db, logger: noop });
+
+  const handler = moveRouteHandler(registerItemRoutes(db));
+  const req = {
+    params: { itemId: 5, propertyId: 1 },
+    body: { containerId: 30 },
+    user: { id: 42 },
+  };
+
+  const origMovingSet = Reconcile.movingSet;
+  Reconcile.movingSet = async () => { throw new Error('preview must not run once the destination is known dead'); };
+  try {
+    const res = mockRes();
+    await handler(req, res);
+    assert.equal(res.statusCode, 404);
+  } finally {
+    Reconcile.movingSet = origMovingSet;
+  }
+});

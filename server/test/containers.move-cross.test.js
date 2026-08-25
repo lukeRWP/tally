@@ -266,6 +266,10 @@ test('route: destination area in another property — 403 without destination me
     query: async (sql) => {
       if (/SELECT PROPERTY_ID FROM TALLY\.areas WHERE ID = \?/.test(sql)) return [{ PROPERTY_ID: 2 }];
       if (/SELECT ROLE FROM TALLY\.property_members/.test(sql)) return memberRows;
+      // The route's own liveness pre-check (destination area still live),
+      // now run BEFORE the preview/confirm gate — see the "editor
+      // membership" branch below, which reaches it.
+      if (/SELECT ID FROM TALLY\.areas WHERE ID = \? AND DELETED_AT IS NULL/.test(sql)) return [{ ID: 99 }];
       return [];
     },
     withTransaction: async (fn) => fn({ query: async () => [] }),
@@ -316,6 +320,9 @@ test('route: unconfirmed lossy cross-property move is 409 with the consequence p
     query: async (sql) => {
       if (/SELECT PROPERTY_ID FROM TALLY\.areas WHERE ID = \?/.test(sql)) return [{ PROPERTY_ID: 2 }];
       if (/SELECT ROLE FROM TALLY\.property_members/.test(sql)) return [{ ROLE: 'editor' }];
+      // The route's liveness pre-check — must pass so the test actually
+      // exercises the preview/confirm gate that follows it, not a 404.
+      if (/SELECT ID FROM TALLY\.areas WHERE ID = \? AND DELETED_AT IS NULL/.test(sql)) return [{ ID: 99 }];
       return [];
     },
     withTransaction: async (fn) => fn({ query: async () => [] }),
@@ -356,5 +363,42 @@ test('route: unconfirmed lossy cross-property move is 409 with the consequence p
     Reconcile.movingSet = origMovingSet;
     Reconcile.previewConsequences = origPreview;
     Containers.move = origMove;
+  }
+});
+
+// ── Route: destination liveness is checked BEFORE the preview/confirm gate ─
+// Fix round 2 finding: the preview used to run (and could 409) before the
+// destination's liveness was checked, so confirming a lossy move could still
+// dead-end in a 404 the caller had no way to see coming. Liveness now runs
+// right after the 403 gate, before the preview ever fires.
+
+test('route: a recycled destination area 404s before the preview ever runs', async () => {
+  const db = {
+    query: async (sql) => {
+      if (/SELECT PROPERTY_ID FROM TALLY\.areas WHERE ID = \?/.test(sql)) return [{ PROPERTY_ID: 2 }];
+      if (/SELECT ROLE FROM TALLY\.property_members/.test(sql)) return [{ ROLE: 'editor' }];
+      // No row: the destination area is gone (soft-deleted or never existed).
+      if (/SELECT ID FROM TALLY\.areas WHERE ID = \? AND DELETED_AT IS NULL/.test(sql)) return [];
+      return [];
+    },
+    withTransaction: async (fn) => fn({ query: async () => [] }),
+  };
+  AreasService.init({ db, logger: noop });
+
+  const handler = moveHandler(registerRoutes(db));
+  const req = {
+    params: { containerId: 5, propertyId: 1 },
+    body: { parentContainerId: null, areaId: 99 },
+    user: { id: 42 },
+  };
+
+  const origMovingSet = Reconcile.movingSet;
+  Reconcile.movingSet = async () => { throw new Error('preview must not run once the destination is known dead'); };
+  try {
+    const res = mockRes();
+    await handler(req, res);
+    assert.equal(res.statusCode, 404);
+  } finally {
+    Reconcile.movingSet = origMovingSet;
   }
 });

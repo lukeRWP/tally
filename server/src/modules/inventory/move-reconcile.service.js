@@ -18,6 +18,11 @@ async function movingSet(tx, entityType, entityId) {
     [entityId]
   );
   const containerIds = rows.map((r) => r.DESCENDANT_ID);
+  // A container with no rows back from the closure walk (shouldn't happen —
+  // the DEPTH-0 self row always matches — but a future caller passing a
+  // dead/unknown id must not turn this into `IN ()`, invalid SQL) has no
+  // items to look up.
+  if (!containerIds.length) return { containerIds, itemIds: [] };
   const items = await tx.query(
     `SELECT ID FROM TALLY.items
       WHERE CONTAINER_ID IN (${containerIds.map(() => '?').join(',')})
@@ -62,17 +67,34 @@ async function halfOutLinks(tx, itemIds) {
   return links.filter((l) => inSet.has(Number(l.ITEM_ID)) !== inSet.has(Number(l.ACCESSORY_ID)));
 }
 
-/** Resolve the names of the ends that stay behind, for honest reporting. */
+/**
+ * Resolve the names of the ends that stay behind, for honest reporting.
+ * Deduped by item ID: two moving items linked to the same outside item (e.g.
+ * a shared charger) would otherwise produce two rows naming the same
+ * outside item — a duplicate the client renders as a duplicate React key.
+ */
 async function staying(tx, links, itemIds) {
   if (!links.length) return [];
   const inSet = new Set(itemIds.map(Number));
-  const stayIds = links.map((l) => (inSet.has(Number(l.ITEM_ID)) ? l.ACCESSORY_ID : l.ITEM_ID));
+  const stayIds = [...new Set(
+    links.map((l) => Number(inSet.has(Number(l.ITEM_ID)) ? l.ACCESSORY_ID : l.ITEM_ID))
+  )];
   const rows = await tx.query(
     `SELECT ID, NAME FROM TALLY.items WHERE ID IN (${stayIds.map(() => '?').join(',')})`,
     stayIds
   );
   const names = new Map(rows.map((r) => [Number(r.ID), r.NAME]));
-  return stayIds.map((id) => ({ itemId: Number(id), name: names.get(Number(id)) ?? `#${id}` }));
+  return stayIds.map((id) => ({ itemId: id, name: names.get(id) ?? `#${id}` }));
+}
+
+/**
+ * `attached` is one row per entity_tags attachment, so a single tag on three
+ * entities in the moving set appears three times — the reported count must
+ * be distinct tags, not attachment rows, or "1 tag carried" reads as "3 tags
+ * carried". Repointing (in reconcile(), below) still runs once per row.
+ */
+function distinctTagCount(attached) {
+  return new Set(attached.map((a) => a.TAG_ID)).size;
 }
 
 /** Plan the tag carry against the destination's existing tags. */
@@ -93,7 +115,7 @@ async function previewConsequences(tx, set, destPropertyId) {
   const { attached, toCreate } = await tagPlan(tx, set, destPropertyId);
   const links = await halfOutLinks(tx, set.itemIds);
   const unlinked = await staying(tx, links, set.itemIds);
-  return { unlinked, tagsCarried: attached.length, tagsCreated: toCreate.length };
+  return { unlinked, tagsCarried: distinctTagCount(attached), tagsCreated: toCreate.length };
 }
 
 // The 409 confirm gate is pure enough to unit-test on its own, and pulling it
@@ -139,7 +161,7 @@ async function reconcile(tx, set, { destPropertyId }) {
   }
 
   // No audit here — see auditMove below for why.
-  return { unlinked, tagsCarried: attached.length, tagsCreated: toCreate.length };
+  return { unlinked, tagsCarried: distinctTagCount(attached), tagsCreated: toCreate.length };
 }
 
 // Audits both sides of a cross-property move, once per moved root — a

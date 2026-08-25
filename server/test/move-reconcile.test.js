@@ -57,7 +57,7 @@ test('carrying tags matches by name case-insensitively and creates the rest', as
   const out = await Reconcile.reconcile(tx,
     { containerIds: [3], itemIds: [101, 102] },
     { srcPropertyId: 1, destPropertyId: 2, userId: 42, rootType: 'container', rootId: 3, moveChanges: {} });
-  assert.equal(out.tagsCarried, 3, 'every attachment row is repointed');
+  assert.equal(out.tagsCarried, 2, 'DISTINCT tags carried (Fragile + Tools), not the 3 attachment rows repointed');
   assert.equal(out.tagsCreated, 1, 'only Tools is created; fragile matched case-insensitively');
   const created = writes.find((w) => /INSERT INTO TALLY\.tags/.test(w.sql));
   assert.ok(created.params.includes('Tools'));
@@ -83,6 +83,38 @@ test('accessory links survive intra-set and break half-out, reported by name', a
   assert.deepEqual(out.unlinked.map((u) => u.name).sort(), ['Battery pack', 'Charger']);
   const del = writes.find((w) => /DELETE FROM TALLY\.item_accessories/.test(w.sql));
   assert.deepEqual(del.params.sort(), [901, 902], 'deletes exactly the half-out links by ID');
+});
+
+// ── Fix round 2: `staying()` dedupes by outside item, not by link row ──────
+
+test('two moving items linked to the same outside item report it ONCE, not twice', async () => {
+  const tx = fakeTx([
+    [/FROM TALLY\.tags t[\s\S]*entity_tags/, []],
+    [/SELECT.*FROM TALLY\.item_accessories/, [
+      { ID: 900, ITEM_ID: 101, ACCESSORY_ID: 555 },   // both link to the same
+      { ID: 901, ITEM_ID: 102, ACCESSORY_ID: 555 },   // outside item, 555
+    ]],
+    [/FROM TALLY\.items WHERE ID IN/, [{ ID: 555, NAME: 'Shared charger' }]],
+    [/DELETE FROM TALLY\.item_accessories/, () => ({ affectedRows: 2 })],
+  ]);
+  const out = await Reconcile.reconcile(tx,
+    { containerIds: [], itemIds: [101, 102] },
+    { srcPropertyId: 1, destPropertyId: 2, userId: 42, rootType: 'item', rootId: 101, moveChanges: {} });
+  assert.deepEqual(out.unlinked, [{ itemId: 555, name: 'Shared charger' }],
+    'one row for the outside item, not one per link that broke');
+});
+
+// ── Fix round 2: movingSet guards the items IN () query on an empty subtree ─
+
+test('movingSet returns an empty item set without querying IN () when the closure walk finds no containers', async () => {
+  const tx = fakeTx([
+    [/container_paths/, []],
+    // If the guard were missing, this would run as `IN ()` — invalid SQL.
+    // Routed to throw so the test fails loudly if that query ever fires.
+    [/FROM TALLY\.items/, () => { throw new Error('items IN () must not be queried for an empty container set'); }],
+  ]);
+  const set = await Reconcile.movingSet(tx, 'container', 3);
+  assert.deepEqual(set, { containerIds: [], itemIds: [] });
 });
 
 // ── reconcile() is data-only — no audit rides the transaction ──────────────

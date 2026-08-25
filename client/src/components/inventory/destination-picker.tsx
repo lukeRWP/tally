@@ -20,12 +20,22 @@ export interface PickedBin {
 export function DestinationPicker({
   seedAreaId,
   seedPropertyId,
+  showPropertySelector = true,
   onPick,
   onClose,
 }: {
   /** Pre-select an area (e.g. the page you came from) so the bins are one tap away. */
   seedAreaId?: number;
   seedPropertyId?: number;
+  /**
+   * False when a control OUTSIDE the picker already owns the property
+   * choice (put-down's segmented switcher, shown for a load whose bin
+   * picker follows it). Two property selectors for one decision desync the
+   * moment either one changes — the picker still USES seedPropertyId to
+   * drive its area/container queries, it just doesn't render its own
+   * `<select>` for it.
+   */
+  showPropertySelector?: boolean;
   onPick: (bin: PickedBin) => void;
   onClose: () => void;
 }) {
@@ -81,7 +91,7 @@ export function DestinationPicker({
         </button>
       </div>
 
-      {(properties?.length ?? 0) > 1 && (
+      {showPropertySelector && (properties?.length ?? 0) > 1 && (
         <select
           value={propertyId}
           onChange={(e) => {

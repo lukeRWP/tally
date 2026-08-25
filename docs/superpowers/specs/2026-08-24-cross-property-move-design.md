@@ -95,8 +95,8 @@ A cross-property move that would **break accessory links** is refused with
 
 ```json
 { "success": false, "message": "This move unlinks accessories",
-  "consequences": { "unlinked": [{"itemId": 12, "name": "DeWalt battery pack"}],
-                     "tagsCarried": 3, "tagsCreated": 1 } }
+  "errors": { "unlinked": [{"itemId": 12, "name": "DeWalt battery pack"}],
+              "tagsCarried": 3, "tagsCreated": 1 } }
 ```
 
 The client shows one sheet rendering that list; confirming re-sends with

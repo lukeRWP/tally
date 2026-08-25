@@ -253,7 +253,10 @@ module.exports = function itemsRoutes({ app, db, logger }) {
       let crossProperty = null;
       if (String(destPropertyId) !== String(srcPropertyId)) {
         // Cross-property: the caller must be editor/owner THERE too — the
-        // same-property guard was partly a tenancy rule, and this preserves it.
+        // same-property guard was partly a tenancy rule, and this preserves
+        // it. First of all, before even the liveness check below — a
+        // non-member must not learn anything about the destination, not even
+        // whether it still exists.
         const destRole = await db.query(
           'SELECT ROLE FROM TALLY.property_members WHERE PROPERTY_ID = ? AND USER_ID = ?',
           [destPropertyId, req.user.id]
@@ -262,22 +265,26 @@ module.exports = function itemsRoutes({ app, db, logger }) {
           return error(res, 'You need editor access to the destination property', 403);
         }
         crossProperty = { srcPropertyId: Number(srcPropertyId), destPropertyId: Number(destPropertyId) };
-
-        // Lossy moves need an explicit confirm; clean ones keep the scan rhythm.
-        if (!value.confirm) {
-          const preview = await db.withTransaction(async (tx) => {
-            const set = await Reconcile.movingSet(tx, 'item', req.params.itemId);
-            return Reconcile.previewConsequences(tx, set, destPropertyId);
-          });
-          if (Reconcile.needsConfirm(preview, value.confirm)) {
-            return error(res, 'This move unlinks accessories', 409, preview);
-          }
-        }
       }
+
       // ...and it must be LIVE — moving an item into a recycled container would
-      // hide it (phantom inventory), the same trap as create.
+      // hide it (phantom inventory), the same trap as create. Checked BEFORE
+      // the confirm gate below: a destination that vanished must 404 up
+      // front, not after the caller has already confirmed a lossy move only
+      // to hit a dead end.
       if (await ContainersService.getActiveAreaId(value.containerId) == null) {
         return error(res, 'Destination container not found', 404);
+      }
+
+      // Lossy moves need an explicit confirm; clean ones keep the scan rhythm.
+      if (crossProperty && !value.confirm) {
+        const preview = await db.withTransaction(async (tx) => {
+          const set = await Reconcile.movingSet(tx, 'item', req.params.itemId);
+          return Reconcile.previewConsequences(tx, set, destPropertyId);
+        });
+        if (Reconcile.needsConfirm(preview, value.confirm)) {
+          return error(res, 'This move unlinks accessories', 409, preview);
+        }
       }
       const out = await ItemsService.move(req.params.itemId, value.containerId, req.user.id, { crossProperty });
       success(res, out);

@@ -202,6 +202,28 @@ module.exports = function containersRoutes({ app, db, logger }) {
         }
         crossProperty = { srcPropertyId: Number(srcPropertyId), destPropertyId: Number(destPropertyId) };
 
+        // Liveness next, BEFORE the confirm gate below — a destination that
+        // was recycled must 404 up front, not after the caller has already
+        // confirmed a lossy move only to hit a dead end. ContainersService.move
+        // re-checks this itself (under a FOR UPDATE lock, so it stays
+        // authoritative against a same-instant delete), but that check runs
+        // deep inside the transaction the preview below would otherwise sit
+        // in front of — the same-property path is left alone; it already
+        // relies solely on that deeper check, unchanged.
+        if (value.parentContainerId !== undefined && value.parentContainerId !== null) {
+          if (await ContainersService.getActiveAreaId(value.parentContainerId) == null) {
+            return error(res, 'Destination parent container not found', 404);
+          }
+        } else if (value.areaId !== undefined && value.areaId !== null) {
+          const liveArea = await db.query(
+            'SELECT ID FROM TALLY.areas WHERE ID = ? AND DELETED_AT IS NULL',
+            [value.areaId]
+          );
+          if (!liveArea.length) {
+            return error(res, 'Destination area not found', 404);
+          }
+        }
+
         // Lossy moves need an explicit confirm; clean ones keep the scan rhythm.
         if (!value.confirm) {
           const preview = await db.withTransaction(async (tx) => {
