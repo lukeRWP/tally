@@ -175,10 +175,13 @@ export function PutDown() {
   // confirming would commit a lossy cross-property move nobody agreed to.
   // The paused entity ends up skipped; completeMove (inside usePutDown)
   // still reconciles whatever DID move before the pause.
-  React.useEffect(() => () => {
-    mountedRef.current = false;
-    decisionRef.current?.('cancel');
-    decisionRef.current = null;
+  React.useEffect(() => {
+    mountedRef.current = true; // re-arm — StrictMode's remount runs setup again
+    return () => {
+      mountedRef.current = false;
+      decisionRef.current?.('cancel');
+      decisionRef.current = null;
+    };
   }, []);
 
   const land = React.useCallback(async (dest: LandTarget) => {
