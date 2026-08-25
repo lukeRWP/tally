@@ -210,6 +210,10 @@ export function Capture() {
   // Session-only, camera-first on every cold open: a tablet always starts in
   // the camera flow and can switch to the typed form and back within the
   // same visit, but a reload (or a different item) starts camera-first again.
+  // Deliberately NOT reset by a landscape/portrait rotation dip either — the
+  // component doesn't remount, so an in-session "Type it instead" choice
+  // survives one; camera-first only binds cold opens, and honouring the
+  // choice already made is less surprising than reverting it mid-task.
   const [typedMode, setTypedMode] = React.useState(false);
   // The single form-vs-flow predicate every other atDesk-shaped decision in
   // this file now keys on. Equal to atDesk whenever the pointer is fine
@@ -892,6 +896,26 @@ export function Capture() {
         </div>
       )}
 
+      {/*
+        `capture="environment"` asks the OS for the REAR camera, which is right
+        on a phone (or tablet) held up to a shelf and wrong for a form pick —
+        it either does nothing or opens a webcam pointed at your face. A form
+        pick drops the attribute and gets a plain file picker instead.
+
+        Mounted here, unconditionally — outside both the showForm fork and the
+        phase==='photo' check — because it is the one piece of photo machinery
+        both branches share: ManualCreate's "Choose file" button and the flow's
+        camera button both just call `photoInput.current?.click()`. Mounting it
+        only inside the flow's phase==='photo' block (as it was before this
+        fix) meant `photoInput.current` was null whenever ManualCreate
+        rendered, so "Choose file" silently no-opped on every fine-pointer
+        desk — drag-and-drop covered the same gesture, so nobody noticed until
+        this task's "Type it instead" switch gave tablets the same dead button.
+      */}
+      <input ref={photoInput} type="file" accept="image/*"
+        {...(showForm ? {} : { capture: 'environment' as const })}
+        className="hidden" onChange={onPhoto} />
+
       {/* Each step enters as its own move, so advancing reads as progress
           rather than the same page quietly rearranging itself. */}
       {showForm ? (
@@ -929,16 +953,6 @@ export function Capture() {
       {/* ── step 1: the picture ─────────────────────────────────────────── */}
       {phase === 'photo' && (
         <div className="flex flex-col gap-2">
-          {/*
-            `capture="environment"` asks the OS for the REAR camera, which is
-            right on a phone held up to a shelf and wrong at a desk — it either
-            does nothing or opens a webcam pointed at your face. At a desk the
-            same input is a file picker, so the attribute is dropped and the
-            copy stops promising a camera that is not there.
-          */}
-          <input ref={photoInput} type="file" accept="image/*"
-            {...(showForm ? {} : { capture: 'environment' as const })}
-            className="hidden" onChange={onPhoto} />
           <button
             type="button"
             onClick={() => photoInput.current?.click()}
