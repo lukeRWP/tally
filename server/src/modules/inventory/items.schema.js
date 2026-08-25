@@ -54,6 +54,10 @@ const updateItem = Joi.object({
 
 const moveItem = Joi.object({
   containerId: Joi.number().integer().required(),
+  // Explicit opt-in for a cross-property move that would strand accessory
+  // links (previewed via previewConsequences). Same-property moves never
+  // look at this field.
+  confirm: Joi.boolean(),
 });
 
 const searchItems = Joi.object({

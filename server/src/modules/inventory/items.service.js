@@ -4,6 +4,7 @@ const AuditService = require('../audit/audit.service');
 const RecycleService = require('../recycle/recycle.service');
 const storage = require('../../infrastructure/storage');
 const Thumbnails = require('../files/thumbnails.service');
+const Reconcile = require('./move-reconcile.service');
 
 let _db = null;
 let _logger = null;
@@ -300,14 +301,39 @@ const ItemsService = {
     return ItemsService.getById(id);
   },
 
-  async move(id, newContainerId, userId) {
-    await _db.query(
-      'UPDATE TALLY.items SET CONTAINER_ID = ? WHERE ID = ?',
-      [newContainerId, id]
-    );
-    const propertyId = await ItemsService.getPropertyIdForItem(id);
-    AuditService.logChange(userId, 'item', id, 'moved', { containerId: newContainerId }, propertyId);
-    return ItemsService.getById(id);
+  async move(id, newContainerId, userId, opts = {}) {
+    const cross = opts.crossProperty;
+    if (!cross) {
+      // The same-property path is UNTOUCHED — same statement, same audit.
+      await _db.query(
+        'UPDATE TALLY.items SET CONTAINER_ID = ? WHERE ID = ?',
+        [newContainerId, id]
+      );
+      const propertyId = await ItemsService.getPropertyIdForItem(id);
+      AuditService.logChange(userId, 'item', id, 'moved', { containerId: newContainerId }, propertyId);
+      return { item: await ItemsService.getById(id), consequences: null };
+    }
+
+    // Cross-property: the move and its reconciliation commit or roll back
+    // together — a moved item with stranded tag rows would be worse than a
+    // refused move.
+    let consequences = null;
+    await _db.withTransaction(async (tx) => {
+      await tx.query(
+        'UPDATE TALLY.items SET CONTAINER_ID = ? WHERE ID = ?',
+        [newContainerId, id]
+      );
+      const set = await Reconcile.movingSet(tx, 'item', id);
+      consequences = await Reconcile.reconcile(tx, set, {
+        srcPropertyId: cross.srcPropertyId,
+        destPropertyId: cross.destPropertyId,
+        userId,
+        rootType: 'item',
+        rootId: Number(id),
+        moveChanges: { containerId: newContainerId },
+      });
+    });
+    return { item: await ItemsService.getById(id), consequences };
   },
 
   async softDelete(id, userId) {

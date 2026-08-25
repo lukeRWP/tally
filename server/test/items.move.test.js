@@ -1,0 +1,193 @@
+const test = require('node:test');
+const assert = require('node:assert');
+const Items = require('../src/modules/inventory/items.service');
+const Reconcile = require('../src/modules/inventory/move-reconcile.service');
+const AuditService = require('../src/modules/audit/audit.service');
+const itemsRoutes = require('../src/modules/inventory/items.routes');
+
+const noop = { warn() {}, info() {}, error() {} };
+AuditService.init({ db: { query: async () => [] }, logger: noop });
+
+// Scriptable db: query() routes by regex to a canned result (same idiom as
+// move-reconcile.test.js's fakeTx and items.integrity.test.js's txDb).
+// withTransaction() hands the callback ONE tagged tx object whose .query()
+// shares the same router/call log, tagged with `tx` so a test can prove a
+// call ran ON THE TRANSACTION vs. on the plain pool connection.
+function txDb(routes) {
+  const calls = [];
+  const route = async (sql, params, tx) => {
+    calls.push({ sql, params, tx: tx || null });
+    for (const [re, result] of routes) if (re.test(sql)) return typeof result === 'function' ? result(sql, params) : result;
+    return [];
+  };
+  const db = { calls, txCount: 0, lastTx: null };
+  db.query = (sql, params) => route(sql, params, null);
+  db.withTransaction = async (fn) => {
+    db.txCount++;
+    const tx = {};
+    tx.query = (sql, params) => route(sql, params, tx);
+    db.lastTx = tx;
+    return fn(tx);
+  };
+  return db;
+}
+
+// getById's SELECT is uniquely identifiable by this alias (it JOINs
+// containers/areas/properties, unlike any other items.service query).
+const GET_BY_ID = /PROPERTY_ID AS PROPERTY_ID/;
+// getPropertyIdForItem's SELECT is the only query starting with this prefix.
+const GET_PROPERTY_ID_FOR_ITEM = /SELECT a\.PROPERTY_ID/;
+
+// ── needsConfirm — pure function, unit-tested directly ──────────────────────
+
+test('needsConfirm requires explicit confirm only when accessories would be unlinked', () => {
+  const { needsConfirm } = itemsRoutes;
+  assert.equal(typeof needsConfirm, 'function', 'items.routes.js exports needsConfirm for direct testing');
+  assert.equal(needsConfirm({ unlinked: [{ itemId: 1, name: 'Charger' }] }, false), true,
+    'a lossy move without confirm needs one');
+  assert.equal(needsConfirm({ unlinked: [{ itemId: 1, name: 'Charger' }] }, true), false,
+    'confirm:true clears the gate even when lossy');
+  assert.equal(needsConfirm({ unlinked: [] }, false), false,
+    'a clean move never needs confirm');
+});
+
+// ── REGRESSION PIN — same-property move is untouched ────────────────────────
+
+test('same-property move is byte-identical to before', async () => {
+  const audits = [];
+  const origLog = AuditService.logChange;
+  AuditService.logChange = async (...args) => { audits.push(args); };
+  const db = txDb([
+    [GET_BY_ID, [{ ID: 5, NAME: 'Widget', CONTAINER_ID: 30 }]],
+    [GET_PROPERTY_ID_FOR_ITEM, [{ PROPERTY_ID: 1 }]],
+  ]);
+  Items.init({ db, logger: noop });
+  try {
+    const out = await Items.move(5, 30, 42); // no opts — the pre-existing call shape
+    assert.equal(db.txCount, 0, 'no transaction is opened for a same-property move');
+
+    const updates = db.calls.filter((c) => /UPDATE TALLY\.items SET CONTAINER_ID/.test(c.sql));
+    assert.equal(updates.length, 1, 'exactly one UPDATE TALLY.items');
+
+    assert.ok(
+      !db.calls.some((c) => /TALLY\.(entity_tags|item_accessories|container_paths|tags)\b/.test(c.sql)),
+      'no reconciliation table (entity_tags, item_accessories, container_paths, tags) is touched'
+    );
+
+    assert.equal(audits.length, 1, 'audited exactly once');
+    assert.equal(audits[0][3], 'moved', 'the audit action is the plain "moved" event');
+
+    assert.equal(out.consequences, null, 'no consequences for a same-property move');
+  } finally {
+    AuditService.logChange = origLog;
+  }
+});
+
+// ── Cross-property: one transaction, same tx handle throughout ─────────────
+
+test('cross-property move runs the UPDATE and reconciliation inside ONE transaction, on the same tx handle', async () => {
+  const db = txDb([
+    [GET_BY_ID, [{ ID: 5, NAME: 'Widget', CONTAINER_ID: 30 }]],
+  ]);
+  Items.init({ db, logger: noop });
+
+  const origMovingSet = Reconcile.movingSet;
+  const origReconcile = Reconcile.reconcile;
+  const seenTxs = [];
+  let reconcileOpts = null;
+  Reconcile.movingSet = async (tx, entityType, entityId) => {
+    seenTxs.push(tx);
+    assert.equal(entityType, 'item');
+    return { containerIds: [], itemIds: [Number(entityId)] };
+  };
+  Reconcile.reconcile = async (tx, set, opts) => {
+    seenTxs.push(tx);
+    reconcileOpts = opts;
+    return { unlinked: [], tagsCarried: 0, tagsCreated: 0 };
+  };
+
+  try {
+    const out = await Items.move(5, 30, 42, { crossProperty: { srcPropertyId: 1, destPropertyId: 2 } });
+
+    assert.equal(db.txCount, 1, 'exactly one transaction opened');
+
+    const updateCall = db.calls.find((c) => /UPDATE TALLY\.items SET CONTAINER_ID/.test(c.sql));
+    assert.ok(updateCall, 'the UPDATE ran');
+    assert.equal(updateCall.tx, db.lastTx, 'the UPDATE ran on the transaction handle');
+
+    assert.equal(seenTxs.length, 2, 'both movingSet and reconcile were called');
+    assert.ok(seenTxs.every((t) => t === db.lastTx), 'movingSet and reconcile received the SAME tx as the UPDATE');
+
+    assert.deepEqual(reconcileOpts, {
+      srcPropertyId: 1, destPropertyId: 2, userId: 42,
+      rootType: 'item', rootId: 5, moveChanges: { containerId: 30 },
+    }, 'reconcile is called with the right root/property/change bookkeeping');
+
+    assert.deepEqual(out.consequences, { unlinked: [], tagsCarried: 0, tagsCreated: 0 });
+  } finally {
+    Reconcile.movingSet = origMovingSet;
+    Reconcile.reconcile = origReconcile;
+  }
+});
+
+// ── Cross-property audit: moved-out + moved-in, never plain "moved" ────────
+
+test('cross-property move logs exactly moved-out and moved-in — never a plain "moved"', async () => {
+  const db = txDb([
+    [GET_BY_ID, [{ ID: 5, NAME: 'Widget', CONTAINER_ID: 30 }]],
+  ]);
+  Items.init({ db, logger: noop });
+
+  const audits = [];
+  const origLog = AuditService.logChange;
+  AuditService.logChange = async (...args) => { audits.push(args); };
+
+  const origMovingSet = Reconcile.movingSet;
+  const origReconcile = Reconcile.reconcile;
+  Reconcile.movingSet = async (tx, entityType, entityId) => ({ containerIds: [], itemIds: [Number(entityId)] });
+  // Mirrors move-reconcile.service.js's own dual-audit contract (verified in
+  // move-reconcile.test.js) so this test proves items.service.js's move()
+  // itself never ALSO fires the same-property 'moved' event on this path.
+  Reconcile.reconcile = async (tx, set, { srcPropertyId, destPropertyId, userId, rootType, rootId, moveChanges }) => {
+    await AuditService.logChange(userId, rootType, rootId, 'moved-out', { ...moveChanges, toPropertyId: destPropertyId }, srcPropertyId);
+    await AuditService.logChange(userId, rootType, rootId, 'moved-in', { ...moveChanges, fromPropertyId: srcPropertyId }, destPropertyId);
+    return { unlinked: [], tagsCarried: 0, tagsCreated: 0 };
+  };
+
+  try {
+    await Items.move(5, 30, 42, { crossProperty: { srcPropertyId: 1, destPropertyId: 2 } });
+    assert.equal(audits.length, 2, 'exactly two audit entries');
+    assert.equal(audits[0][3], 'moved-out');
+    assert.equal(audits[1][3], 'moved-in');
+    assert.ok(!audits.some((a) => a[3] === 'moved'), 'no plain "moved" audit fires on the cross-property path');
+  } finally {
+    AuditService.logChange = origLog;
+    Reconcile.movingSet = origMovingSet;
+    Reconcile.reconcile = origReconcile;
+  }
+});
+
+// ── Cross-property return shape: {item, consequences} passes through ───────
+
+test('move() with crossProperty returns {item, consequences}, with the reconcile result passed through untouched', async () => {
+  const db = txDb([
+    [GET_BY_ID, [{ ID: 5, NAME: 'Widget', CONTAINER_ID: 30 }]],
+  ]);
+  Items.init({ db, logger: noop });
+
+  const origMovingSet = Reconcile.movingSet;
+  const origReconcile = Reconcile.reconcile;
+  const canned = { unlinked: [{ itemId: 9, name: 'Charger' }], tagsCarried: 2, tagsCreated: 1 };
+  Reconcile.movingSet = async (tx, entityType, entityId) => ({ containerIds: [], itemIds: [Number(entityId)] });
+  Reconcile.reconcile = async () => canned;
+
+  try {
+    const out = await Items.move(5, 30, 42, { crossProperty: { srcPropertyId: 1, destPropertyId: 2 } });
+    assert.ok(out.item, 'the moved item is returned');
+    assert.equal(out.item.id, 5);
+    assert.deepEqual(out.consequences, canned, 'consequences is exactly what reconcile returned, untouched');
+  } finally {
+    Reconcile.movingSet = origMovingSet;
+    Reconcile.reconcile = origReconcile;
+  }
+});
