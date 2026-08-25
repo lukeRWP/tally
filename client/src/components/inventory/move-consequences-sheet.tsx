@@ -7,18 +7,9 @@ import {
   DialogClose,
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
+import type { MoveConsequences } from '@/hooks/use-inventory';
 
-/**
- * The shape the server sends both ways: as the 409 body's `errors` when a
- * lossy cross-property move needs confirmation, and as the success body's
- * `consequences` once one has gone through (confirmed, or clean to begin
- * with).
- */
-export interface MoveConsequences {
-  unlinked: { itemId: number; name: string }[];
-  tagsCarried: number;
-  tagsCreated: number;
-}
+export type { MoveConsequences };
 
 /**
  * Shown when a scanned or picked destination turns out to be in a different
@@ -26,16 +17,27 @@ export interface MoveConsequences {
  * links that only made sense within the old one — this is the one chance to
  * see what breaks before committing to it.
  *
+ * A batch move pauses on the FIRST entity that needs this, not the whole
+ * screen — `progress` (only passed when there is more than one entity in the
+ * load) says which one and how many are left, so confirming or cancelling
+ * reads as "this one" rather than "the move."
+ *
  * Same primitives as ConfirmDialog (Dialog/DialogContent/DialogHeader/
  * DialogFooter), because this IS a confirm dialog — just one with a body that
  * needs more than a single description line.
  */
 export function MoveConsequencesSheet({
+  entityName,
+  progress,
   consequences,
   onConfirm,
   onCancel,
   isPending = false,
 }: {
+  /** The name of the ONE entity this sheet is pausing the batch for. */
+  entityName?: string;
+  /** 0-based index + total count, when the load has more than one entity. */
+  progress?: { index: number; total: number };
   consequences: MoveConsequences;
   onConfirm: () => void;
   onCancel: () => void;
@@ -48,6 +50,11 @@ export function MoveConsequencesSheet({
           <DialogTitle className="text-base font-semibold text-[var(--color-text)]">
             Move to the other property?
           </DialogTitle>
+          {entityName && progress && progress.total > 1 && (
+            <p className="text-sm text-[var(--color-text-secondary)]">
+              {entityName} — {progress.index + 1} of {progress.total}
+            </p>
+          )}
         </DialogHeader>
 
         {consequences.unlinked.length > 0 && (

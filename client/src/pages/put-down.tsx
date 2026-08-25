@@ -1,18 +1,16 @@
 import * as React from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useQueryClient } from '@tanstack/react-query';
 import { PackageOpen, List, Undo2, X } from 'lucide-react';
 import { TagScanner } from '@/components/scanner/tag-scanner';
 import { DestinationPicker } from '@/components/inventory/destination-picker';
-import { MoveConsequencesSheet, type MoveConsequences } from '@/components/inventory/move-consequences-sheet';
+import { MoveConsequencesSheet } from '@/components/inventory/move-consequences-sheet';
 import { Button } from '@/components/ui/button';
 import { TitleBar } from '@/components/ui/title-bar';
 import { toast } from '@/components/ui/toast';
-import { api, ApiError } from '@/lib/api';
-import { queryKeys } from '@/lib/query-client';
-import { useCarryStore, type CarriedItem } from '@/store/carry-store';
-import { usePutDown, findOrCreateLooseContainer } from '@/hooks/use-put-down';
-import { useMoveItem, useMoveContainer, useProperties } from '@/hooks/use-inventory';
+import { api } from '@/lib/api';
+import { useCarryStore } from '@/store/carry-store';
+import { usePutDown, type ConfirmPrompt } from '@/hooks/use-put-down';
+import { useMoveItem, useMoveContainer, useProperties, type MoveConsequences } from '@/hooks/use-inventory';
 import { cn } from '@/lib/utils';
 import { useLayoutMode } from '@/hooks/use-layout-mode';
 
@@ -38,12 +36,6 @@ interface ResolvedEntity {
   exists: boolean;
 }
 
-interface MoveSingleOutcome {
-  targetId: number;
-  targetName: string;
-  consequences: MoveConsequences | null;
-}
-
 /** What the property-switcher + picker together decide the load is landing on. */
 interface LandTarget {
   type: string;
@@ -51,65 +43,17 @@ interface LandTarget {
   name: string;
 }
 
-/** A cross-property move the server refused (409) until confirmed. */
-interface PendingMove {
-  entity: CarriedItem;
-  dest: LandTarget;
-  consequences: MoveConsequences;
-}
-
 /**
- * Moves exactly ONE carried entity onto a destination, calling the API
- * directly instead of through useMoveItem/useMoveContainer.
- *
- * Those hooks' mutationFn signatures only forward {containerId} /
- * {parentContainerId, areaId} — there is nowhere for a `confirm` flag to
- * ride, and no way to read the success body's `consequences` back out. Both
- * are required here: the 409-confirm retry needs to send confirm:true, and
- * ANY cross-property success (confirmed or not) needs its consequences to
- * drive the toast and the undo wording. usePutDown (batch loads) still goes
- * through the hooks unchanged — the consequence sheet only applies to a
- * single carried entity, where "which move needs confirming" is unambiguous.
+ * One entity's paused confirm, while usePutDown's batch loop awaits a
+ * decision. Set by confirmPrompt (passed into the hook) and cleared by
+ * decide() — the hook itself never renders anything, so this bridges its
+ * "ask the user" step to this page's Dialog.
  */
-async function moveSingle(
-  entity: CarriedItem,
-  dest: LandTarget,
-  confirm: boolean,
-): Promise<MoveSingleOutcome | null> {
-  const isArea = dest.type === 'area';
-
-  if (entity.kind === 'container') {
-    // Same no-op rule as usePutDown: a bin already at the destination's top
-    // level (for an area) or already nested under the destination is a no-op.
-    const alreadyThere = isArea
-      ? entity.fromAreaId === dest.id && !entity.fromContainerId
-      : entity.id === dest.id || entity.fromContainerId === dest.id;
-    if (alreadyThere) return null;
-
-    const body: Record<string, unknown> = isArea
-      ? { parentContainerId: null, areaId: dest.id }
-      : { parentContainerId: dest.id };
-    if (confirm) body.confirm = true;
-
-    const res = await api.patch<{ consequences: MoveConsequences | null }>(
-      `/api/containers/_p_/${entity.id}/move`, body,
-    );
-    return { targetId: dest.id, targetName: dest.name, consequences: res.consequences ?? null };
-  }
-
-  // Items land in a container — an area destination resolves to its catch-all.
-  const target = isArea
-    ? await findOrCreateLooseContainer(dest.id, dest.name)
-    : { id: dest.id, name: dest.name };
-  if (entity.fromContainerId === target.id) return null;
-
-  const body: Record<string, unknown> = { containerId: target.id };
-  if (confirm) body.confirm = true;
-
-  const res = await api.patch<{ consequences: MoveConsequences | null }>(
-    `/api/items/_p_/${entity.id}/move`, body,
-  );
-  return { targetId: target.id, targetName: dest.name, consequences: res.consequences ?? null };
+interface PendingConfirm {
+  entityName: string;
+  index: number;
+  total: number;
+  consequences: MoveConsequences;
 }
 
 export function PutDown() {
@@ -119,15 +63,16 @@ export function PutDown() {
   const lastMove = useCarryStore((s) => s.lastMove);
   const clear = useCarryStore((s) => s.clear);
   const clearLastMove = useCarryStore((s) => s.clearLastMove);
-  const recordMove = useCarryStore((s) => s.recordMove);
   const putDown = usePutDown();
   const moveItem = useMoveItem();
   const moveContainer = useMoveContainer();
-  const qc = useQueryClient();
 
   const [picking, setPicking] = React.useState(atDesk);
   const [busy, setBusy] = React.useState(false);
-  const [pendingMove, setPendingMove] = React.useState<PendingMove | null>(null);
+  const [pendingConfirm, setPendingConfirm] = React.useState<PendingConfirm | null>(null);
+  // The loop that's paused lives inside usePutDown's Promise chain, not in
+  // this component — this is the resume handle for it.
+  const decisionRef = React.useRef<((decision: 'confirm' | 'cancel') => void) | null>(null);
 
   // The property switcher only appears with more than one property — most
   // households have exactly one, and that case must render today's UI with
@@ -153,76 +98,61 @@ export function PutDown() {
     : [bins ? `${bins} ${bins === 1 ? 'bin' : 'bins'}` : null,
        items ? `${items} ${items === 1 ? 'item' : 'items'}` : null].filter(Boolean).join(' + ');
 
-  // Same invalidation set useMoveItem/useMoveContainer trigger on success — a
-  // move changes counts on both the old and new container/area/property.
-  function invalidateAfterMove() {
-    qc.invalidateQueries({ queryKey: queryKeys.items.all });
-    qc.invalidateQueries({ queryKey: queryKeys.containers.all });
-    qc.invalidateQueries({ queryKey: queryKeys.areas.all });
-    qc.invalidateQueries({ queryKey: queryKeys.properties.all });
-  }
+  // Bridges usePutDown's per-entity pause (a 409 mid-batch) to this page's
+  // Dialog: the hook awaits the returned promise before resuming its loop,
+  // and the sheet's Confirm/Cancel buttons (via decide(), below) resolve it.
+  // Deliberately NOT gated on `busy` — busy covers the whole batch,
+  // including the time this sheet is sitting open waiting on the user, and
+  // disabling its buttons for that entire span would leave it unusable.
+  const confirmPrompt: ConfirmPrompt = React.useCallback(
+    (entity, index, total, consequences) =>
+      new Promise((resolve) => {
+        decisionRef.current = resolve;
+        setPendingConfirm({ entityName: entity.name, index, total, consequences });
+      }),
+    [],
+  );
 
-  // Shared tail for a successful single-entity land, whether it went through
-  // clean on the first try or after confirming past a 409.
-  function finishMove(moved: CarriedItem[], outcome: MoveSingleOutcome, dest: LandTarget) {
-    invalidateAfterMove();
-    recordMove({
-      items: moved,
-      toContainerId: outcome.targetId,
-      toContainerName: dest.name,
-      unlinkedCount: outcome.consequences?.unlinked.length,
-    });
-    toast.success(
-      outcome.consequences
-        ? `Moved to the other property · ${outcome.consequences.tagsCarried} tags carried`
-        : `${moved[0].name} → ${dest.name}`,
-    );
-    // Go to where it landed: the point of the move is that the thing is now
-    // somewhere, and this shows you it is.
-    if (dest.type === 'area') navigate(`/area/${dest.id}`);
-    else navigate(`/container/${dest.id}`);
+  function decide(decision: 'confirm' | 'cancel') {
+    decisionRef.current?.(decision);
+    decisionRef.current = null;
+    setPendingConfirm(null);
   }
 
   const land = React.useCallback(async (dest: LandTarget) => {
     setBusy(true);
     try {
-      const load = carriedRef.current;
-
-      // A single carried entity is the case the confirm sheet handles: which
-      // move a 409 belongs to is unambiguous. A multi-item load still goes
-      // through usePutDown as before — a lossy cross-property move inside a
-      // batch surfaces as the plain error toast below, same as any other
-      // move failure.
-      if (load.length === 1) {
-        const entity = load[0];
-        let outcome: MoveSingleOutcome | null;
-        try {
-          outcome = await moveSingle(entity, dest, false);
-        } catch (err) {
-          if (err instanceof ApiError && err.status === 409) {
-            const body = err.errors as MoveConsequences | undefined;
-            if (body?.unlinked) {
-              setPendingMove({ entity, dest, consequences: body });
-              return;
-            }
-          }
-          throw err;
-        }
-        if (!outcome) { toast(`Already in ${dest.name}`); return; }
-        finishMove([entity], outcome, dest);
-        return;
-      }
-
-      const result = await putDown(load, dest);
+      const result = await putDown(carriedRef.current, dest, confirmPrompt);
       if (!result) {
         toast(`Already in ${dest.name}`);
         return;
       }
-      toast.success(
-        result.moved.length === 1
-          ? `${result.moved[0].name} → ${dest.name}`
-          : `${result.moved.length} moved → ${dest.name}`,
-      );
+      const { moved, skipped, aborted, abortError, crossProperty, tagsCarried } = result;
+
+      if (aborted) {
+        // Whatever moved before the failure was already reconciled (dropped
+        // from carry, undo armed for it) inside usePutDown — this toast is
+        // just the honest report that the rest did not go through.
+        toast.error(abortError instanceof Error ? abortError.message : 'Could not move it there');
+        return;
+      }
+
+      if (moved.length === 0) {
+        // Every attempted entity was declined at its confirm sheet — nothing
+        // landed, so there is nowhere to navigate to.
+        toast('Nothing moved');
+        return;
+      }
+
+      if (skipped.length > 0) {
+        toast.success(`Moved ${moved.length} · skipped ${skipped.length}`);
+      } else if (crossProperty) {
+        toast.success(`Moved to the other property · ${tagsCarried} tags carried`);
+      } else {
+        toast.success(
+          moved.length === 1 ? `${moved[0].name} → ${dest.name}` : `${moved.length} moved → ${dest.name}`,
+        );
+      }
       // Go to where it landed: the point of the move is that the thing is now
       // somewhere, and this shows you it is.
       if (dest.type === 'area') navigate(`/area/${dest.id}`);
@@ -232,31 +162,7 @@ export function PutDown() {
     } finally {
       setBusy(false);
     }
-  }, [putDown, navigate]);
-
-  async function confirmPendingMove() {
-    if (!pendingMove) return;
-    const { entity, dest } = pendingMove;
-    setBusy(true);
-    try {
-      const outcome = await moveSingle(entity, dest, true);
-      setPendingMove(null);
-      if (!outcome) { toast(`Already in ${dest.name}`); return; }
-      finishMove([entity], outcome, dest);
-    } catch (err) {
-      setPendingMove(null);
-      toast.error(err instanceof Error ? err.message : 'Could not move it there');
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  function cancelPendingMove() {
-    // Drop the pending move and stay in move mode — the carried load is
-    // untouched (recordMove never ran), so the user can pick a different
-    // destination or scan again.
-    setPendingMove(null);
-  }
+  }, [putDown, navigate, confirmPrompt]);
 
   // Only tally tags reach here — the scanner decodes nothing else — so this
   // only has to decide whether the tag names somewhere a load can go.
@@ -430,12 +336,13 @@ export function PutDown() {
       )}
       </div>
 
-      {pendingMove && (
+      {pendingConfirm && (
         <MoveConsequencesSheet
-          consequences={pendingMove.consequences}
-          isPending={busy}
-          onConfirm={() => void confirmPendingMove()}
-          onCancel={cancelPendingMove}
+          entityName={pendingConfirm.entityName}
+          progress={{ index: pendingConfirm.index, total: pendingConfirm.total }}
+          consequences={pendingConfirm.consequences}
+          onConfirm={() => decide('confirm')}
+          onCancel={() => decide('cancel')}
         />
       )}
     </div>

@@ -4,6 +4,19 @@ import { queryKeys } from '@/lib/query-client';
 import type { Property, Area, Container, Item, BreadcrumbItem } from '@/types/inventory';
 import { asList } from '@/lib/list';
 
+/**
+ * What a move's response carries beyond the moved entity when the
+ * destination is in a different property: which accessory links had to be
+ * severed to go through, and how the destination's tags were reconciled.
+ * `null` for a same-property move. Consumers that don't care about
+ * cross-property moves can ignore the field entirely.
+ */
+export interface MoveConsequences {
+  unlinked: { itemId: number; name: string }[];
+  tagsCarried: number;
+  tagsCreated: number;
+}
+
 // Helper: API responses wrap data in named keys like { properties: [...] }
 // These select functions unwrap them for the components.
 
@@ -278,12 +291,16 @@ export function useDeleteContainer() {
 export function useMoveContainer() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, parentContainerId, areaId }: {
+    mutationFn: ({ id, parentContainerId, areaId, confirm }: {
       id: number; parentContainerId: number | null; areaId?: number;
+      /** Re-sends past a 409 that named the accessory links a cross-property
+       * move would sever — see MoveConsequences. Omit/false for the first try. */
+      confirm?: boolean;
     }) =>
-      api.patch<{ container: Container }>(`/api/containers/_p_/${id}/move`, {
+      api.patch<{ container: Container; consequences: MoveConsequences | null }>(`/api/containers/_p_/${id}/move`, {
         parentContainerId,
         ...(areaId ? { areaId } : {}),
+        ...(confirm ? { confirm: true } : {}),
       }),
     onSuccess: () => {
       // Re-parenting moves a whole subtree, so item lists shift too.
@@ -297,8 +314,11 @@ export function useMoveContainer() {
 export function useMoveItem() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, containerId }: { id: number; containerId: number }) =>
-      api.patch<{ item: Item }>(`/api/items/_p_/${id}/move`, { containerId }),
+    mutationFn: ({ id, containerId, confirm }: { id: number; containerId: number; confirm?: boolean }) =>
+      api.patch<{ item: Item; consequences: MoveConsequences | null }>(`/api/items/_p_/${id}/move`, {
+        containerId,
+        ...(confirm ? { confirm: true } : {}),
+      }),
     onSuccess: () => {
       // A move changes TWO containers, and container/area rows carry itemCount
       // and containerCount — invalidating only items.all left those counts
