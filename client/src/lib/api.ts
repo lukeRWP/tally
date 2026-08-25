@@ -3,10 +3,18 @@ const BASE = '';
 /** Error carrying the HTTP status so callers/retry logic can branch on it. */
 export class ApiError extends Error {
   status: number;
-  constructor(message: string, status: number) {
+  /**
+   * The response envelope's `errors` field, when present. Shape varies by
+   * endpoint — Joi validation sends an array of field messages, the move
+   * endpoints' 409 sends `{unlinked, tagsCarried, tagsCreated}` — so callers
+   * narrow it themselves.
+   */
+  errors?: unknown;
+  constructor(message: string, status: number, errors?: unknown) {
     super(message);
     this.name = 'ApiError';
     this.status = status;
+    this.errors = errors;
   }
 }
 
@@ -44,7 +52,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
  * (multipart uploads, blob downloads) share the same guard as request().
  */
 export async function parseEnvelope<T>(res: Response): Promise<T> {
-  let json: { success?: boolean; message?: string; data?: T } | null = null;
+  let json: { success?: boolean; message?: string; data?: T; errors?: unknown } | null = null;
   try {
     json = await res.json();
   } catch {
@@ -52,7 +60,7 @@ export async function parseEnvelope<T>(res: Response): Promise<T> {
   }
 
   if (!res.ok || !json || json.success === false) {
-    throw new ApiError(json?.message || res.statusText || 'Request failed', res.status);
+    throw new ApiError(json?.message || res.statusText || 'Request failed', res.status, json?.errors);
   }
   return json.data as T;
 }

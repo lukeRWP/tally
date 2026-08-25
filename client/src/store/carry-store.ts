@@ -38,6 +38,13 @@ export interface CompletedMove {
   items: CarriedItem[];
   toContainerId: number;
   toContainerName: string;
+  /**
+   * Set when the move crossed properties and had to sever cross-property
+   * accessory links to go through. Undo puts the load back in its old
+   * container, but it cannot re-link what was severed — the undo toast has
+   * to say so rather than imply a full undo.
+   */
+  unlinkedCount?: number;
 }
 
 interface CarryState {

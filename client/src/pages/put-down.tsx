@@ -1,15 +1,18 @@
 import * as React from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useQueryClient } from '@tanstack/react-query';
 import { PackageOpen, List, Undo2, X } from 'lucide-react';
 import { TagScanner } from '@/components/scanner/tag-scanner';
 import { DestinationPicker } from '@/components/inventory/destination-picker';
+import { MoveConsequencesSheet, type MoveConsequences } from '@/components/inventory/move-consequences-sheet';
 import { Button } from '@/components/ui/button';
 import { TitleBar } from '@/components/ui/title-bar';
 import { toast } from '@/components/ui/toast';
-import { api } from '@/lib/api';
-import { useCarryStore } from '@/store/carry-store';
-import { usePutDown } from '@/hooks/use-put-down';
-import { useMoveItem, useMoveContainer } from '@/hooks/use-inventory';
+import { api, ApiError } from '@/lib/api';
+import { queryKeys } from '@/lib/query-client';
+import { useCarryStore, type CarriedItem } from '@/store/carry-store';
+import { usePutDown, findOrCreateLooseContainer } from '@/hooks/use-put-down';
+import { useMoveItem, useMoveContainer, useProperties } from '@/hooks/use-inventory';
 import { cn } from '@/lib/utils';
 import { useLayoutMode } from '@/hooks/use-layout-mode';
 
@@ -35,6 +38,80 @@ interface ResolvedEntity {
   exists: boolean;
 }
 
+interface MoveSingleOutcome {
+  targetId: number;
+  targetName: string;
+  consequences: MoveConsequences | null;
+}
+
+/** What the property-switcher + picker together decide the load is landing on. */
+interface LandTarget {
+  type: string;
+  id: number;
+  name: string;
+}
+
+/** A cross-property move the server refused (409) until confirmed. */
+interface PendingMove {
+  entity: CarriedItem;
+  dest: LandTarget;
+  consequences: MoveConsequences;
+}
+
+/**
+ * Moves exactly ONE carried entity onto a destination, calling the API
+ * directly instead of through useMoveItem/useMoveContainer.
+ *
+ * Those hooks' mutationFn signatures only forward {containerId} /
+ * {parentContainerId, areaId} — there is nowhere for a `confirm` flag to
+ * ride, and no way to read the success body's `consequences` back out. Both
+ * are required here: the 409-confirm retry needs to send confirm:true, and
+ * ANY cross-property success (confirmed or not) needs its consequences to
+ * drive the toast and the undo wording. usePutDown (batch loads) still goes
+ * through the hooks unchanged — the consequence sheet only applies to a
+ * single carried entity, where "which move needs confirming" is unambiguous.
+ */
+async function moveSingle(
+  entity: CarriedItem,
+  dest: LandTarget,
+  confirm: boolean,
+): Promise<MoveSingleOutcome | null> {
+  const isArea = dest.type === 'area';
+
+  if (entity.kind === 'container') {
+    // Same no-op rule as usePutDown: a bin already at the destination's top
+    // level (for an area) or already nested under the destination is a no-op.
+    const alreadyThere = isArea
+      ? entity.fromAreaId === dest.id && !entity.fromContainerId
+      : entity.id === dest.id || entity.fromContainerId === dest.id;
+    if (alreadyThere) return null;
+
+    const body: Record<string, unknown> = isArea
+      ? { parentContainerId: null, areaId: dest.id }
+      : { parentContainerId: dest.id };
+    if (confirm) body.confirm = true;
+
+    const res = await api.patch<{ consequences: MoveConsequences | null }>(
+      `/api/containers/_p_/${entity.id}/move`, body,
+    );
+    return { targetId: dest.id, targetName: dest.name, consequences: res.consequences ?? null };
+  }
+
+  // Items land in a container — an area destination resolves to its catch-all.
+  const target = isArea
+    ? await findOrCreateLooseContainer(dest.id, dest.name)
+    : { id: dest.id, name: dest.name };
+  if (entity.fromContainerId === target.id) return null;
+
+  const body: Record<string, unknown> = { containerId: target.id };
+  if (confirm) body.confirm = true;
+
+  const res = await api.patch<{ consequences: MoveConsequences | null }>(
+    `/api/items/_p_/${entity.id}/move`, body,
+  );
+  return { targetId: target.id, targetName: dest.name, consequences: res.consequences ?? null };
+}
+
 export function PutDown() {
   const atDesk = useLayoutMode() === 'sidebar';
   const navigate = useNavigate();
@@ -42,12 +119,27 @@ export function PutDown() {
   const lastMove = useCarryStore((s) => s.lastMove);
   const clear = useCarryStore((s) => s.clear);
   const clearLastMove = useCarryStore((s) => s.clearLastMove);
+  const recordMove = useCarryStore((s) => s.recordMove);
   const putDown = usePutDown();
   const moveItem = useMoveItem();
   const moveContainer = useMoveContainer();
+  const qc = useQueryClient();
 
   const [picking, setPicking] = React.useState(atDesk);
   const [busy, setBusy] = React.useState(false);
+  const [pendingMove, setPendingMove] = React.useState<PendingMove | null>(null);
+
+  // The property switcher only appears with more than one property — most
+  // households have exactly one, and that case must render today's UI with
+  // no new elements at all.
+  const { data: properties } = useProperties();
+  const [selectedPropertyId, setSelectedPropertyId] = React.useState(0);
+  React.useEffect(() => {
+    if (!selectedPropertyId && properties && properties.length > 0) {
+      setSelectedPropertyId(properties[0].id);
+    }
+  }, [properties, selectedPropertyId]);
+  const showSwitcher = (properties?.length ?? 0) > 1;
 
   // The scanner callback is handed to the camera once, so it must not close
   // over a stale load.
@@ -61,10 +153,67 @@ export function PutDown() {
     : [bins ? `${bins} ${bins === 1 ? 'bin' : 'bins'}` : null,
        items ? `${items} ${items === 1 ? 'item' : 'items'}` : null].filter(Boolean).join(' + ');
 
-  const land = React.useCallback(async (dest: { type: string; id: number; name: string }) => {
+  // Same invalidation set useMoveItem/useMoveContainer trigger on success — a
+  // move changes counts on both the old and new container/area/property.
+  function invalidateAfterMove() {
+    qc.invalidateQueries({ queryKey: queryKeys.items.all });
+    qc.invalidateQueries({ queryKey: queryKeys.containers.all });
+    qc.invalidateQueries({ queryKey: queryKeys.areas.all });
+    qc.invalidateQueries({ queryKey: queryKeys.properties.all });
+  }
+
+  // Shared tail for a successful single-entity land, whether it went through
+  // clean on the first try or after confirming past a 409.
+  function finishMove(moved: CarriedItem[], outcome: MoveSingleOutcome, dest: LandTarget) {
+    invalidateAfterMove();
+    recordMove({
+      items: moved,
+      toContainerId: outcome.targetId,
+      toContainerName: dest.name,
+      unlinkedCount: outcome.consequences?.unlinked.length,
+    });
+    toast.success(
+      outcome.consequences
+        ? `Moved to the other property · ${outcome.consequences.tagsCarried} tags carried`
+        : `${moved[0].name} → ${dest.name}`,
+    );
+    // Go to where it landed: the point of the move is that the thing is now
+    // somewhere, and this shows you it is.
+    if (dest.type === 'area') navigate(`/area/${dest.id}`);
+    else navigate(`/container/${dest.id}`);
+  }
+
+  const land = React.useCallback(async (dest: LandTarget) => {
     setBusy(true);
     try {
-      const result = await putDown(carriedRef.current, dest);
+      const load = carriedRef.current;
+
+      // A single carried entity is the case the confirm sheet handles: which
+      // move a 409 belongs to is unambiguous. A multi-item load still goes
+      // through usePutDown as before — a lossy cross-property move inside a
+      // batch surfaces as the plain error toast below, same as any other
+      // move failure.
+      if (load.length === 1) {
+        const entity = load[0];
+        let outcome: MoveSingleOutcome | null;
+        try {
+          outcome = await moveSingle(entity, dest, false);
+        } catch (err) {
+          if (err instanceof ApiError && err.status === 409) {
+            const body = err.errors as MoveConsequences | undefined;
+            if (body?.unlinked) {
+              setPendingMove({ entity, dest, consequences: body });
+              return;
+            }
+          }
+          throw err;
+        }
+        if (!outcome) { toast(`Already in ${dest.name}`); return; }
+        finishMove([entity], outcome, dest);
+        return;
+      }
+
+      const result = await putDown(load, dest);
       if (!result) {
         toast(`Already in ${dest.name}`);
         return;
@@ -84,6 +233,30 @@ export function PutDown() {
       setBusy(false);
     }
   }, [putDown, navigate]);
+
+  async function confirmPendingMove() {
+    if (!pendingMove) return;
+    const { entity, dest } = pendingMove;
+    setBusy(true);
+    try {
+      const outcome = await moveSingle(entity, dest, true);
+      setPendingMove(null);
+      if (!outcome) { toast(`Already in ${dest.name}`); return; }
+      finishMove([entity], outcome, dest);
+    } catch (err) {
+      setPendingMove(null);
+      toast.error(err instanceof Error ? err.message : 'Could not move it there');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function cancelPendingMove() {
+    // Drop the pending move and stay in move mode — the carried load is
+    // untouched (recordMove never ran), so the user can pick a different
+    // destination or scan again.
+    setPendingMove(null);
+  }
 
   // Only tally tags reach here — the scanner decodes nothing else — so this
   // only has to decide whether the tag names somewhere a load can go.
@@ -123,9 +296,11 @@ export function PutDown() {
       );
       const skipped = lastMove.items.length - reversible.length;
       toast(
-        skipped > 0
-          ? `Put ${reversible.length} back — ${skipped} had no previous home`
-          : 'Put back',
+        lastMove.unlinkedCount && lastMove.unlinkedCount > 0
+          ? 'Moved back · unlinked accessories were not restored'
+          : skipped > 0
+            ? `Put ${reversible.length} back — ${skipped} had no previous home`
+            : 'Put back',
       );
       clearLastMove();
     } catch (err) {
@@ -199,11 +374,40 @@ export function PutDown() {
 
       <div className={cn(atDesk && 'min-w-0')}>
       {picking ? (
-        <DestinationPicker
-          seedAreaId={carried[0]?.fromAreaId}
-          onPick={(bin) => { setPicking(false); void land({ type: 'container', id: bin.id, name: bin.name }); }}
-          onClose={() => setPicking(false)}
-        />
+        showSwitcher ? (
+          // Cross-property destinations need a deliberate choice, not a
+          // dropdown buried inside the picker — same segmented-Button pattern
+          // as the loaded-roll selector in printer settings.
+          <div className="flex flex-col gap-2 flex-1 min-h-0">
+            <div className="flex gap-2 shrink-0">
+              {properties!.map((p) => (
+                <Button
+                  key={p.id}
+                  size="sm"
+                  variant={p.id === selectedPropertyId ? 'default' : 'outline'}
+                  onClick={() => setSelectedPropertyId(p.id)}
+                >
+                  {p.name}
+                </Button>
+              ))}
+            </div>
+            {/* Remounted on property change (via key) so the picker's own
+                area/container state resets instead of showing the old
+                property's bins under the new one's areas. */}
+            <DestinationPicker
+              key={selectedPropertyId}
+              seedPropertyId={selectedPropertyId || undefined}
+              onPick={(bin) => { setPicking(false); void land({ type: 'container', id: bin.id, name: bin.name }); }}
+              onClose={() => setPicking(false)}
+            />
+          </div>
+        ) : (
+          <DestinationPicker
+            seedAreaId={carried[0]?.fromAreaId}
+            onPick={(bin) => { setPicking(false); void land({ type: 'container', id: bin.id, name: bin.name }); }}
+            onClose={() => setPicking(false)}
+          />
+        )
       ) : (
         <>
           {/* The action is drawn inside the frame, so it is read while aiming.
@@ -225,6 +429,15 @@ export function PutDown() {
         </>
       )}
       </div>
+
+      {pendingMove && (
+        <MoveConsequencesSheet
+          consequences={pendingMove.consequences}
+          isPending={busy}
+          onConfirm={() => void confirmPendingMove()}
+          onCancel={cancelPendingMove}
+        />
+      )}
     </div>
   );
 }
