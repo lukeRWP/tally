@@ -119,6 +119,20 @@ export function PutDown() {
     setPendingConfirm(null);
   }
 
+  // An unmount mid-pause (navigating away — the X below, a bottom-nav tap,
+  // the browser back button — while the sheet is up) must not leave
+  // usePutDown's loop awaiting forever: that is the exact stuck-carry
+  // failure this whole round exists to kill, just triggered by navigation
+  // instead of a network error. Resolve as CANCEL, never confirm — an
+  // unmount means we can no longer ask the user anything, and silently
+  // confirming would commit a lossy cross-property move nobody agreed to.
+  // The paused entity ends up skipped; completeMove (inside usePutDown)
+  // still reconciles whatever DID move before the pause.
+  React.useEffect(() => () => {
+    decisionRef.current?.('cancel');
+    decisionRef.current = null;
+  }, []);
+
   const land = React.useCallback(async (dest: LandTarget) => {
     setBusy(true);
     try {
@@ -166,7 +180,16 @@ export function PutDown() {
 
   // Only tally tags reach here — the scanner decodes nothing else — so this
   // only has to decide whether the tag names somewhere a load can go.
+  //
+  // One batch at a time is the rule: while a confirm is pending, TagScanner
+  // is handed isActive={false} below, which tears the camera down — but that
+  // is a prop change React has to render and commit, not instant. decisionRef
+  // is set synchronously (inside confirmPrompt's Promise executor, which the
+  // spec runs synchronously) the moment a pause begins, so checking it here
+  // closes the gap: a decode that sneaks in before the camera actually stops
+  // is dropped, not queued, and never overwrites the paused batch's resolver.
   const handleCode = React.useCallback(async (code: string) => {
+    if (decisionRef.current) return;
     try {
       const entity = await api.get<ResolvedEntity>(
         `/api/labels/_x_/resolve/${encodeURIComponent(code)}`,
@@ -323,7 +346,11 @@ export function PutDown() {
               device that has no camera to deny. */}
           {!atDesk && (
             <TagScanner
-              label={busy ? 'Moving…' : 'Scan tote/area tag'}
+              // Paused while a confirm sheet is up — the decode loop otherwise
+              // keeps running underneath it and a second scan would call
+              // confirmPrompt again, stomping the paused batch's resolver.
+              isActive={!pendingConfirm}
+              label={pendingConfirm ? 'Paused — resolve the prompt' : busy ? 'Moving…' : 'Scan tote/area tag'}
               onTag={handleCode}
               onClose={() => navigate(-1)}
             />
