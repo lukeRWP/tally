@@ -8,6 +8,16 @@ mouse-and-webcam desk keeps the manual form, untouched.
 
 **No migration, no server change.** Client-only.
 
+**Screen map:** every screen × device class was mocked and approved before
+implementation — https://claude.ai/code/artifact/6579fbd7-16da-4f4b-aae9-b8cc6351ed4b
+(11 boards: decision logic, unchanged phone/portrait references, the new
+tablet-landscape row at 1194 and 1024, the desk regression reference). Two
+deliberate asymmetries are annotated there: the mode toggle's weights
+("Type it instead" is ghost — leaving the default shouldn't shout; "Use
+camera" is bordered — the road back to the default earns the louder button),
+and the viewport cap flexing per step (260–420px) so every step stays one
+screen tall.
+
 ---
 
 ## 1. The problem
