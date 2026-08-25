@@ -69,6 +69,16 @@ export function PutDown() {
 
   const [picking, setPicking] = React.useState(atDesk);
   const [busy, setBusy] = React.useState(false);
+  // Mirrors `busy` for the reentrancy guard inside land() (below). land is a
+  // useCallback that does not — and should not — depend on `busy` (it has no
+  // reason to be recreated when it flips), so reading the STATE there would
+  // close over a stale value from whenever land was last created. The ref is
+  // written alongside every setBusy call via setBusyBoth and is always current.
+  const busyRef = React.useRef(false);
+  function setBusyBoth(value: boolean) {
+    busyRef.current = value;
+    setBusy(value);
+  }
   const [pendingConfirm, setPendingConfirm] = React.useState<PendingConfirm | null>(null);
   // The loop that's paused lives inside usePutDown's Promise chain, not in
   // this component — this is the resume handle for it.
@@ -134,7 +144,14 @@ export function PutDown() {
   }, []);
 
   const land = React.useCallback(async (dest: LandTarget) => {
-    setBusy(true);
+    // One batch at a time, enforced HERE rather than at each entry point —
+    // the camera (isActive/handleCode already gate it), the picker's
+    // onPick (never gated at all — the gap this guard closes), and anything
+    // added later all pass through this same function. A land() call while
+    // one is already running (busyRef) or paused on a decision (decisionRef)
+    // is dropped, not queued.
+    if (busyRef.current || decisionRef.current) return;
+    setBusyBoth(true);
     try {
       const result = await putDown(carriedRef.current, dest, confirmPrompt);
       if (!result) {
@@ -174,7 +191,7 @@ export function PutDown() {
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Could not move it there');
     } finally {
-      setBusy(false);
+      setBusyBoth(false);
     }
   }, [putDown, navigate, confirmPrompt]);
 
