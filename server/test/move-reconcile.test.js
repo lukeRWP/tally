@@ -102,6 +102,21 @@ test('audit is written to BOTH properties, once per root', async () => {
   } finally { AuditService.logChange = orig; }
 });
 
+// ── needsConfirm — pure function, unit-tested directly ──────────────────────
+// Moved from items.move.test.js when needsConfirm moved into this module
+// (Task 3): it is shared by both the item and container move routes now, so
+// it belongs beside reconcile/previewConsequences rather than in one route file.
+
+test('needsConfirm requires explicit confirm only when accessories would be unlinked', () => {
+  assert.equal(typeof Reconcile.needsConfirm, 'function', 'move-reconcile.service.js exports needsConfirm');
+  assert.equal(Reconcile.needsConfirm({ unlinked: [{ itemId: 1, name: 'Charger' }] }, false), true,
+    'a lossy move without confirm needs one');
+  assert.equal(Reconcile.needsConfirm({ unlinked: [{ itemId: 1, name: 'Charger' }] }, true), false,
+    'confirm:true clears the gate even when lossy');
+  assert.equal(Reconcile.needsConfirm({ unlinked: [] }, false), false,
+    'a clean move never needs confirm');
+});
+
 test('previewConsequences issues no writes', async () => {
   const tx = fakeTx([
     [/entity_tags/, [{ TAG_ID: 2, NAME: 'Tools', ENTITY_TYPE: 'item', ENTITY_ID: 7 }]],

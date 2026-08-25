@@ -3,6 +3,7 @@ module.exports = function containersRoutes({ app, db, logger }) {
   ContainersService.init({ db, logger });
 
   const AreasService = require('./areas.service');
+  const Reconcile = require('./move-reconcile.service');
 
   const { createContainer, updateContainer, moveContainer } = require('./containers.schema');
   const { success, error } = require('../../utils/response');
@@ -171,24 +172,52 @@ module.exports = function containersRoutes({ app, db, logger }) {
       if (validationError) {
         return error(res, 'Validation failed', 422, validationError.details.map(d => d.message));
       }
-      // Destination must be in the same property as the source — block cross-property
-      // moves (a property editor must not relocate a container into another tenant's
-      // property). The source property is resolved by resolvePropertyFromContainer.
+      // Resolve the destination property. Nesting under a parent container
+      // decides the effective area (and so the property) in the service —
+      // areaId is only advisory there and must agree with the parent's area —
+      // so a parentContainerId takes priority; a root move (no parent) falls
+      // back to the areaId, if any. Neither present means "stays put".
       const srcPropertyId = req.params.propertyId;
-      if (value.areaId !== undefined && value.areaId !== null) {
-        const destAreaProperty = await AreasService.getPropertyIdForArea(value.areaId);
-        if (!destAreaProperty || String(destAreaProperty) !== String(srcPropertyId)) {
-          return error(res, 'Destination area must be in the same property', 400);
-        }
-      }
+      let destPropertyId = srcPropertyId;
       if (value.parentContainerId !== undefined && value.parentContainerId !== null) {
-        const destParentProperty = await ContainersService.getPropertyIdForContainer(value.parentContainerId);
-        if (!destParentProperty || String(destParentProperty) !== String(srcPropertyId)) {
-          return error(res, 'Destination container must be in the same property', 400);
+        destPropertyId = await ContainersService.getPropertyIdForContainer(value.parentContainerId);
+        if (!destPropertyId) return error(res, 'Destination container not found', 404);
+      } else if (value.areaId !== undefined && value.areaId !== null) {
+        destPropertyId = await AreasService.getPropertyIdForArea(value.areaId);
+        if (!destPropertyId) return error(res, 'Destination area not found', 404);
+      }
+
+      let crossProperty = null;
+      if (String(destPropertyId) !== String(srcPropertyId)) {
+        // Cross-property: the caller must be editor/owner THERE too — checked
+        // BEFORE any preview runs, so a user without destination access never
+        // gets a peek at what the move would do (that would leak the
+        // destination's tag/accessory shape to someone with no right to see it).
+        const destRole = await db.query(
+          'SELECT ROLE FROM TALLY.property_members WHERE PROPERTY_ID = ? AND USER_ID = ?',
+          [destPropertyId, req.user.id]
+        );
+        if (!['owner', 'editor'].includes(destRole[0]?.ROLE)) {
+          return error(res, 'You need editor access to the destination property', 403);
+        }
+        crossProperty = { srcPropertyId: Number(srcPropertyId), destPropertyId: Number(destPropertyId) };
+
+        // Lossy moves need an explicit confirm; clean ones keep the scan rhythm.
+        if (!value.confirm) {
+          const preview = await db.withTransaction(async (tx) => {
+            const set = await Reconcile.movingSet(tx, 'container', req.params.containerId);
+            return Reconcile.previewConsequences(tx, set, destPropertyId);
+          });
+          if (Reconcile.needsConfirm(preview, value.confirm)) {
+            return error(res, 'This move unlinks accessories', 409, preview);
+          }
         }
       }
-      const container = await ContainersService.move(req.params.containerId, value.parentContainerId, value.areaId, req.user.id);
-      success(res, { container });
+
+      const out = await ContainersService.move(
+        req.params.containerId, value.parentContainerId, value.areaId, req.user.id, { crossProperty }
+      );
+      success(res, out);
     }
   );
 

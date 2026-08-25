@@ -1,10 +1,3 @@
-// The 409 confirm gate is pure enough to unit-test on its own, and pulling it
-// out of the handler is what makes that possible — there is no req/res to
-// fake, just the preview and the caller's flag.
-function needsConfirm(consequences, confirm) {
-  return !confirm && consequences.unlinked.length > 0;
-}
-
 module.exports = function itemsRoutes({ app, db, logger }) {
   const ItemsService = require('./items.service');
   ItemsService.init({ db, logger });
@@ -276,7 +269,7 @@ module.exports = function itemsRoutes({ app, db, logger }) {
             const set = await Reconcile.movingSet(tx, 'item', req.params.itemId);
             return Reconcile.previewConsequences(tx, set, destPropertyId);
           });
-          if (needsConfirm(preview, value.confirm)) {
+          if (Reconcile.needsConfirm(preview, value.confirm)) {
             return error(res, 'This move unlinks accessories', 409, preview);
           }
         }
@@ -330,7 +323,3 @@ module.exports = function itemsRoutes({ app, db, logger }) {
     }
   );
 };
-
-// Exported for direct unit testing (see test/items.move.test.js) — attached
-// to the function object itself since module.exports IS itemsRoutes.
-module.exports.needsConfirm = needsConfirm;

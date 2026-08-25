@@ -96,6 +96,15 @@ async function previewConsequences(tx, set, destPropertyId) {
   return { unlinked, tagsCarried: attached.length, tagsCreated: toCreate.length };
 }
 
+// The 409 confirm gate is pure enough to unit-test on its own, and pulling it
+// out of the route handler is what makes that possible — there is no req/res
+// to fake, just the preview and the caller's flag. Lives here (rather than in
+// items.routes.js, its original home) because both items and containers
+// routes need it — shared logic belongs in the shared module.
+function needsConfirm(consequences, confirm) {
+  return !confirm && consequences.unlinked.length > 0;
+}
+
 async function reconcile(tx, set, { srcPropertyId, destPropertyId, userId, rootType, rootId, moveChanges }) {
   // Tags: find-or-create in the destination, then repoint each attachment row.
   const { attached, byName, toCreate } = await tagPlan(tx, set, destPropertyId);
@@ -132,4 +141,4 @@ async function reconcile(tx, set, { srcPropertyId, destPropertyId, userId, rootT
   return { unlinked, tagsCarried: attached.length, tagsCreated: toCreate.length };
 }
 
-module.exports = { movingSet, previewConsequences, reconcile };
+module.exports = { movingSet, previewConsequences, reconcile, needsConfirm };

@@ -2,6 +2,7 @@ const { generateCode } = require('../../utils/qr');
 const ClosureTableService = require('./closure-table.service');
 const AuditService = require('../audit/audit.service');
 const RecycleService = require('../recycle/recycle.service');
+const Reconcile = require('./move-reconcile.service');
 
 let _db = null;
 let _logger = null;
@@ -225,7 +226,7 @@ const ContainersService = {
     return ContainersService.getById(id);
   },
 
-  async move(id, newParentContainerId, newAreaId, userId) {
+  async move(id, newParentContainerId, newAreaId, userId, opts = {}) {
     // A container can never be moved into itself — cheap to reject up front.
     if (newParentContainerId && Number(newParentContainerId) === Number(id)) {
       const err = new Error('A container cannot be moved into itself');
@@ -328,12 +329,37 @@ const ContainersService = {
           [effectiveAreaId, id]
         );
       }
+
+      // Cross-property: reconciliation rides the SAME transaction as the move
+      // itself — a moved subtree with stranded tag/accessory rows would be
+      // worse than a refused move. Runs after the cascade so movingSet's
+      // closure-table walk (and the item lookup it does per container) sees
+      // the subtree's final AREA_ID, though only CONTAINER_ID membership in
+      // the closure table actually matters for the set it collects.
+      if (opts.crossProperty) {
+        const set = await Reconcile.movingSet(tx, 'container', id);
+        opts._consequences = await Reconcile.reconcile(tx, set, {
+          srcPropertyId: opts.crossProperty.srcPropertyId,
+          destPropertyId: opts.crossProperty.destPropertyId,
+          userId,
+          rootType: 'container',
+          rootId: Number(id),
+          moveChanges: { parentContainerId: newParentContainerId, areaId: newAreaId },
+        });
+      }
     });
+
+    if (opts.crossProperty) {
+      // reconcile() already wrote moved-out/moved-in to both properties — the
+      // plain single-property 'moved' audit below would be a THIRD, misleading
+      // event (it names neither property) if it also fired here.
+      return { container: await ContainersService.getById(id), consequences: opts._consequences };
+    }
 
     const propertyId = await ContainersService.getPropertyIdForContainer(id);
     AuditService.logChange(userId, 'container', id, 'moved', { parentContainerId: newParentContainerId, areaId: newAreaId }, propertyId);
 
-    return ContainersService.getById(id);
+    return { container: await ContainersService.getById(id), consequences: null };
   },
 
   async softDelete(id, userId) {

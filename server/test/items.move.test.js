@@ -3,7 +3,6 @@ const assert = require('node:assert');
 const Items = require('../src/modules/inventory/items.service');
 const Reconcile = require('../src/modules/inventory/move-reconcile.service');
 const AuditService = require('../src/modules/audit/audit.service');
-const itemsRoutes = require('../src/modules/inventory/items.routes');
 
 const noop = { warn() {}, info() {}, error() {} };
 AuditService.init({ db: { query: async () => [] }, logger: noop });
@@ -37,19 +36,6 @@ function txDb(routes) {
 const GET_BY_ID = /PROPERTY_ID AS PROPERTY_ID/;
 // getPropertyIdForItem's SELECT is the only query starting with this prefix.
 const GET_PROPERTY_ID_FOR_ITEM = /SELECT a\.PROPERTY_ID/;
-
-// ── needsConfirm — pure function, unit-tested directly ──────────────────────
-
-test('needsConfirm requires explicit confirm only when accessories would be unlinked', () => {
-  const { needsConfirm } = itemsRoutes;
-  assert.equal(typeof needsConfirm, 'function', 'items.routes.js exports needsConfirm for direct testing');
-  assert.equal(needsConfirm({ unlinked: [{ itemId: 1, name: 'Charger' }] }, false), true,
-    'a lossy move without confirm needs one');
-  assert.equal(needsConfirm({ unlinked: [{ itemId: 1, name: 'Charger' }] }, true), false,
-    'confirm:true clears the gate even when lossy');
-  assert.equal(needsConfirm({ unlinked: [] }, false), false,
-    'a clean move never needs confirm');
-});
 
 // ── REGRESSION PIN — same-property move is untouched ────────────────────────
 

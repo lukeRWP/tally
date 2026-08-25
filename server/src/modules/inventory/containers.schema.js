@@ -17,6 +17,10 @@ const updateContainer = Joi.object({
 const moveContainer = Joi.object({
   parentContainerId: Joi.number().integer().allow(null).required(),
   areaId: Joi.number().integer(),
+  // Explicit opt-in for a cross-property move that would strand accessory
+  // links (previewed via previewConsequences). Same-property moves never
+  // look at this field.
+  confirm: Joi.boolean(),
 });
 
 module.exports = { createContainer, updateContainer, moveContainer };
