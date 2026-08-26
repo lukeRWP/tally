@@ -946,7 +946,19 @@ export function Capture() {
           pending={busy !== null || createItem.isPending}
           seedAreaId={ctxArea || dest?.areaId}
           seedPropertyId={ctxProperty || undefined}
-          onUseCamera={tablet ? () => setTypedMode(false) : undefined}
+          // Switching back to the flow must land on the LIVE camera, not
+          // whatever panel happened to be open when "Type it instead" was
+          // tapped. identifying/picking/reviewOpen aren't cleared by a phase
+          // change (see resetDraft/setPhase call sites), and the step 2/3
+          // ternary checks reviewOpen first, then identifying, then picking —
+          // any of the three left stale would resurrect that panel instead of
+          // the scanner, so all three are cleared here.
+          onUseCamera={tablet ? () => {
+            setTypedMode(false);
+            setIdentifying(false);
+            setPicking(false);
+            setReviewOpen(false);
+          } : undefined}
         />
       ) : (
       <div key={phase} className={cn('animate-step-in flex flex-col gap-3', phase !== 'photo' && 'flex-1 min-h-0')}>
@@ -1147,8 +1159,16 @@ export function Capture() {
           ) : phase === 'identify' ? (
             // html5-qrcode sizes its video by width only, so on a wide
             // landscape tablet the stream would otherwise take over the page —
-            // the cap is tablet-only; the phone wrapper is unstyled.
-            <div className={cn(tablet && 'max-h-[clamp(240px,38vh,300px)] overflow-hidden')}>
+            // the cap is tablet-only; the phone wrapper is unstyled. The base
+            // classes (flex flex-col flex-1 min-h-0) are NOT decoration — this
+            // wrapper is itself a flex item of the step container above,
+            // which promises "exactly ONE of four things fills the space" via
+            // flex-1 min-h-0 on every sibling. Without repeating that contract
+            // here, this wrapper becomes an auto-height flex item that
+            // swallows CameraScanner's own flex-1 (phones lost ~200px of
+            // scanner height to this before the fix), AND on tablet flex-1 is
+            // what makes the wrapper grow enough for max-h to ever bind.
+            <div className={cn('flex flex-col flex-1 min-h-0', tablet && 'max-h-[clamp(240px,38vh,300px)] overflow-hidden')}>
               <ProductScanner
                 label={busy ?? 'Scan product barcode'}
                 onBarcode={handleCode}
@@ -1156,7 +1176,7 @@ export function Capture() {
               />
             </div>
           ) : (
-            <div className={cn(tablet && 'max-h-[clamp(230px,36vh,280px)] overflow-hidden')}>
+            <div className={cn('flex flex-col flex-1 min-h-0', tablet && 'max-h-[clamp(230px,36vh,280px)] overflow-hidden')}>
               <TagScanner
                 label={busy ?? 'Scan tote/area tag'}
                 onTag={handleCode}
