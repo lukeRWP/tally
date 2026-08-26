@@ -13,6 +13,7 @@ import { usePutDown, type ConfirmPrompt } from '@/hooks/use-put-down';
 import { useMoveItem, useMoveContainer, useProperties, type MoveConsequences } from '@/hooks/use-inventory';
 import { cn } from '@/lib/utils';
 import { useLayoutMode } from '@/hooks/use-layout-mode';
+import { useCoarsePointer } from '@/hooks/use-coarse-pointer';
 
 /**
  * Put it down.
@@ -58,6 +59,12 @@ interface PendingConfirm {
 
 export function PutDown() {
   const atDesk = useLayoutMode() === 'sidebar';
+  const coarse = useCoarsePointer();
+  // Scanner where a rear camera plausibly exists: phones, and tablets in
+  // landscape (sidebar chrome + coarse pointer — see use-coarse-pointer.ts
+  // for why camera-presence is NOT the test). Fine-pointer desks keep the
+  // picker-only flow.
+  const showScanner = !atDesk || coarse;
   const navigate = useNavigate();
   const carried = useCarryStore((s) => s.carried);
   const lastMove = useCarryStore((s) => s.lastMove);
@@ -411,21 +418,26 @@ export function PutDown() {
         )
       ) : (
         <>
-          {/* The action is drawn inside the frame, so it is read while aiming.
-              It doubles as the progress indicator while the move is in flight. */}
-          {/* At a desk the camera is opt-in: the picker above is the path that
-              works, and leading with a viewfinder there shows a denial for a
-              device that has no camera to deny. */}
-          {!atDesk && (
-            <TagScanner
-              // Paused while a confirm sheet is up — the decode loop otherwise
-              // keeps running underneath it and a second scan would call
-              // confirmPrompt again, stomping the paused batch's resolver.
-              isActive={!pendingConfirm}
-              label={pendingConfirm ? 'Paused — resolve the prompt' : busy ? 'Moving…' : 'Scan tote/area tag'}
-              onTag={handleCode}
-              onClose={() => navigate(-1)}
-            />
+          {/* Scanner-first wherever a rear camera plausibly exists: phones,
+              and tablets in landscape. Fine-pointer desks stay picker-only —
+              the earlier "no camera to deny" reasoning was written before
+              tablets had an identity; useCoarsePointer is that identity.
+              The wrapper's flex classes are unconditional ON PURPOSE: the
+              scanner's own flex-1 needs a flex ancestor in the step's sizing
+              chain, and a classless-on-phone wrapper collapses it (the
+              tablet-capture Critical). The clamp binds on tablets only. */}
+          {showScanner && (
+            <div className={cn('flex flex-col flex-1 min-h-0', atDesk && coarse && 'max-h-[clamp(230px,36vh,280px)] overflow-hidden')}>
+              <TagScanner
+                // Paused while a confirm sheet is up — the decode loop otherwise
+                // keeps running underneath it and a second scan would call
+                // confirmPrompt again, stomping the paused batch's resolver.
+                isActive={!pendingConfirm}
+                label={pendingConfirm ? 'Paused — resolve the prompt' : busy ? 'Moving…' : 'Scan tote/area tag'}
+                onTag={handleCode}
+                onClose={() => navigate(-1)}
+              />
+            </div>
           )}
           <Button variant="outline" size="sm" className="shrink-0" onClick={() => setPicking(true)}>
             <List className="w-4 h-4" />
