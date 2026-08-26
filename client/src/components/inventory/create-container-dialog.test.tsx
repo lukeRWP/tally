@@ -180,6 +180,24 @@ test('unseeded, property with zero areas: shows guidance, no area select, submit
   expect((screen.getByRole('button', { name: /create/i }) as HTMLButtonElement).disabled).toBe(true);
 });
 
+test('unseeded, areas still loading (data undefined): shows neither the guidance line nor an enabled submit', () => {
+  // useAreas has no keepPreviousData, so a property switch blanks `data` for
+  // the whole refetch. undefined means LOADING, not EMPTY — it must not be
+  // treated as "this property has zero areas" (that's a separate state,
+  // covered above with `data: []`).
+  vi.mocked(useProperties).mockReturnValue({ data: [{ id: 1, name: 'Home' }] } as unknown as ReturnType<typeof useProperties>);
+  vi.mocked(useAreas).mockReturnValue({ data: undefined } as unknown as ReturnType<typeof useAreas>);
+
+  render(<CreateContainerDialog open onOpenChange={() => {}} />);
+
+  expect(screen.queryByText(/no areas here yet/i)).toBeNull();
+  expect(screen.getByLabelText('Area')).toBeTruthy();
+  expect(screen.getByText(/loading areas/i)).toBeTruthy();
+
+  fillNameAndType();
+  expect((screen.getByRole('button', { name: /create/i }) as HTMLButtonElement).disabled).toBe(true);
+});
+
 test('successful create navigates to the new container and closes the dialog', async () => {
   vi.mocked(useProperties).mockReturnValue({ data: [{ id: 1, name: 'Home' }] } as unknown as ReturnType<typeof useProperties>);
   vi.mocked(useAreas).mockReturnValue({ data: [{ id: 5, name: 'Garage' }] } as unknown as ReturnType<typeof useAreas>);

@@ -28,7 +28,7 @@ import { useHasCamera } from '@/hooks/use-has-camera';
  * idiom from container-preview.tsx) — only one of them is ever enabled, since
  * the path can't match both patterns at once.
  */
-function useRouteSeed(pathname: string) {
+export function useRouteSeed(pathname: string) {
   const areaMatch = pathname.match(/^\/area\/(\d+)/);
   const containerMatch = pathname.match(/^\/container\/(\d+)/);
   const areaIdFromPath = areaMatch ? Number(areaMatch[1]) : undefined;
@@ -43,10 +43,14 @@ function useRouteSeed(pathname: string) {
   }
   if (containerIdFromPath != null) {
     if (!seedContainer) return undefined;
+    // The container's breadcrumb is closure-table CONTAINER ancestors only
+    // (`{id, name}`, no `type`) — area/property arrive as flat fields on the
+    // container payload instead. Same cast container-detail.tsx:182 uses.
+    const ext = seedContainer as unknown as { propertyId?: number; areaName?: string };
     return {
       areaId: seedContainer.areaId,
-      areaName: seedContainer.breadcrumb?.find((b) => b.type === 'area')?.name,
-      propertyId: seedContainer.breadcrumb?.find((b) => b.type === 'property')?.id,
+      areaName: ext.areaName,
+      propertyId: ext.propertyId,
     };
   }
   return undefined;

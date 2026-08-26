@@ -39,7 +39,7 @@ export function CreateContainerDialog({
   const effectivePropertyId = seedPropertyId ?? propertyId ?? properties?.[0]?.id;
   // Seeded flows already know the area, so there is nothing this hook needs
   // to fetch — `0` disables it via the hooks' own `enabled: !!id` idiom.
-  const { data: areas } = useAreas(seedAreaId ? 0 : (effectivePropertyId ?? 0));
+  const { data: areas } = useAreas(seedAreaId != null ? 0 : (effectivePropertyId ?? 0));
   const [areaId, setAreaId] = React.useState<number | undefined>(undefined);
 
   // This component stays mounted in the sidebar for the app's whole life —
@@ -55,7 +55,11 @@ export function CreateContainerDialog({
   // is where it goes" already applies one level up (the sole-property case
   // below), and a mandatory pick from a one-option list serves nobody.
   const effectiveAreaId = seedAreaId ?? areaId ?? (areas?.length === 1 ? areas[0].id : undefined);
-  const noAreas = !seeded && (areas?.length ?? 0) === 0;
+  // `useAreas` has no keepPreviousData, so switching properties blanks `data`
+  // for the whole refetch — undefined means LOADING, not empty, and must not
+  // flash the "no areas" guidance over a property that has some.
+  const areasLoading = !seeded && areas === undefined;
+  const noAreas = !seeded && areas !== undefined && areas.length === 0;
   const showPropertyButtons = !seeded && (properties?.length ?? 0) > 1;
 
   function submit(data: Record<string, unknown>) {
@@ -106,10 +110,16 @@ export function CreateContainerDialog({
           value={effectiveAreaId ?? ''}
           onChange={(e) => setAreaId(e.target.value ? Number(e.target.value) : undefined)}
         >
-          <option value="">Pick an area…</option>
-          {(areas ?? []).map((a) => (
-            <option key={a.id} value={a.id}>{a.name}</option>
-          ))}
+          {areasLoading ? (
+            <option value="" disabled>Loading areas…</option>
+          ) : (
+            <>
+              <option value="">Pick an area…</option>
+              {(areas ?? []).map((a) => (
+                <option key={a.id} value={a.id}>{a.name}</option>
+              ))}
+            </>
+          )}
         </Select>
       )}
     </div>

@@ -292,7 +292,7 @@ export function EntityForm({
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
               Cancel
             </Button>
-            <Button type="submit" disabled={isPending || submitDisabled}>
+            <Button type="submit" disabled={isPending || !!submitDisabled}>
               {isPending ? 'Saving...' : isEdit ? 'Update' : 'Create'}
             </Button>
           </DialogFooter>
