@@ -74,7 +74,13 @@ export function PutDown() {
   const moveItem = useMoveItem();
   const moveContainer = useMoveContainer();
 
-  const [picking, setPicking] = React.useState(atDesk);
+  // Fine-pointer desks have no scanner to land on, so they still open
+  // straight into the list. Coarse tablets DO have a scanner now (see
+  // showScanner above) — defaulting them into the list too would silently
+  // undo "landing on /move with a carry shows the camera immediately" from
+  // this feature's own design (only the render fork was updated below; this
+  // flag pre-dates it and was never taught about `coarse`).
+  const [picking, setPicking] = React.useState(atDesk && !coarse);
   const [busy, setBusy] = React.useState(false);
   // Mirrors `busy` for the reentrancy guard inside land() (below). land is a
   // useCallback that does not — and should not — depend on `busy` (it has no
