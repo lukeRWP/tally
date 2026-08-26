@@ -21,6 +21,11 @@ interface EntityFormProps {
   defaultValues?: Record<string, unknown>;
   onSubmit: (data: Record<string, unknown>) => void | Promise<unknown>;
   isPending?: boolean;
+  /** Rendered between the field list and the submit row — e.g. a location
+      section a caller owns. EntityForm knows nothing about its contents. */
+  extraFields?: React.ReactNode;
+  /** AND-ed with the form's own validity — a caller's veto, never a grant. */
+  submitDisabled?: boolean;
 }
 
 /**
@@ -123,6 +128,8 @@ export function EntityForm({
   defaultValues,
   onSubmit,
   isPending,
+  extraFields,
+  submitDisabled,
 }: EntityFormProps) {
   const { register, handleSubmit, reset, setValue, formState: { errors } } = useForm({
     defaultValues: defaultValues as Record<string, string>,
@@ -279,11 +286,13 @@ export function EntityForm({
             );
           })}
 
+          {extraFields}
+
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
               Cancel
             </Button>
-            <Button type="submit" disabled={isPending}>
+            <Button type="submit" disabled={isPending || !!submitDisabled}>
               {isPending ? 'Saving...' : isEdit ? 'Update' : 'Create'}
             </Button>
           </DialogFooter>
