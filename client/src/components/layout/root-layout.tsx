@@ -1,17 +1,56 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Outlet, Navigate, useLocation, useNavigate } from 'react-router-dom';
-import { Home, Search, Bell, Settings, Printer, DoorOpen, BarChart2, Plus, ScanLine } from 'lucide-react';
+import { Home, Search, Bell, Settings, Printer, DoorOpen, BarChart2, Plus, ScanLine, Package, Box } from 'lucide-react';
 import { useAuth } from '@/hooks/use-auth';
 import { useAuthStore } from '@/store/auth-store';
 import { useUnreadCount } from '@/hooks/use-notifications';
+import { useArea, useContainer } from '@/hooks/use-inventory';
 import { Header } from './header';
 import { BottomNav, isNavActive } from './bottom-nav';
 import { CarryBanner } from '@/components/inventory/carry-banner';
+import { CreateContainerDialog } from '@/components/inventory/create-container-dialog';
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+} from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
 import { buildCaptureUrl } from '@/lib/capture-url';
 import { useCarryStore } from '@/store/carry-store';
 import { useLayoutMode } from '@/hooks/use-layout-mode';
 import { useHasCamera } from '@/hooks/use-has-camera';
+
+/**
+ * What "where" the current page already answers, so the container dialog
+ * doesn't make the user repeat a choice the page they're standing on already
+ * made. Both hooks are called unconditionally (the `?? 0`-with-`enabled`
+ * idiom from container-preview.tsx) — only one of them is ever enabled, since
+ * the path can't match both patterns at once.
+ */
+function useRouteSeed(pathname: string) {
+  const areaMatch = pathname.match(/^\/area\/(\d+)/);
+  const containerMatch = pathname.match(/^\/container\/(\d+)/);
+  const areaIdFromPath = areaMatch ? Number(areaMatch[1]) : undefined;
+  const containerIdFromPath = containerMatch ? Number(containerMatch[1]) : undefined;
+
+  const { data: seedArea } = useArea(areaIdFromPath ?? 0);
+  const { data: seedContainer } = useContainer(containerIdFromPath ?? 0);
+
+  if (areaIdFromPath != null) {
+    if (!seedArea) return undefined;
+    return { areaId: seedArea.id, areaName: seedArea.name, propertyId: seedArea.propertyId };
+  }
+  if (containerIdFromPath != null) {
+    if (!seedContainer) return undefined;
+    return {
+      areaId: seedContainer.areaId,
+      areaName: seedContainer.breadcrumb?.find((b) => b.type === 'area')?.name,
+      propertyId: seedContainer.breadcrumb?.find((b) => b.type === 'property')?.id,
+    };
+  }
+  return undefined;
+}
 
 // Mirrors the bottom nav's destinations in the same order, plus Search at the
 // top: one information architecture expressed on both surfaces, so desktop and
@@ -47,6 +86,8 @@ function Sidebar() {
   const { user } = useAuthStore();
   const { data: unreadCount } = useUnreadCount();
   const unread = typeof unreadCount === 'number' ? unreadCount : 0;
+  const routeSeed = useRouteSeed(location.pathname);
+  const [createContainerOpen, setCreateContainerOpen] = useState(false);
 
   return (
     <aside className="flex flex-col w-56 fixed inset-y-0 bg-[var(--color-bg)] border-r-2 border-[var(--color-text)] z-50">
@@ -59,17 +100,38 @@ function Sidebar() {
       </div>
 
       {/* Create — the primary action, not a destination, so it sits above the
-          nav rather than in it. Shares buildCaptureUrl with the phone's centre
-          button so the bin you are standing in still pre-pins as the
-          destination; two copies of that rule would drift. */}
+          nav rather than in it. Item still shares buildCaptureUrl with the
+          phone's centre button so the bin you are standing in pre-pins as the
+          destination; two copies of that rule would drift. Container is new:
+          it can be created from anywhere, not just from inside an area or
+          another container's page. */}
       <div className="px-3 pt-4">
-        <button
-          onClick={() => navigate(buildCaptureUrl(location.pathname))}
-          className="w-full flex items-center gap-2 px-3 py-2.5 rounded-[var(--radius-sm)] bg-[var(--color-primary)] text-white font-mono text-xs font-bold uppercase tracking-[0.12em] hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-[var(--color-text)] focus:ring-offset-2"
-        >
-          <Plus className="w-4 h-4 shrink-0" />
-          <span>Add</span>
-        </button>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button
+              aria-label="Add"
+              className="w-full flex items-center gap-2 px-3 py-2.5 rounded-[var(--radius-sm)] bg-[var(--color-primary)] text-white font-mono text-xs font-bold uppercase tracking-[0.12em] hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-[var(--color-text)] focus:ring-offset-2"
+            >
+              <Plus className="w-4 h-4 shrink-0" />
+              <span>Add</span>
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start">
+            <DropdownMenuItem onSelect={() => navigate(buildCaptureUrl(location.pathname))}>
+              <Package className="w-4 h-4" /> Item
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => setCreateContainerOpen(true)}>
+              <Box className="w-4 h-4" /> Container
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+        <CreateContainerDialog
+          open={createContainerOpen}
+          onOpenChange={setCreateContainerOpen}
+          seedAreaId={routeSeed?.areaId}
+          seedAreaName={routeSeed?.areaName}
+          seedPropertyId={routeSeed?.propertyId}
+        />
       </div>
 
       {/* Nav items */}
