@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Camera, Check, X, Printer, Plus, MapPin, SkipForward, List, AlertTriangle, Search, ImagePlus, Sparkles } from 'lucide-react';
+import { Camera, Check, X, Printer, Plus, MapPin, SkipForward, List, AlertTriangle, Search, ImagePlus, Sparkles, Keyboard } from 'lucide-react';
 import { ProductScanner } from '@/components/scanner/product-scanner';
 import { TagScanner } from '@/components/scanner/tag-scanner';
 import { ProductSearch } from '@/components/scanner/product-search';
@@ -22,6 +22,7 @@ import { extractTlyCode } from '@/lib/tly';
 import { useVisionPref } from '@/store/vision-store';
 import { decideSuggestion } from '@/lib/vision-decision';
 import { useLayoutMode } from '@/hooks/use-layout-mode';
+import { useCoarsePointer } from '@/hooks/use-coarse-pointer';
 
 /**
  * The capture flow: PICTURE → SCAN → SCAN → DONE.
@@ -200,6 +201,25 @@ export function Capture() {
   // A desk has no rear camera and usually no camera worth pointing at a shelf,
   // so step 1 stops asking for one.
   const atDesk = useLayoutMode() === 'sidebar';
+  // Landscape iPad: sidebar chrome (atDesk) AND a finger for a pointer. That
+  // combination gets the phone's camera flow instead of the desk's form —
+  // see showForm below for the single predicate that actually picks between
+  // them.
+  const coarse = useCoarsePointer();
+  const tablet = atDesk && coarse;
+  // Session-only, camera-first on every cold open: a tablet always starts in
+  // the camera flow and can switch to the typed form and back within the
+  // same visit, but a reload (or a different item) starts camera-first again.
+  // Deliberately NOT reset by a landscape/portrait rotation dip either — the
+  // component doesn't remount, so an in-session "Type it instead" choice
+  // survives one; camera-first only binds cold opens, and honouring the
+  // choice already made is less surprising than reverting it mid-task.
+  const [typedMode, setTypedMode] = React.useState(false);
+  // The single form-vs-flow predicate every other atDesk-shaped decision in
+  // this file now keys on. Equal to atDesk whenever the pointer is fine
+  // (coarse === false), which is what keeps phones and mouse-desks rendering
+  // byte-identically to before this switch existed.
+  const showForm = atDesk && (!coarse || typedMode);
   const [dragging, setDragging] = React.useState(false);
   const nameField = React.useRef<HTMLInputElement>(null);
 
@@ -754,17 +774,31 @@ export function Capture() {
       'flex flex-col gap-3 mx-auto h-full',
       // max-w-lg frames a camera viewfinder, which is what this page is on a
       // phone. The desk form is a form: it needs room for a label beside its
-      // field, not a 512px column that truncates every placeholder.
-      atDesk ? 'w-full max-w-[900px]' : 'max-w-lg',
+      // field, not a 512px column that truncates every placeholder. The
+      // tablet camera flow is the phone's viewfinder too (spec §3.1:
+      // whitespace, not stretched controls), so this keys on showForm, not
+      // atDesk.
+      showForm ? 'w-full max-w-[900px]' : 'max-w-lg',
     )}>
       {/* progress + destination */}
-      <div className={cn('flex items-center gap-2 shrink-0', atDesk && 'hidden')}>
+      <div className={cn('flex items-center gap-2 shrink-0', showForm && 'hidden')}>
         {[1, 2, 3].map((n) => (
           <span key={n} className={cn('h-[3px] rounded-full transition-all duration-300 ease-out',
             n === step ? 'w-8 bg-[var(--color-primary)]' : 'w-5',
             n < step ? 'bg-[var(--color-text)]' : n > step ? 'bg-[var(--color-border)]' : '')} />
         ))}
         <span className="flex-1" />
+        {tablet && !showForm && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="ml-auto shrink-0"
+            onClick={() => setTypedMode(true)}
+          >
+            <Keyboard className="w-4 h-4" />
+            Type it instead
+          </Button>
+        )}
         <span key={phase} className="animate-step-in font-mono text-[10px] uppercase tracking-[0.1em] text-[var(--color-text-muted)]">
           <b className="text-[var(--color-text)]">{step}/3</b>{' '}
           {phase === 'photo' ? 'picture' : phase === 'identify' ? 'identify' : 'place'}
@@ -862,19 +896,40 @@ export function Capture() {
         </div>
       )}
 
+      {/*
+        `capture="environment"` asks the OS for the REAR camera, which is right
+        on a phone (or tablet) held up to a shelf and wrong for a form pick —
+        it either does nothing or opens a webcam pointed at your face. A form
+        pick drops the attribute and gets a plain file picker instead.
+
+        Mounted here, unconditionally — outside both the showForm fork and the
+        phase==='photo' check — because it is the one piece of photo machinery
+        both branches share: ManualCreate's "Choose file" button and the flow's
+        camera button both just call `photoInput.current?.click()`. Mounting it
+        only inside the flow's phase==='photo' block (as it was before this
+        fix) meant `photoInput.current` was null whenever ManualCreate
+        rendered, so "Choose file" silently no-opped on every fine-pointer
+        desk — drag-and-drop covered the same gesture, so nobody noticed until
+        this task's "Type it instead" switch gave tablets the same dead button.
+      */}
+      <input ref={photoInput} type="file" accept="image/*"
+        {...(showForm ? {} : { capture: 'environment' as const })}
+        className="hidden" onChange={onPhoto} />
+
       {/* Each step enters as its own move, so advancing reads as progress
           rather than the same page quietly rearranging itself. */}
-      {atDesk ? (
+      {showForm ? (
         /*
-         * MANUAL CREATION at a desk.
+         * MANUAL CREATION: a desk (no coarse pointer), or a tablet that has
+         * switched to "Type it instead" this session.
          *
          * The three-step flow is built around a camera: photograph the thing,
          * scan its barcode, scan the bin's tag. All three are gestures you make
-         * while holding a phone in front of a shelf. At a desk none of them are
-         * available, so following the same three screens means pressing Skip
-         * twice to reach the only step that works.
+         * while holding a phone (or a tablet) in front of a shelf. A fine-pointer
+         * desk has none of them available, so following the same three screens
+         * means pressing Skip twice to reach the only step that works.
          *
-         * So a desk gets ONE screen: name it, say where it goes, optionally
+         * So the form gets ONE screen: name it, say where it goes, optionally
          * attach a photo. Same draft, same commit — this is a different way in,
          * not a different thing being made.
          */
@@ -891,30 +946,36 @@ export function Capture() {
           pending={busy !== null || createItem.isPending}
           seedAreaId={ctxArea || dest?.areaId}
           seedPropertyId={ctxProperty || undefined}
+          // Switching back to the flow must land on the LIVE camera, not
+          // whatever panel happened to be open when "Type it instead" was
+          // tapped. identifying/picking/reviewOpen aren't cleared by a phase
+          // change (see resetDraft/setPhase call sites), and the step 2/3
+          // ternary checks reviewOpen first, then identifying, then picking —
+          // any of the three left stale would resurrect that panel instead of
+          // the scanner, so all three are cleared here.
+          onUseCamera={tablet ? () => {
+            setTypedMode(false);
+            setIdentifying(false);
+            setPicking(false);
+            setReviewOpen(false);
+          } : undefined}
         />
       ) : (
       <div key={phase} className={cn('animate-step-in flex flex-col gap-3', phase !== 'photo' && 'flex-1 min-h-0')}>
       {/* ── step 1: the picture ─────────────────────────────────────────── */}
       {phase === 'photo' && (
         <div className="flex flex-col gap-2">
-          {/*
-            `capture="environment"` asks the OS for the REAR camera, which is
-            right on a phone held up to a shelf and wrong at a desk — it either
-            does nothing or opens a webcam pointed at your face. At a desk the
-            same input is a file picker, so the attribute is dropped and the
-            copy stops promising a camera that is not there.
-          */}
-          <input ref={photoInput} type="file" accept="image/*"
-            {...(atDesk ? {} : { capture: 'environment' as const })}
-            className="hidden" onChange={onPhoto} />
           <button
             type="button"
             onClick={() => photoInput.current?.click()}
             // Dropping a file IS the desktop gesture for this. Ignored on
-            // touch, where there is nothing to drag from.
-            onDragOver={atDesk ? (e) => { e.preventDefault(); setDragging(true); } : undefined}
-            onDragLeave={atDesk ? () => setDragging(false) : undefined}
-            onDrop={atDesk ? (e) => {
+            // touch, where there is nothing to drag from. This whole block only
+            // renders when showForm is false, so on a tablet in the camera flow
+            // these all resolve exactly as they do on a phone — see the audit
+            // note below.
+            onDragOver={showForm ? (e) => { e.preventDefault(); setDragging(true); } : undefined}
+            onDragLeave={showForm ? () => setDragging(false) : undefined}
+            onDrop={showForm ? (e) => {
               e.preventDefault();
               setDragging(false);
               const file = e.dataTransfer.files?.[0];
@@ -922,28 +983,36 @@ export function Capture() {
             } : undefined}
             className={cn(
               'flex flex-col items-center justify-center gap-2 border-2 rounded-[var(--radius-sm)]',
-              atDesk ? 'py-16 border-dashed' : 'py-10',
+              showForm ? 'py-16 border-dashed' : 'py-10',
               dragging ? 'border-[var(--color-primary)] bg-[var(--color-primary-bg)]' : 'border-[var(--color-text)]',
+              // Viewport cap, tablet only — the phone side of this block is
+              // already sized by its py-10 padding alone.
+              tablet && 'max-h-[clamp(260px,50vh,420px)] overflow-hidden',
             )}
           >
-            {atDesk ? <ImagePlus className="w-8 h-8" /> : <Camera className="w-8 h-8" />}
+            {showForm ? <ImagePlus className="w-8 h-8" /> : <Camera className="w-8 h-8" />}
             <span className="font-mono text-xs uppercase tracking-[0.1em] font-bold">
-              {atDesk ? 'Drop a photo here, or choose a file' : 'Take a photo of the item'}
+              {showForm ? 'Drop a photo here, or choose a file' : 'Take a photo of the item'}
             </span>
-            {atDesk && (
+            {showForm && (
               <span className="font-mono text-[10px] uppercase tracking-[0.08em] text-[var(--color-text-muted)]">
                 or skip straight to naming it
               </span>
             )}
           </button>
           {/*
-            At a desk skipping is the ORDINARY path, not the escape hatch — most
-            desks have no camera and no photo to hand — so it stops being a ghost
-            link and becomes a real choice of equal weight.
+            When the form is showing, skipping is the ORDINARY path, not the
+            escape hatch — most forms are reached with no camera and no photo to
+            hand — so it stops being a ghost link and becomes a real choice of
+            equal weight. This block only renders when showForm is false (see
+            above), so in practice this is always the phone-styled ghost button
+            — kept as a showForm check, not simplified away, to stay parallel
+            with every other predicate in this block (audited, not dead by
+            oversight).
           */}
-          <Button variant={atDesk ? 'outline' : 'ghost'} size="sm" onClick={() => setPhase('identify')}>
+          <Button variant={showForm ? 'outline' : 'ghost'} size="sm" onClick={() => setPhase('identify')}>
             <SkipForward className="w-3.5 h-3.5" />
-            {atDesk ? 'Skip to details' : 'Skip photo'}
+            {showForm ? 'Skip to details' : 'Skip photo'}
           </Button>
         </div>
       )}
@@ -1088,17 +1157,32 @@ export function Capture() {
               <span className="text-sm">Finding this product — pick it later in Alerts</span>
             </div>
           ) : phase === 'identify' ? (
-            <ProductScanner
-              label={busy ?? 'Scan product barcode'}
-              onBarcode={handleCode}
-              onClose={() => navigate(-1)}
-            />
+            // html5-qrcode sizes its video by width only, so on a wide
+            // landscape tablet the stream would otherwise take over the page —
+            // the cap is tablet-only; the phone wrapper is unstyled. The base
+            // classes (flex flex-col flex-1 min-h-0) are NOT decoration — this
+            // wrapper is itself a flex item of the step container above,
+            // which promises "exactly ONE of four things fills the space" via
+            // flex-1 min-h-0 on every sibling. Without repeating that contract
+            // here, this wrapper becomes an auto-height flex item that
+            // swallows CameraScanner's own flex-1 (phones lost ~200px of
+            // scanner height to this before the fix), AND on tablet flex-1 is
+            // what makes the wrapper grow enough for max-h to ever bind.
+            <div className={cn('flex flex-col flex-1 min-h-0', tablet && 'max-h-[clamp(240px,38vh,300px)] overflow-hidden')}>
+              <ProductScanner
+                label={busy ?? 'Scan product barcode'}
+                onBarcode={handleCode}
+                onClose={() => navigate(-1)}
+              />
+            </div>
           ) : (
-            <TagScanner
-              label={busy ?? 'Scan tote/area tag'}
-              onTag={handleCode}
-              onClose={() => navigate(-1)}
-            />
+            <div className={cn('flex flex-col flex-1 min-h-0', tablet && 'max-h-[clamp(230px,36vh,280px)] overflow-hidden')}>
+              <TagScanner
+                label={busy ?? 'Scan tote/area tag'}
+                onTag={handleCode}
+                onClose={() => navigate(-1)}
+              />
+            </div>
           )}
 
           {/* Destination lives ONLY on the step that asks for one, and under
@@ -1285,7 +1369,7 @@ export default Capture;
  */
 function ManualCreate({
   draft, setDraft, dest, onPickDest, onChoosePhoto, dragging, setDragging,
-  onDropFile, onSubmit, pending, seedAreaId, seedPropertyId,
+  onDropFile, onSubmit, pending, seedAreaId, seedPropertyId, onUseCamera,
 }: {
   draft: Draft;
   setDraft: React.Dispatch<React.SetStateAction<Draft>>;
@@ -1299,6 +1383,12 @@ function ManualCreate({
   pending: boolean;
   seedAreaId?: number;
   seedPropertyId?: number;
+  /**
+   * Present only for a tablet that has switched to "Type it instead" — lets
+   * it switch back to the camera flow. Absent everywhere else (fine-pointer
+   * desk), so this component's output is unchanged there.
+   */
+  onUseCamera?: () => void;
 }) {
   const [picking, setPicking] = React.useState(false);
   const nameRef = React.useRef<HTMLInputElement>(null);
@@ -1307,6 +1397,15 @@ function ManualCreate({
   const ready = draft.name.trim().length > 0 && dest != null;
 
   return (
+    <div className="flex flex-col gap-3">
+      {onUseCamera && (
+        <div className="flex items-center justify-end">
+          <Button variant="outline" size="sm" className="shrink-0" onClick={onUseCamera}>
+            <Camera className="w-4 h-4" />
+            Use camera
+          </Button>
+        </div>
+      )}
     <div className="grid grid-cols-[minmax(0,1fr)_minmax(260px,320px)] items-start gap-6">
       <form
         className="flex flex-col gap-4"
@@ -1439,6 +1538,7 @@ function ManualCreate({
           onClose={() => setPicking(false)}
         />
       )}
+    </div>
     </div>
   );
 }
