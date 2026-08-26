@@ -42,8 +42,19 @@ export function CreateContainerDialog({
   const { data: areas } = useAreas(seedAreaId ? 0 : (effectivePropertyId ?? 0));
   const [areaId, setAreaId] = React.useState<number | undefined>(undefined);
 
+  // This component stays mounted in the sidebar for the app's whole life —
+  // only `open` toggles Radix's content in and out — so without this, a
+  // closed-and-reopened dialog would keep showing whatever property/area the
+  // user last picked instead of starting fresh.
+  React.useEffect(() => {
+    if (!open) { setPropertyId(seedPropertyId); setAreaId(undefined); }
+  }, [open, seedPropertyId]);
+
   const seeded = seedAreaId != null;
-  const effectiveAreaId = seedAreaId ?? areaId;
+  // A property with exactly one area needs no click: "where you're standing
+  // is where it goes" already applies one level up (the sole-property case
+  // below), and a mandatory pick from a one-option list serves nobody.
+  const effectiveAreaId = seedAreaId ?? areaId ?? (areas?.length === 1 ? areas[0].id : undefined);
   const noAreas = !seeded && (areas?.length ?? 0) === 0;
   const showPropertyButtons = !seeded && (properties?.length ?? 0) > 1;
 
@@ -92,7 +103,7 @@ export function CreateContainerDialog({
       ) : (
         <Select
           aria-label="Area"
-          value={areaId ?? ''}
+          value={effectiveAreaId ?? ''}
           onChange={(e) => setAreaId(e.target.value ? Number(e.target.value) : undefined)}
         >
           <option value="">Pick an area…</option>

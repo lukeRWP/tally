@@ -93,8 +93,13 @@ test('unseeded, multiple properties: segmented property buttons render, and swit
   vi.mocked(useProperties).mockReturnValue({
     data: [{ id: 1, name: 'Home' }, { id: 2, name: 'Cabin' }],
   } as unknown as ReturnType<typeof useProperties>);
+  // Two areas per property — the sole-area auto-select (tested separately
+  // below) must not mask this test's own assertion that switching properties
+  // clears back to the placeholder.
   vi.mocked(useAreas).mockImplementation((propertyId: number) => ({
-    data: propertyId === 2 ? [{ id: 9, name: 'Loft' }] : [{ id: 5, name: 'Garage' }],
+    data: propertyId === 2
+      ? [{ id: 9, name: 'Loft' }, { id: 10, name: 'Study' }]
+      : [{ id: 5, name: 'Garage' }, { id: 6, name: 'Attic' }],
   }) as unknown as ReturnType<typeof useAreas>);
 
   render(<CreateContainerDialog open onOpenChange={() => {}} />);
@@ -108,6 +113,57 @@ test('unseeded, multiple properties: segmented property buttons render, and swit
 
   fireEvent.click(screen.getByRole('button', { name: 'Cabin' }));
 
+  expect((screen.getByLabelText('Area') as HTMLSelectElement).value).toBe('');
+});
+
+test('unseeded, single property with exactly one area: auto-selects it, submit works without touching the select', async () => {
+  vi.mocked(useProperties).mockReturnValue({ data: [{ id: 1, name: 'Home' }] } as unknown as ReturnType<typeof useProperties>);
+  vi.mocked(useAreas).mockReturnValue({ data: [{ id: 5, name: 'Garage' }] } as unknown as ReturnType<typeof useAreas>);
+  const mutateAsync = vi.fn().mockResolvedValue({ container: { id: 88, name: 'Bin 1', type: 'Box', areaId: 5 } });
+  vi.mocked(useCreateContainer).mockReturnValue({
+    mutateAsync,
+    isPending: false,
+  } as unknown as ReturnType<typeof useCreateContainer>);
+
+  render(<CreateContainerDialog open onOpenChange={() => {}} />);
+
+  // The sole area is already the effective selection — no click needed.
+  expect((screen.getByLabelText('Area') as HTMLSelectElement).value).toBe('5');
+
+  fillNameAndType();
+  expect((screen.getByRole('button', { name: /create/i }) as HTMLButtonElement).disabled).toBe(false);
+
+  fireEvent.click(screen.getByRole('button', { name: /create/i }));
+
+  await waitFor(() => expect(mutateAsync).toHaveBeenCalledWith(
+    expect.objectContaining({ areaId: 5 }),
+  ));
+});
+
+test('closing resets the where-section back to defaults for the next open', () => {
+  vi.mocked(useProperties).mockReturnValue({
+    data: [{ id: 1, name: 'Home' }, { id: 2, name: 'Cabin' }],
+  } as unknown as ReturnType<typeof useProperties>);
+  vi.mocked(useAreas).mockImplementation((propertyId: number) => ({
+    data: propertyId === 2
+      ? [{ id: 9, name: 'Loft' }, { id: 10, name: 'Study' }]
+      : [{ id: 5, name: 'Garage' }, { id: 6, name: 'Attic' }],
+  }) as unknown as ReturnType<typeof useAreas>);
+
+  const { rerender } = render(<CreateContainerDialog open onOpenChange={() => {}} />);
+
+  // Wander away from the defaults: a different property, a picked area.
+  fireEvent.click(screen.getByRole('button', { name: 'Cabin' }));
+  fireEvent.change(screen.getByLabelText('Area'), { target: { value: '9' } });
+  expect((screen.getByLabelText('Area') as HTMLSelectElement).value).toBe('9');
+
+  // Close — the component itself stays mounted in the real sidebar; only
+  // `open` changes. Reopen and check the wandering didn't survive.
+  rerender(<CreateContainerDialog open={false} onOpenChange={() => {}} />);
+  rerender(<CreateContainerDialog open onOpenChange={() => {}} />);
+
+  expect(screen.getByRole('button', { name: 'Home' }).className.split(' ')).toContain('bg-[var(--color-text)]');
+  expect(screen.getByRole('button', { name: 'Cabin' }).className.split(' ')).not.toContain('bg-[var(--color-text)]');
   expect((screen.getByLabelText('Area') as HTMLSelectElement).value).toBe('');
 });
 
