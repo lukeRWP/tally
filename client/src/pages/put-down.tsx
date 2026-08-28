@@ -70,7 +70,7 @@ export function PutDown() {
   const lastMove = useCarryStore((s) => s.lastMove);
   const clear = useCarryStore((s) => s.clear);
   const clearLastMove = useCarryStore((s) => s.clearLastMove);
-  const putDown = usePutDown();
+  const { putDown, progress } = usePutDown();
   const moveItem = useMoveItem();
   const moveContainer = useMoveContainer();
 
@@ -94,8 +94,10 @@ export function PutDown() {
   }
   const [pendingConfirm, setPendingConfirm] = React.useState<PendingConfirm | null>(null);
   // The loop that's paused lives inside usePutDown's Promise chain, not in
-  // this component — this is the resume handle for it.
-  const decisionRef = React.useRef<((decision: 'confirm' | 'cancel') => void) | null>(null);
+  // this component — this is the resume handle for it. The resolution
+  // widened to carry applyToRest (the sheet's "apply to the rest of this
+  // batch" checkbox) alongside the choice — see ConfirmPrompt.
+  const decisionRef = React.useRef<((decision: { choice: 'confirm' | 'cancel'; applyToRest: boolean }) => void) | null>(null);
   // Set false in the SAME unmount cleanup that resolves a pending decision as
   // cancel (below) — land() checks it after putDown resolves so that an
   // unmount mid-batch (browser Back while the confirm sheet is up, a
@@ -173,8 +175,8 @@ export function PutDown() {
     [],
   );
 
-  function decide(decision: 'confirm' | 'cancel') {
-    decisionRef.current?.(decision);
+  function decide(choice: 'confirm' | 'cancel', applyToRest: boolean) {
+    decisionRef.current?.({ choice, applyToRest });
     decisionRef.current = null;
     setPendingConfirm(null);
   }
@@ -186,13 +188,15 @@ export function PutDown() {
   // instead of a network error. Resolve as CANCEL, never confirm — an
   // unmount means we can no longer ask the user anything, and silently
   // confirming would commit a lossy cross-property move nobody agreed to.
-  // The paused entity ends up skipped; completeMove (inside usePutDown)
-  // still reconciles whatever DID move before the pause.
+  // applyToRest is false: an unmount cannot see the checkbox either, so it
+  // must not fold the rest of the batch into a decision nobody made. The
+  // paused entity ends up skipped; completeMove (inside usePutDown) still
+  // reconciles whatever DID move before the pause.
   React.useEffect(() => {
     mountedRef.current = true; // re-arm — StrictMode's remount runs setup again
     return () => {
       mountedRef.current = false;
-      decisionRef.current?.('cancel');
+      decisionRef.current?.({ choice: 'cancel', applyToRest: false });
       decisionRef.current = null;
     };
   }, []);
@@ -439,7 +443,15 @@ export function PutDown() {
                 // keeps running underneath it and a second scan would call
                 // confirmPrompt again, stomping the paused batch's resolver.
                 isActive={!pendingConfirm}
-                label={pendingConfirm ? 'Paused — resolve the prompt' : busy ? 'Moving…' : 'Scan tote/area tag'}
+                label={
+                  pendingConfirm
+                    ? 'Paused — resolve the prompt'
+                    : busy
+                      ? progress
+                        ? `Moving… ${progress.done} of ${progress.total}`
+                        : 'Moving…'
+                      : 'Scan tote/area tag'
+                }
                 onTag={handleCode}
                 onClose={() => navigate(-1)}
               />
@@ -457,10 +469,14 @@ export function PutDown() {
         <MoveConsequencesSheet
           entityName={pendingConfirm.entityName}
           progress={{ index: pendingConfirm.index, total: pendingConfirm.total }}
+          // total is the whole batch, not just what's still waiting on a
+          // decision — remainingCount is what "apply to the rest" actually
+          // means, so it has to exclude everything already resolved.
+          remainingCount={Math.max(0, pendingConfirm.total - pendingConfirm.index - 1)}
           consequences={pendingConfirm.consequences}
           isPending={moveItem.isPending || moveContainer.isPending}
-          onConfirm={() => decide('confirm')}
-          onCancel={() => decide('cancel')}
+          onConfirm={(applyToRest) => decide('confirm', applyToRest)}
+          onCancel={(applyToRest) => decide('cancel', applyToRest)}
         />
       )}
     </div>

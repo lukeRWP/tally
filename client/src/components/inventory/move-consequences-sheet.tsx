@@ -1,3 +1,4 @@
+import * as React from 'react';
 import {
   Dialog,
   DialogContent,
@@ -22,6 +23,13 @@ export type { MoveConsequences };
  * load) says which one and how many are left, so confirming or cancelling
  * reads as "this one" rather than "the move."
  *
+ * When more than one entity is still waiting on a decision (`remainingCount`),
+ * a checkbox offers to apply THIS choice to all of them — ten linked items
+ * should cost one decision, not ten. It defaults unchecked: applying a
+ * decision blind to entities the user hasn't seen is the exception, not the
+ * default. onConfirm/onCancel are handed its value either way, so the batch
+ * loop (`usePutDown`) never has to ask this component what it decided.
+ *
  * Same primitives as ConfirmDialog (Dialog/DialogContent/DialogHeader/
  * DialogFooter), because this IS a confirm dialog — just one with a body that
  * needs more than a single description line.
@@ -29,6 +37,7 @@ export type { MoveConsequences };
 export function MoveConsequencesSheet({
   entityName,
   progress,
+  remainingCount = 0,
   consequences,
   onConfirm,
   onCancel,
@@ -38,13 +47,17 @@ export function MoveConsequencesSheet({
   entityName?: string;
   /** 0-based index + total count, when the load has more than one entity. */
   progress?: { index: number; total: number };
+  /** How many OTHER entities are still waiting on a decision after this one. */
+  remainingCount?: number;
   consequences: MoveConsequences;
-  onConfirm: () => void;
-  onCancel: () => void;
+  onConfirm: (applyToRest: boolean) => void;
+  onCancel: (applyToRest: boolean) => void;
   isPending?: boolean;
 }) {
+  const [applyToRest, setApplyToRest] = React.useState(false);
+
   return (
-    <Dialog open onOpenChange={(open) => { if (!open) onCancel(); }}>
+    <Dialog open onOpenChange={(open) => { if (!open) onCancel(applyToRest); }}>
       <DialogContent className="max-w-sm">
         <DialogHeader>
           <DialogTitle className="text-base font-semibold text-[var(--color-text)]">
@@ -69,11 +82,27 @@ export function MoveConsequencesSheet({
           {consequences.tagsCarried} tags carried, {consequences.tagsCreated} created
         </p>
 
+        {remainingCount > 0 && (
+          <label className="flex items-center gap-2 mt-3 text-sm text-[var(--color-text-secondary)] cursor-pointer">
+            <input
+              type="checkbox"
+              checked={applyToRest}
+              onChange={(e) => setApplyToRest(e.target.checked)}
+              disabled={isPending}
+              className="accent-[var(--color-primary)] w-4 h-4"
+            />
+            Apply to the rest of this batch
+          </label>
+        )}
+
         <DialogFooter>
+          {/* No onClick here — DialogClose already flips `open` to false,
+              which the Dialog's onOpenChange above turns into onCancel.
+              Wiring both would fire onCancel twice. */}
           <DialogClose asChild>
             <Button variant="ghost" size="sm" disabled={isPending}>Cancel</Button>
           </DialogClose>
-          <Button variant="destructive" size="sm" disabled={isPending} onClick={onConfirm}>
+          <Button variant="destructive" size="sm" disabled={isPending} onClick={() => onConfirm(applyToRest)}>
             Move anyway
           </Button>
         </DialogFooter>

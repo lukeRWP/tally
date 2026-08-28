@@ -12,6 +12,9 @@ import { create } from 'zustand';
  * Deliberately NOT persisted to localStorage: carrying is a physical, in-the-
  * moment act. A set of items still "in hand" after a browser restart would be a
  * lie about where things are — the one thing an inventory app must not do.
+ * The same applies to pinnedDest and lastDest below: both describe where the
+ * CURRENT session is headed, not a fact about the inventory, so a restart
+ * should forget them exactly as it forgets the carry itself.
  */
 
 export interface CarriedItem {
@@ -50,6 +53,23 @@ export interface CompletedMove {
 interface CarryState {
   carried: CarriedItem[];
   lastMove: CompletedMove | null;
+  /**
+   * A landing pins the destination — staying to distribute is the default,
+   * leaving is explicit. Set by recordMove/completeMove (a successful
+   * landing pins itself) and by pinDest (the distribute-mode re-pin: scanning
+   * a new bin/area code without moving anything). Cleared by clearPin (the
+   * explicit "Done, leave" act) and by pickUp (a new carry is a new decision
+   * — the pin from whatever was landed before does not apply to a fresh
+   * load).
+   */
+  pinnedDest: { id: number; name: string } | null;
+  /**
+   * Session memory only; the one-tap default when nothing is pinned. Unlike
+   * pinnedDest, picking up a fresh load does NOT clear this — it is not a
+   * decision about the current carry, just a fading memory of where things
+   * were going last, offered back in case it still applies.
+   */
+  lastDest: { id: number; name: string } | null;
   /** Replaces whatever was held — picking up is not additive by accident. */
   pickUp: (items: CarriedItem[]) => void;
   /** Adds to the held set (scanning a second item while already carrying). */
@@ -66,13 +86,24 @@ interface CarryState {
    */
   completeMove: (movedIds: number[], move: CompletedMove) => void;
   clearLastMove: () => void;
+  /**
+   * Re-pins without moving anything — distribute mode scanning a new
+   * bin/area code to redirect where the NEXT scanned item goes.
+   */
+  pinDest: (dest: { id: number; name: string }) => void;
+  /** Leaving is the explicit act; this is it. */
+  clearPin: () => void;
 }
 
 export const useCarryStore = create<CarryState>((set, get) => ({
   carried: [],
   lastMove: null,
+  pinnedDest: null,
+  lastDest: null,
 
-  pickUp: (items) => set({ carried: items, lastMove: null }),
+  // A new carry is a new decision, so the OLD pin no longer applies — but
+  // lastDest is session memory, not a decision, so it survives untouched.
+  pickUp: (items) => set({ carried: items, lastMove: null, pinnedDest: null }),
 
   addToCarry: (item) => {
     if (get().carried.some((c) => c.id === item.id)) return; // already in hand
@@ -84,13 +115,26 @@ export const useCarryStore = create<CarryState>((set, get) => ({
   clear: () => set({ carried: [] }),
 
   // Recording a move both ends the carry and arms the undo. Only correct when
-  // the WHOLE load moved — see completeMove for a partial batch.
-  recordMove: (move) => set({ carried: [], lastMove: move }),
+  // the WHOLE load moved — see completeMove for a partial batch. Landing
+  // pins the destination (see pinnedDest) and refreshes the session memory
+  // of where things last went (see lastDest) — both point at the same place.
+  recordMove: (move) => set({
+    carried: [],
+    lastMove: move,
+    pinnedDest: { id: move.toContainerId, name: move.toContainerName },
+    lastDest: { id: move.toContainerId, name: move.toContainerName },
+  }),
 
   completeMove: (movedIds, move) => set((s) => ({
     carried: s.carried.filter((c) => !movedIds.includes(c.id)),
     lastMove: move,
+    pinnedDest: { id: move.toContainerId, name: move.toContainerName },
+    lastDest: { id: move.toContainerId, name: move.toContainerName },
   })),
 
   clearLastMove: () => set({ lastMove: null }),
+
+  pinDest: (dest) => set({ pinnedDest: dest }),
+
+  clearPin: () => set({ pinnedDest: null }),
 }));
