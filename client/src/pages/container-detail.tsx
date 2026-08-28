@@ -331,7 +331,7 @@ export function ContainerDetail() {
           variant="outline"
           size="sm"
           onClick={() =>
-            navigate(`/scan?containerId=${id}&areaId=${container.areaId}&propertyId=${container.breadcrumb?.[0]?.id || ''}`)
+            navigate(`/capture?containerId=${id}&areaId=${container.areaId}&propertyId=${container.breadcrumb?.[0]?.id || ''}`)
           }
         >
           <ScanLine className="w-4 h-4" />
