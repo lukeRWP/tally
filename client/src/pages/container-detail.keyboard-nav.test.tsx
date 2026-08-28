@@ -62,8 +62,17 @@ vi.mock('@/hooks/use-inventory', async (importOriginal) => {
     useItems: () => ({ data: items, isLoading: false }),
     useCreateContainer: () => ({ mutateAsync: vi.fn(), isPending: false }),
     useCreateItem: () => ({ mutateAsync: vi.fn(), isPending: false }),
-    useDeleteContainer: () => ({ mutate: vi.fn(), isPending: false }),
+    useDeleteContainer: () => ({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false }),
+    useDeleteItem: () => ({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false }),
   };
+});
+
+// Bulk delete/tag (#231) added a useAddTag() call to the page — stub it the
+// same way the hooks above are stubbed, so this file doesn't need a real
+// QueryClientProvider just because the component now imports one more hook.
+vi.mock('@/hooks/use-tags', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/hooks/use-tags')>();
+  return { ...actual, useAddTag: () => ({ mutateAsync: vi.fn(), isPending: false }) };
 });
 
 /** The div this file's ring styling is applied to, one level above the row's own button. */
