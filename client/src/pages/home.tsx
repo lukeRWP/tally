@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Search, ChevronDown, Filter, X } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -110,13 +110,28 @@ export function Home() {
   // Above any early return: hooks must run on every render.
   const wide = useLayoutMode() === 'sidebar';
   const navigate = useNavigate();
-  const [searchInput, setSearchInput] = React.useState('');
-  const [searchQuery, setSearchQuery] = React.useState('');
+  const [searchParams, setSearchParams] = useSearchParams();
 
-  // Filter state
-  const [selectedTagIds, setSelectedTagIds] = React.useState<number[]>([]);
-  const [selectedCondition, setSelectedCondition] = React.useState<string | null>(null);
-  const [selectedStatus, setSelectedStatus] = React.useState<string>('all');
+  // Hydrated from the URL on mount so tapping a result and pressing Back
+  // restores the search instead of dumping the user on recents. Both
+  // searchInput and searchQuery seed from `q` — hydrating only the debounced
+  // one would leave the input box empty while results are still showing.
+  const [searchInput, setSearchInput] = React.useState(() => searchParams.get('q') ?? '');
+  const [searchQuery, setSearchQuery] = React.useState(() => searchParams.get('q') ?? '');
+
+  // Filter state — also hydrated at mount. `tags` is comma-joined ids, and
+  // `status` is only ever written when it isn't the 'all' default.
+  const [selectedTagIds, setSelectedTagIds] = React.useState<number[]>(() => {
+    const raw = searchParams.get('tags');
+    if (!raw) return [];
+    return raw.split(',').map(Number).filter((n) => !Number.isNaN(n));
+  });
+  const [selectedCondition, setSelectedCondition] = React.useState<string | null>(
+    () => searchParams.get('condition') ?? null,
+  );
+  const [selectedStatus, setSelectedStatus] = React.useState<string>(
+    () => searchParams.get('status') ?? 'all',
+  );
 
   // Filter panel visibility (collapsible on mobile)
   const [filtersOpen, setFiltersOpen] = React.useState(false);
@@ -158,6 +173,26 @@ export function Home() {
     const timer = setTimeout(() => setSearchQuery(searchInput), 300);
     return () => clearTimeout(timer);
   }, [searchInput]);
+
+  // Mirror the settled query and filters into the URL so Back restores this
+  // screen's search instead of dumping the user on recents. `replace` keeps
+  // keystrokes from flooding history — Back always leaves Home, never
+  // rewinds through one keystroke at a time. This effect only ever writes
+  // params FROM state; nothing reads params back into state after mount, or
+  // typing and navigation would fight each other.
+  React.useEffect(() => {
+    // MERGE, do not rebuild. Building a fresh URLSearchParams from just this
+    // screen's own keys would silently drop any unrelated param already in
+    // the URL — see search.tsx's sync effect for the same reasoning.
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      if (searchQuery) next.set('q', searchQuery); else next.delete('q');
+      if (selectedTagIds.length > 0) next.set('tags', selectedTagIds.join(',')); else next.delete('tags');
+      if (selectedCondition) next.set('condition', selectedCondition); else next.delete('condition');
+      if (selectedStatus !== 'all') next.set('status', selectedStatus); else next.delete('status');
+      return next;
+    }, { replace: true });
+  }, [searchQuery, selectedTagIds, selectedCondition, selectedStatus, setSearchParams]);
 
   // Close tag dropdown on outside click
   React.useEffect(() => {
