@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import { Outlet, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { Home, Search, Bell, Settings, Printer, DoorOpen, BarChart2, Plus, ScanLine, Package, Box } from 'lucide-react';
 import { useAuth } from '@/hooks/use-auth';
@@ -20,6 +20,7 @@ import { buildCaptureUrl } from '@/lib/capture-url';
 import { useCarryStore } from '@/store/carry-store';
 import { useLayoutMode } from '@/hooks/use-layout-mode';
 import { useHasCamera } from '@/hooks/use-has-camera';
+import { useScrollRestoration } from '@/hooks/use-scroll-restoration';
 
 /**
  * What "where" the current page already answers, so the container dialog
@@ -229,10 +230,10 @@ export function RootLayout() {
   // the frame is a flex item that absorbs the leftover height.
   const fitsViewport = pathname === '/capture' || pathname === '/scan' || pathname === '/move';
 
-  // Scroll to top on route change
-  useEffect(() => {
-    mainRef.current?.scrollTo(0, 0);
-  }, [pathname]);
+  // POP-aware scroll restoration (#232): resets to top on PUSH/REPLACE-to-a-
+  // new-pathname, restores the cached offset on POP, and leaves scroll alone
+  // when only the search params changed (e.g. Home's debounced search, #224).
+  useScrollRestoration(mainRef);
 
   if (isLoading) {
     return <div className="flex items-center justify-center h-screen">
