@@ -10,7 +10,7 @@ import { TitleBar } from '@/components/ui/title-bar';
 import { toast } from '@/components/ui/toast';
 import { api } from '@/lib/api';
 import { extractTlyCode } from '@/lib/tly';
-import { useCarryStore, type CarriedItem } from '@/store/carry-store';
+import { useCarryStore, type CarriedItem, type PinnedTarget } from '@/store/carry-store';
 import { usePutDown, type ConfirmPrompt } from '@/hooks/use-put-down';
 import { useMoveItem, useMoveContainer, useProperties, type MoveConsequences } from '@/hooks/use-inventory';
 import { cn } from '@/lib/utils';
@@ -46,13 +46,6 @@ interface ResolvedEntity {
   id: number;
   name: string;
   exists: boolean;
-}
-
-/** What the property-switcher + picker together decide the load is landing on. */
-interface LandTarget {
-  type: string;
-  id: number;
-  name: string;
 }
 
 /**
@@ -156,28 +149,13 @@ export function PutDown() {
   // then and is NOT gated on this — only the navigation/UI tail is.
   const mountedRef = React.useRef(true);
 
-  // Distribute mode's per-scan "Moved N to X · Undo" needs a running total
-  // and reuses the page's own `undo` (below) for the toast's action button.
-  // Neither is ever rendered, so both live in refs rather than state —
-  // there is no reason to trigger a re-render for either.
+  // Distribute mode's per-scan "Moved N to X" toast needs a running total.
+  // Never rendered, so it lives in a ref rather than state — there is no
+  // reason to trigger a re-render for it.
   const runningCountRef = React.useRef(0);
-  const undoRef = React.useRef<() => void>(() => {});
-  // pinnedDest (the store) is deliberately just {id, name} — undo/landing
-  // never needed to know whether it was a container or an area. Done and
-  // moveToPin both do, so this page tracks it alongside the store's own
-  // pin, updated every time THIS page is the one doing the pinning (a
-  // landing, a re-pin scan, or tapping the lastDest chip). It can only go
-  // stale if the page unmounts and remounts onto a pin from a PRIOR visit
-  // that was a bins-only batch landed on an area with no items in it (the
-  // one case pinnedDest.id names an area, not a container) — a narrow edge
-  // case, and even then the failure mode is a clean "could not move it
-  // there" toast, not a silent misfile, since the ids live in disjoint
-  // tables.
-  const [pinnedType, setPinnedType] = React.useState<'container' | 'area'>('container');
 
-  const pin = React.useCallback((dest: { id: number; name: string }, type: 'container' | 'area') => {
+  const pin = React.useCallback((dest: PinnedTarget) => {
     pinDest(dest);
-    setPinnedType(type);
     runningCountRef.current = 0;
   }, [pinDest]);
 
@@ -285,7 +263,7 @@ export function PutDown() {
     };
   }, []);
 
-  const land = React.useCallback(async (dest: LandTarget) => {
+  const land = React.useCallback(async (dest: PinnedTarget) => {
     // One batch at a time, enforced HERE rather than at each entry point —
     // the camera (isActive/handleCode already gate it), the picker's
     // onPick (never gated at all — the gap this guard closes), and anything
@@ -306,12 +284,13 @@ export function PutDown() {
       }
       const { moved, skipped, abortError, failedCount, crossProperty, tagsCarried } = result;
 
-      // A landing pins the destination — see the pinnedType comment above
-      // for why this page tracks the type alongside the store's {id, name}.
-      // Reset whenever a NEW landing succeeds, gather or not: distribute
-      // mode's running count is about THIS pin, not a lifetime total.
+      // A landing pins the destination (see the store's completeMove/
+      // recordMove — it writes the TRUE type, not this `dest`, since a
+      // bins-only load landing on an area and an item load landing on that
+      // same area resolve to different real places). Reset the running
+      // count whenever a NEW landing succeeds, gather or not: distribute
+      // mode's count is about THIS pin, not a lifetime total.
       if (moved.length > 0) {
-        setPinnedType(dest.type === 'area' ? 'area' : 'container');
         runningCountRef.current = 0;
       }
 
@@ -361,6 +340,44 @@ export function PutDown() {
     }
   }, [putDown, confirmPrompt]);
 
+  // Puts a set of entities back where they came from, and reports the
+  // outcome — the mechanics shared by the whole-lastMove undo (below) and
+  // each distribute-mode toast's OWN undo. Deliberately takes the items and
+  // unlinkedCount as PARAMETERS rather than reading `lastMove` off the
+  // store: distribute is rapid-fire, sonner stacks several ~4s toasts at
+  // once, and `lastMove` is a single shared slot that the NEXT scan
+  // overwrites before the FIRST toast's Undo is even clicked. A closure
+  // that reads `lastMove` at click time reverses whatever is CURRENTLY
+  // there, not the move the toast was actually about — reversing move B
+  // into move A's origin. Every caller here passes its own captured record,
+  // so which move gets reversed is fixed at the moment the toast is created.
+  async function undoMove(items: CarriedItem[], unlinkedCount: number | undefined) {
+    const reversible = items.filter((i) => i.fromContainerId || i.fromAreaId);
+    try {
+      await Promise.all(
+        reversible.map((i) =>
+          i.kind === 'container'
+            ? moveContainer.mutateAsync(
+                i.fromContainerId
+                  ? { id: i.id, parentContainerId: i.fromContainerId }
+                  : { id: i.id, parentContainerId: null, areaId: i.fromAreaId as number },
+              )
+            : moveItem.mutateAsync({ id: i.id, containerId: i.fromContainerId as number }),
+        ),
+      );
+      const skipped = items.length - reversible.length;
+      toast(
+        unlinkedCount && unlinkedCount > 0
+          ? 'Moved back · unlinked accessories were not restored'
+          : skipped > 0
+            ? `Put ${reversible.length} back — ${skipped} had no previous home`
+            : 'Put back',
+      );
+    } catch (err) {
+      toast(err instanceof Error ? err.message : 'Could not undo the move');
+    }
+  }
+
   // DISTRIBUTE mode's per-scan move: one entity, straight to the pin. Reuses
   // putDown wholesale rather than calling the move mutations directly — a
   // single-entity load is just a batch of one, so the exact same "already
@@ -377,14 +394,15 @@ export function PutDown() {
         kind: entity.type === 'container' ? 'container' : 'item',
         ...origin,
       }];
-      const dest: LandTarget = { type: pinnedType, id: pinnedDest.id, name: pinnedDest.name };
-      const result = await putDown(load, dest, confirmPrompt);
+      // pinnedDest already IS a {id, name, type} — the store carries the
+      // true type now, so there is nothing to reconstruct here.
+      const result = await putDown(load, pinnedDest, confirmPrompt);
       if (!mountedRef.current) return;
       if (!result) {
         toast(`Already in ${pinnedDest.name}`);
         return;
       }
-      const { moved, aborted, abortError } = result;
+      const { moved, aborted, abortError, unlinkedCount } = result;
       if (moved.length === 0) {
         toast.error(
           aborted
@@ -394,8 +412,11 @@ export function PutDown() {
         return;
       }
       runningCountRef.current += moved.length;
+      // Captures THIS move's own `moved`/`unlinkedCount` right now — not a
+      // ref to the shared `lastMove`, which a later scan can overwrite
+      // before this toast is dismissed or clicked. See undoMove's comment.
       toast.success(`Moved ${runningCountRef.current} to ${pinnedDest.name}`, {
-        action: { label: 'Undo', onClick: () => undoRef.current() },
+        action: { label: 'Undo', onClick: () => { void undoMove(moved, unlinkedCount); } },
       });
     } catch (err) {
       if (!mountedRef.current) return;
@@ -403,7 +424,7 @@ export function PutDown() {
     } finally {
       setBusyBoth(false);
     }
-  }, [pinnedDest, pinnedType, putDown, confirmPrompt]);
+  }, [pinnedDest, putDown, confirmPrompt]);
 
   // Every code the scanner (or the typed fallback below) decodes passes
   // through here, and this is the whole station: which mode is live decides
@@ -431,12 +452,20 @@ export function PutDown() {
         toast.error(`Code ${code} is not in your inventory`);
         return;
       }
-      const isDest = entity.type === 'container' || entity.type === 'area';
 
       if (carriedRef.current.length > 0) {
-        // GATHER — the load is still being built.
-        if (isDest) { await land(entity); return; }
-        if (entity.type !== 'item' && entity.type !== 'container') {
+        // GATHER — the load is still being built. `entity` stays typed as
+        // the whole ResolvedEntity union even inside this narrowed branch
+        // (TS narrows a property READ like `entity.type`, not the object's
+        // assignability elsewhere), so land() takes a literal built from
+        // the narrowed `entity.type` read rather than `entity` itself.
+        if (entity.type === 'container' || entity.type === 'area') {
+          await land({ id: entity.id, name: entity.name, type: entity.type });
+          return;
+        }
+        // Only 'item' | 'property' remain at this point — the branch above
+        // already returned for every other case.
+        if (entity.type !== 'item') {
           toast.error('That label is not an item, bin, or area');
           return;
         }
@@ -452,12 +481,12 @@ export function PutDown() {
       // DISTRIBUTE — nothing carried. Only reachable once something is
       // pinned (the scanner/typed field below aren't rendered otherwise),
       // so a bin/area code here is always a re-pin, never a first pin.
-      if (isDest) {
-        pin({ id: entity.id, name: entity.name }, entity.type as 'container' | 'area');
+      if (entity.type === 'container' || entity.type === 'area') {
+        pin({ id: entity.id, name: entity.name, type: entity.type });
         toast(`Now moving to ${entity.name}`);
         return;
       }
-      if (entity.type !== 'item' && entity.type !== 'container') {
+      if (entity.type !== 'item') {
         toast.error('That label is not an item, bin, or area');
         return;
       }
@@ -483,45 +512,22 @@ export function PutDown() {
     void handleCode(code);
   }
 
+  // The shared "last landing" undo — the empty state's button and (while
+  // still carrying or freshly pinned) the banner both point here. Reads
+  // `lastMove` from the store, unlike undoMove's other callers, because this
+  // IS the "undo whatever most recently landed" action — there is only ever
+  // one lastMove, and this is the one place that slot is meant to be read.
   async function undo() {
     if (!lastMove) return;
-    const reversible = lastMove.items.filter((i) => i.fromContainerId || i.fromAreaId);
-    try {
-      await Promise.all(
-        reversible.map((i) =>
-          i.kind === 'container'
-            ? moveContainer.mutateAsync(
-                i.fromContainerId
-                  ? { id: i.id, parentContainerId: i.fromContainerId }
-                  : { id: i.id, parentContainerId: null, areaId: i.fromAreaId as number },
-              )
-            : moveItem.mutateAsync({ id: i.id, containerId: i.fromContainerId as number }),
-        ),
-      );
-      const skipped = lastMove.items.length - reversible.length;
-      toast(
-        lastMove.unlinkedCount && lastMove.unlinkedCount > 0
-          ? 'Moved back · unlinked accessories were not restored'
-          : skipped > 0
-            ? `Put ${reversible.length} back — ${skipped} had no previous home`
-            : 'Put back',
-      );
-      clearLastMove();
-    } catch (err) {
-      toast(err instanceof Error ? err.message : 'Could not undo the move');
-    }
+    await undoMove(lastMove.items, lastMove.unlinkedCount);
+    clearLastMove();
   }
-
-  // Always current — distribute mode's toast-undo action button (moveToPin,
-  // above) is wired to whatever the LATEST scan's closure captured, which
-  // can be stale by the time someone actually taps it.
-  React.useEffect(() => { undoRef.current = () => { void undo(); }; });
 
   const handleDone = React.useCallback(() => {
     if (!pinnedDest) return;
-    navigate(pinnedType === 'area' ? `/area/${pinnedDest.id}` : `/container/${pinnedDest.id}`);
+    navigate(pinnedDest.type === 'area' ? `/area/${pinnedDest.id}` : `/container/${pinnedDest.id}`);
     clearPin();
-  }, [pinnedDest, pinnedType, navigate, clearPin]);
+  }, [pinnedDest, navigate, clearPin]);
 
   // Esc-as-Done at a desk: a keyboard-only convenience for the flow that has
   // no camera to close instead. Skipped while a confirm sheet is open — its
@@ -556,7 +562,7 @@ export function PutDown() {
               variant="outline"
               size="sm"
               className="mt-2"
-              onClick={() => { pin(lastDest, 'container'); toast(`Now moving to ${lastDest.name}`); }}
+              onClick={() => { pin(lastDest); toast(`Now moving to ${lastDest.name}`); }}
             >
               Again to: {lastDest.name}
             </Button>

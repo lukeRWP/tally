@@ -1,7 +1,7 @@
 import { useCallback, useState } from 'react';
 import { api, ApiError } from '@/lib/api';
 import { useMoveItem, useMoveContainer, type MoveConsequences } from './use-inventory';
-import { useCarryStore, type CarriedItem } from '@/store/carry-store';
+import { useCarryStore, type CarriedItem, type PinnedTarget } from '@/store/carry-store';
 import type { Container } from '@/types/inventory';
 
 /** The shape of a resolved TLY label, narrowed to what a destination needs. */
@@ -311,14 +311,16 @@ export function usePutDown() {
       // visible — the carry store must never claim a load "put down" that
       // is still half in the user's hands.
       if (moved.length > 0) {
-        completeMove(moved.map((m) => m.id), {
-          items: moved,
-          // Undo needs the container items actually landed in, but the
-          // receipt should name the place the user scanned.
-          toContainerId: itemTarget?.id ?? dest.id,
-          toContainerName: dest.name,
-          unlinkedCount,
-        });
+        // The TRUE type of where this landed — not `dest.type` blindly.
+        // Whenever the load had any items, itemTarget is always a real
+        // container (either dest itself, or the "Loose in <area>" bin
+        // findOrCreateLooseContainer resolved) — never the area's own id.
+        // Only a bins-only load (itemTarget stays null) can land AT an
+        // area's own id, and only then does the pin's type mirror dest's.
+        const to: PinnedTarget = itemTarget
+          ? { id: itemTarget.id, name: dest.name, type: 'container' }
+          : { id: dest.id, name: dest.name, type: dest.type === 'area' ? 'area' : 'container' };
+        completeMove(moved.map((m) => m.id), { items: moved, to, unlinkedCount });
       }
 
       return {
