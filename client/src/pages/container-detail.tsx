@@ -30,6 +30,7 @@ import { LabelPrintDialog } from '@/components/labels/label-print-dialog';
 import { ShareDialog } from '@/components/sharing/share-dialog';
 import { usePrintQueueStore } from '@/store/print-queue-store';
 import { useCarryStore } from '@/store/carry-store';
+import type { Item } from '@/types/inventory';
 import { cn } from '@/lib/utils';
 import { useLayoutMode } from '@/hooks/use-layout-mode';
 import { useKeyboardNav } from '@/hooks/use-keyboard-nav';
@@ -58,6 +59,16 @@ export function ContainerDetail() {
   const [bulkTagOpen, setBulkTagOpen] = useState(false);
   const [deleteProgress, setDeleteProgress] = useState<{ i: number; total: number } | null>(null);
   const [tagProgress, setTagProgress] = useState<{ i: number; total: number } | null>(null);
+  // Snapshotted once when the Tag dialog opens (fix round 1, #231 review):
+  // runBulkTag drops succeeded items from `selected` after every apply so
+  // the page's own selection state stays truthful, but the dialog stays
+  // open to let one visit apply more than one tag. Deriving the loop's
+  // target list straight from `selected` meant a second apply, in the same
+  // visit, over a selection the first apply had already fully succeeded on,
+  // saw zero items and silently no-opped. This snapshot is the dialog's own
+  // working set — untouched by the loop, so a retry-apply (including one
+  // that failed last time) always reaches the whole original selection.
+  const [bulkTagTargets, setBulkTagTargets] = useState<Item[]>([]);
 
   // Navigating bin→bin only changes :containerId — the component stays
   // mounted, so without this a selection from the previous bin leaks in.
@@ -87,23 +98,44 @@ export function ContainerDetail() {
     ...(children ?? []).map((c) => ({ type: 'container' as const, id: c.id })),
     ...(items ?? []).map((i) => ({ type: 'item' as const, id: i.id })),
   ], [children, items]);
+  const visibleKeys = React.useMemo(
+    () => visibleOrder.map((e) => `${e.type}:${e.id}`),
+    [visibleOrder],
+  );
 
-  const [highlightIdx, setHighlightIdx] = useState(-1);
+  /**
+   * Tracked by (type, id) key, not index — an index survives a bulk delete
+   * (#231) shrinking the list right out from under it and silently ends up
+   * pointing at whatever row now occupies that slot instead. Mirrors the
+   * by-id ring in matches.tsx.
+   */
+  const [highlightedKey, setHighlightedKey] = useState<string | null>(null);
 
   // Navigating bin -> bin keeps the component mounted (same as the select-mode
-  // reset above) — without this a row index from the PREVIOUS bin would still
-  // point at something here, just not the thing the user was looking at.
-  useEffect(() => { setHighlightIdx(-1); }, [id]);
+  // reset above) — without this a highlighted row from the PREVIOUS bin would
+  // still point at something here, just not the thing the user was looking at.
+  useEffect(() => { setHighlightedKey(null); }, [id]);
+
+  // Reconcile only when the highlighted row itself is gone (bulk delete, or
+  // any other removal) — a poll/refetch that leaves it in place, even under
+  // a brand new array reference, must not touch the cursor at all.
+  useEffect(() => {
+    if (highlightedKey != null && !visibleKeys.includes(highlightedKey)) {
+      setHighlightedKey(null);
+    }
+  }, [visibleKeys, highlightedKey]);
 
   const moveHighlight = React.useCallback((delta: 1 | -1) => {
-    if (visibleOrder.length === 0) return;
-    setHighlightIdx((at) => (at === -1
-      ? (delta === 1 ? 0 : visibleOrder.length - 1)
-      : Math.min(visibleOrder.length - 1, Math.max(0, at + delta))));
-  }, [visibleOrder.length]);
+    if (visibleKeys.length === 0) return;
+    const at = highlightedKey == null ? -1 : visibleKeys.indexOf(highlightedKey);
+    const next = at === -1
+      ? (delta === 1 ? 0 : visibleKeys.length - 1)
+      : Math.min(visibleKeys.length - 1, Math.max(0, at + delta));
+    setHighlightedKey(visibleKeys[next]);
+  }, [visibleKeys, highlightedKey]);
 
-  const highlighted = highlightIdx >= 0 && highlightIdx < visibleOrder.length
-    ? visibleOrder[highlightIdx]
+  const highlighted = highlightedKey != null
+    ? visibleOrder[visibleKeys.indexOf(highlightedKey)] ?? null
     : null;
 
   useKeyboardNav({
@@ -116,7 +148,7 @@ export function ContainerDetail() {
       if (!highlighted) return;
       navigate(highlighted.type === 'container' ? `/container/${highlighted.id}` : `/item/${highlighted.id}`);
     },
-    onEscape: () => setHighlightIdx(-1),
+    onEscape: () => setHighlightedKey(null),
   });
 
   // A background refetch (30s staleTime + refetch-on-focus) can remove rows
@@ -403,17 +435,20 @@ export function ContainerDetail() {
     toast(failed.length ? `Deleted ${ok} · ${failed.length} failed` : `Deleted ${ok}`);
   }
 
-  /** Additive per-item tag apply. Containers are never touched — tags are an
-   * item concept here — so they are simply left out of the loop and stay
-   * selected exactly as they were. */
+  /**
+   * Additive per-item tag apply, over the dialog's own snapshot
+   * (`bulkTagTargets`) — NOT the live selection. Containers are never
+   * touched — tags are an item concept here — so they were never part of
+   * the snapshot and stay selected exactly as they were.
+   */
   async function runBulkTag(tagId: number) {
-    if (pickedItemsForBulk.length === 0) return;
+    if (bulkTagTargets.length === 0) return;
 
     const failed = new Set<number>();
     let ok = 0;
-    for (let idx = 0; idx < pickedItemsForBulk.length; idx++) {
-      setTagProgress({ i: idx + 1, total: pickedItemsForBulk.length });
-      const it = pickedItemsForBulk[idx];
+    for (let idx = 0; idx < bulkTagTargets.length; idx++) {
+      setTagProgress({ i: idx + 1, total: bulkTagTargets.length });
+      const it = bulkTagTargets[idx];
       try {
         await addTag.mutateAsync({ tagId, entityType: 'item', entityId: it.id });
         ok += 1;
@@ -425,7 +460,7 @@ export function ContainerDetail() {
     setTagProgress(null);
     setSelected((prev) => {
       const next = new Set(prev);
-      for (const it of pickedItemsForBulk) {
+      for (const it of bulkTagTargets) {
         if (!failed.has(it.id)) next.delete(`item:${it.id}`);
       }
       return next;
@@ -620,7 +655,13 @@ export function ContainerDetail() {
               size="sm"
               variant="outline"
               disabled={selected.size === 0 || bulkRunning}
-              onClick={() => setBulkTagOpen(true)}
+              onClick={() => {
+                // Snapshot NOW — this is the dialog's own working set for
+                // the whole visit, independent of `selected` shrinking as
+                // applies succeed (see bulkTagTargets above).
+                setBulkTagTargets(pickedItemsForBulk);
+                setBulkTagOpen(true);
+              }}
             >
               <TagIcon className="w-4 h-4" />
               {tagProgress ? `Tagging… ${tagProgress.i} of ${tagProgress.total}` : 'Tag'}
@@ -760,8 +801,12 @@ export function ContainerDetail() {
         <Dialog open={bulkTagOpen} onOpenChange={(open) => { if (!tagProgress) setBulkTagOpen(open); }}>
           <DialogContent className="max-w-sm">
             <DialogHeader>
+              {/* bulkTagTargets, not pickedItemsForBulk: the latter shrinks
+                  as each apply succeeds and would read "Tag 0 items" right
+                  after the first one, even though this dialog stays open to
+                  take a second tag against the same original selection. */}
               <DialogTitle className="text-base font-semibold text-[var(--color-text)]">
-                Tag {pickedItemsForBulk.length} item{pickedItemsForBulk.length === 1 ? '' : 's'}
+                Tag {bulkTagTargets.length} item{bulkTagTargets.length === 1 ? '' : 's'}
               </DialogTitle>
               <DialogDescription className="text-sm text-[var(--color-text-secondary)]">
                 Adds a tag to every selected item — it never removes tags they already have.

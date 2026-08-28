@@ -243,6 +243,39 @@ test('Tag opens the picker in batch mode, applies additively to every selected i
   expect(selected('Select Nested A')).toBe(true);
 });
 
+test('fix round 1: applying a second tag in the same dialog visit still reaches the original selection', async () => {
+  // Regression for the review's HIGH finding: the first apply drops its
+  // succeeded items from `selected`, so a second apply that re-derived its
+  // target list from the (now-shrunk) live selection saw zero items and
+  // silently no-opped — no addTag calls, no toast. The dialog's working set
+  // must be snapshotted once, on open, and stay put across the whole visit.
+  renderPage();
+  enterSelectModeAndSelectAll(); // 1 bin + 2 items
+
+  fireEvent.click(within(selectBar()).getByRole('button', { name: /^Tag$/ }));
+  const dialog = screen.getByRole('dialog');
+  expect(within(dialog).getByText('Tag 2 items')).toBeTruthy();
+
+  // Apply #1 — both items succeed and drop out of `selected`.
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Apply Fragile' }));
+  await waitFor(() => expect(toastMock).toHaveBeenCalledWith('Tagged 2'));
+
+  addTagMock.mockClear();
+  toastMock.mockClear();
+
+  // The dialog never closed — its own item count must still read 2, not 0.
+  expect(within(dialog).getByText('Tag 2 items')).toBeTruthy();
+
+  // Apply #2, same visit, same stub button (still targets tag 99) — the
+  // bug made this a silent no-op: 0 addTag calls, no toast at all.
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Apply Fragile' }));
+  await waitFor(() => expect(toastMock).toHaveBeenCalledWith('Tagged 2'));
+
+  expect(addTagMock).toHaveBeenCalledTimes(2);
+  expect(addTagMock).toHaveBeenCalledWith({ tagId: 99, entityType: 'item', entityId: 20 });
+  expect(addTagMock).toHaveBeenCalledWith({ tagId: 99, entityType: 'item', entityId: 21 });
+});
+
 test('a rigged tag failure keeps only the failed item selected', async () => {
   addTagMock.mockImplementation((args: { entityId: number }) =>
     (args.entityId === 21 ? Promise.reject(new Error('boom')) : Promise.resolve({})));
