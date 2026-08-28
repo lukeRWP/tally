@@ -255,6 +255,11 @@ function displayName(d: Draft): string {
 
 type Phase = 'photo' | 'identify' | 'place';
 
+// Step number -> phase/label, for the progress dots' back-navigation (#229).
+// Only steps BEHIND the current one ever use this — see the dots' render.
+const STEP_PHASE: Record<1 | 2 | 3, Phase> = { 1: 'photo', 2: 'identify', 3: 'place' };
+const STEP_LABEL: Record<1 | 2 | 3, string> = { 1: 'picture', 2: 'identify', 3: 'place' };
+
 /** Downscale to keep uploads small on garage wifi (and dodge the 20MB cap). */
 async function downscale(file: File, max = 1600): Promise<Blob> {
   const bitmap = await createImageBitmap(file).catch(() => null);
@@ -1081,11 +1086,29 @@ export function Capture() {
     )}>
       {/* progress + destination */}
       <div className={cn('flex items-center gap-2 shrink-0', showForm && 'hidden')}>
-        {[1, 2, 3].map((n) => (
-          <span key={n} className={cn('h-[3px] rounded-full transition-all duration-300 ease-out',
+        {([1, 2, 3] as const).map((n) => {
+          const dotClass = cn('h-[3px] rounded-full transition-all duration-300 ease-out',
             n === step ? 'w-8 bg-[var(--color-primary)]' : 'w-5',
-            n < step ? 'bg-[var(--color-text)]' : n > step ? 'bg-[var(--color-border)]' : '')} />
-        ))}
+            n < step ? 'bg-[var(--color-text)]' : n > step ? 'bg-[var(--color-border)]' : '');
+          // Only PREVIOUS steps are a way back — the current and forward dots
+          // stay inert (mirrors the whole flow's linear, camera-first shape:
+          // there is no "skip ahead by tapping a dot"). Going back never
+          // touches the draft — place → identify keeps the photo AND the
+          // draft; identify → photo keeps the photo too, since retaking it is
+          // the photo area's own job, not this dot's.
+          if (n >= step) return <span key={n} className={dotClass} />;
+          return (
+            <button
+              key={n}
+              type="button"
+              aria-label={`Back to ${STEP_LABEL[n]}`}
+              onClick={() => setPhase(STEP_PHASE[n])}
+              className="p-1 -m-1"
+            >
+              <span className={dotClass} />
+            </button>
+          );
+        })}
         <span className="flex-1" />
         {tablet && !showForm && (
           <Button
