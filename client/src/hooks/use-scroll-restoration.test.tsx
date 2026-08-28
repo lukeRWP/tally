@@ -24,7 +24,7 @@
  * `scrollTop` synchronously.
  */
 import * as React from 'react';
-import { render, fireEvent } from '@testing-library/react';
+import { render, fireEvent, act } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useNavigate } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { useScrollRestoration as UseScrollRestoration } from './use-scroll-restoration';
@@ -200,6 +200,57 @@ describe('useScrollRestoration', () => {
 
     const persisted = JSON.parse(sessionStorage.getItem(STORAGE_KEY) ?? '{}');
     expect(persisted).not.toHaveProperty('/detail');
+  });
+
+  it('(f) a container that mounts AFTER the first render (auth-gated cold load) still gets tracked and restored', async () => {
+    // Root-layout's real shape on a cold load: the first render is a loading
+    // gate with NO <main> at all; the container appears on a later render.
+    // ref.current is not reactive, so without the element-mirroring state the
+    // hook ran once against null and the session's first pathname was never
+    // tracked — scroll deep, open an item, Back landed at top (wave-3 driven
+    // pass, #232).
+    const raf = installRafMock();
+    const useHook = await freshHook();
+    const mainRef = React.createRef<HTMLDivElement>();
+    let setLoaded: (v: boolean) => void = () => {};
+
+    function GatedHarness() {
+      useHook(mainRef);
+      const [loaded, set] = React.useState(false);
+      setLoaded = set;
+      const navigate = useNavigate();
+      return (
+        <div>
+          <button onClick={() => navigate('/detail')}>to-detail</button>
+          <button onClick={() => navigate(-1)}>back</button>
+          {loaded && <div ref={mainRef} data-testid="container" />}
+        </div>
+      );
+    }
+
+    const { getByText } = render(
+      <MemoryRouter initialEntries={['/list']}>
+        <Routes>
+          <Route path="*" element={<GatedHarness />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    // The auth gate resolves: <main> mounts on a later render, same pathname.
+    act(() => setLoaded(true));
+    const el = mainRef.current!;
+
+    scrollTo(el, 480);
+    raf.flush(); // the throttled listener must be live despite the late mount
+
+    fireEvent.click(getByText('to-detail')); // PUSH away persists the cache
+    raf.flush();
+    expect(el.scrollTop).toBe(0);
+    expect(JSON.parse(sessionStorage.getItem(STORAGE_KEY) ?? '{}')).toEqual({ '/list': 480 });
+
+    fireEvent.click(getByText('back')); // POP back restores
+    raf.flush();
+    expect(el.scrollTop).toBe(480);
   });
 
   it('(e) a same-pathname REPLACE (Home\'s debounced search, #224) is a full no-op', async () => {

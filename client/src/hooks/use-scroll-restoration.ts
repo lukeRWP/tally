@@ -1,4 +1,4 @@
-import { useEffect, useRef, type RefObject } from 'react';
+import { useEffect, useRef, useState, type RefObject } from 'react';
 import { useLocation, useNavigationType } from 'react-router-dom';
 
 /**
@@ -57,8 +57,19 @@ export function useScrollRestoration(ref: RefObject<HTMLElement | null>) {
   // (there is nothing to leave scroll alone for yet) without special-casing it.
   const prevPathnameRef = useRef<string | null>(null);
 
+  // `ref.current` is not reactive, and root-layout's auth-loading first
+  // render has no <main> at all — so on a cold load (refresh, QR deep link)
+  // the main effect used to run once against null and never re-run for that
+  // pathname, leaving the session's FIRST page untracked and unrestorable
+  // (found by the wave-3 driven pass). Mirroring the element into state
+  // after every render re-fires the effect the moment the container exists;
+  // setEl is a no-op re-render only on the render where it first appears.
+  const [el, setEl] = useState<HTMLElement | null>(null);
   useEffect(() => {
-    const el = ref.current;
+    if (ref.current !== el) setEl(ref.current);
+  });
+
+  useEffect(() => {
     if (!el) return;
 
     const pathnameChanged = prevPathnameRef.current !== pathname;
@@ -113,5 +124,5 @@ export function useScrollRestoration(ref: RefObject<HTMLElement | null>) {
       // flushes it to sessionStorage so a reload doesn't lose it.
       persistCache();
     };
-  }, [pathname, navigationType, ref]);
+  }, [pathname, navigationType, ref, el]);
 }
