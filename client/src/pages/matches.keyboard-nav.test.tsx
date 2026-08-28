@@ -1,17 +1,25 @@
 // @vitest-environment jsdom
 /**
- * Keyboard nav on /matches (#225, task-4 brief).
+ * Keyboard nav on /matches (#225, task-4 brief; fix round 1 per task-4-review.md).
  *
  * Unlike search.tsx/areas.tsx — where moving the ring IS selecting — Enter is
  * a deliberate, separate step here: opening a row's panel can trigger a
  * resolve, so j/k must be free to browse past several rows without firing
- * one along the way. The design: a local ring cursor (`localHighlightIdx`)
- * drives the highlight while nothing is selected; the moment a selection
- * exists (Enter, a click, or #228's auto-advance after resolve/dismiss) the
- * ring hands off to `selectedId` as the single source of truth, via an
- * effect that reads it back. This file drives that with real keydown events.
+ * one along the way. The cursor is tracked BY ID (`highlightedId`), not by
+ * index: an index re-derived from `ids` identity would snap back to the
+ * selected row on every 5s poll (M1 — any status flip anywhere gives `rows`
+ * a new array identity even when its CONTENT is unchanged), silently undoing
+ * the very browsing this split exists to protect. It syncs from `selectedId`
+ * only when `selectedId` itself changes (a click, Enter, or #228's
+ * auto-advance) — that's the hand-off to the single source of truth — and
+ * separately reconciles only when the highlighted ROW ITSELF disappears
+ * (falls back to the still-selected row, else the first remaining row, else
+ * nothing — which also closes L6, the ghost ring after the last resolve).
+ * L2: the selected/open row and the browsing cursor now carry visually
+ * distinct, independent classes, so browsing away never makes the open row
+ * disappear from the list.
  */
-import { fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import type { ProductMatch } from '@/hooks/use-matches';
@@ -67,14 +75,16 @@ function Probe() {
   return <div data-testid="url">{location.pathname + location.search}</div>;
 }
 
-function renderMatches(initialEntries: string[] = ['/matches']) {
-  return render(
-    <MemoryRouter initialEntries={initialEntries}>
-      <Routes>
-        <Route path="/matches" element={<><Probe /><MatchesPage /></>} />
-      </Routes>
-    </MemoryRouter>,
+function matchesTree() {
+  return (
+    <Routes>
+      <Route path="/matches" element={<><Probe /><MatchesPage /></>} />
+    </Routes>
   );
+}
+
+function renderMatches(initialEntries: string[] = ['/matches']) {
+  return render(<MemoryRouter initialEntries={initialEntries}>{matchesTree()}</MemoryRouter>);
 }
 
 /**
@@ -84,10 +94,19 @@ function renderMatches(initialEntries: string[] = ['/matches']) {
  * heading once split — this picks the LIST row specifically (the one whose
  * text sits inside a RuledRow button), not the h2.
  */
-function ringOn(text: string): boolean {
+function rowWrapper(text: string): HTMLElement | undefined {
   const row = screen.getAllByText(text).find((el) => el.closest('button'));
-  const wrapper = row?.closest('button')?.parentElement;
-  return !!wrapper?.className.includes('ring-1');
+  return row?.closest('button')?.parentElement ?? undefined;
+}
+
+/** The browsing cursor (L2: independent of `selectedOn`). */
+function ringOn(text: string): boolean {
+  return !!rowWrapper(text)?.className.includes('ring-1');
+}
+
+/** The persistent "this row is open" marker (L2: independent of `ringOn`). */
+function selectedOn(text: string): boolean {
+  return !!rowWrapper(text)?.className.includes('bg-[var(--color-elevated)]');
 }
 
 beforeEach(() => {
@@ -145,8 +164,7 @@ test('a programmatic selection (a click, or #228\'s auto-advance) moves the ring
   expect(ringOn('Item 1')).toBe(false);
 
   // And the ring now picks up from THERE (row 3 is the last of 3, so j
-  // clamps rather than moving) — not from wherever a stale local cursor
-  // last sat.
+  // clamps rather than moving) — not from wherever a stale cursor last sat.
   fireEvent.keyDown(window, { key: 'j' });
   expect(screen.getByTestId('url').textContent).toBe('/matches?sel=3'); // movement alone still doesn't select
   expect(ringOn('Item 3')).toBe(true);
@@ -187,4 +205,81 @@ test('the ring is off entirely on touch chrome (non-split)', () => {
   fireEvent.keyDown(window, { key: 'j' });
 
   expect(ringOn('Item 1')).toBe(false);
+});
+
+// ── Fix round 1: M1, L2, L6 ──────────────────────────────────────────────
+
+test('M1: a poll refetch (new array identity, same rows) leaves a mid-browse cursor in place', () => {
+  const { rerender } = renderMatches(['/matches?sel=1']);
+
+  // Cursor starts on the selection (row 1), then browses two rows away
+  // WITHOUT selecting them (Enter never pressed) — sel stays row 1.
+  fireEvent.keyDown(window, { key: 'j' }); // row 2
+  fireEvent.keyDown(window, { key: 'j' }); // row 3
+  expect(ringOn('Item 3')).toBe(true);
+  expect(screen.getByTestId('url').textContent).toBe('/matches?sel=1');
+
+  // Simulate the 5s poll: brand new array AND row objects, identical ids —
+  // exactly what a background refetch with no real change produces.
+  currentRows = [makeRow(1), makeRow(2), makeRow(3)];
+  rerender(<MemoryRouter initialEntries={['/matches?sel=1']}>{matchesTree()}</MemoryRouter>);
+
+  // The cursor must still be on row 3 — not snapped back to the selection.
+  expect(ringOn('Item 3')).toBe(true);
+  expect(ringOn('Item 1')).toBe(false);
+});
+
+test('L2: the selected (open) row keeps a persistent marker distinct from the browsing cursor', () => {
+  renderMatches(['/matches?sel=1']);
+  expect(selectedOn('Item 1')).toBe(true);
+  expect(ringOn('Item 1')).toBe(true); // cursor starts on the selection too
+
+  // Browse the cursor away to row 3 without selecting it.
+  fireEvent.keyDown(window, { key: 'j' });
+  fireEvent.keyDown(window, { key: 'j' });
+
+  // Row 1 (still selected/open, panel showing its candidates) keeps its
+  // marker even though the cursor has moved off it.
+  expect(selectedOn('Item 1')).toBe(true);
+  expect(ringOn('Item 1')).toBe(false);
+  // Row 3 (cursor) gets the ring but is not marked as the open row.
+  expect(ringOn('Item 3')).toBe(true);
+  expect(selectedOn('Item 3')).toBe(false);
+});
+
+test('L6: resolving the last actionable row never leaves a ghost ring — lands on a real remaining row', async () => {
+  currentRows = [makeRow(1, 'ready'), makeRow(2, 'none')];
+  const { rerender } = renderMatches(['/matches?sel=1']);
+  expect(ringOn('Item 1')).toBe(true);
+
+  fireEvent.click(screen.getByRole('button', { name: 'Use this' }));
+  const [, opts] = mutateMock.mock.calls[0];
+  // Row 2 is 'none', not 'ready' — nextPendingAfter has nowhere to advance to.
+  await act(async () => { opts.onSuccess({ product: null, duplicates: [] }); });
+  expect(screen.getByTestId('url').textContent).toBe('/matches');
+
+  // The resolved row is gone from the data, as a real refetch would reflect.
+  currentRows = [makeRow(2, 'none')];
+  rerender(<MemoryRouter initialEntries={['/matches?sel=1']}>{matchesTree()}</MemoryRouter>);
+
+  expect(screen.queryByText('Item 1')).toBeNull();
+  // Landed on the real remaining row, not stuck on the vanished one.
+  expect(ringOn('Item 2')).toBe(true);
+});
+
+test('L6 (no rows left): the cursor ends up null, not pointing at nothing', async () => {
+  currentRows = [makeRow(1, 'ready')];
+  const { rerender } = renderMatches(['/matches?sel=1']);
+
+  fireEvent.click(screen.getByRole('button', { name: 'Use this' }));
+  const [, opts] = mutateMock.mock.calls[0];
+  await act(async () => { opts.onSuccess({ product: null, duplicates: [] }); });
+  expect(screen.getByTestId('url').textContent).toBe('/matches');
+
+  currentRows = [];
+  rerender(<MemoryRouter initialEntries={['/matches?sel=1']}>{matchesTree()}</MemoryRouter>);
+
+  // Nothing left to render, and nothing throws reconciling a cursor against
+  // an empty list — the empty state renders instead of the list/detail.
+  expect(screen.getByText('Nothing waiting')).toBeTruthy();
 });

@@ -235,34 +235,50 @@ export function MatchesPage() {
    * Unlike search.tsx/areas.tsx (where moving the ring IS selecting), Enter is
    * a separate, deliberate step here: opening a row's panel can trigger a
    * resolve, so browsing past several rows with j/k must not fire it along
-   * the way. `localHighlightIdx` is the ring's own cursor for that browsing;
-   * `highlightId` hands it off to `selectedId` — the single source of truth —
-   * the moment a selection exists (a click, Enter, or auto-advance after a
-   * resolve/dismiss), via the effect below. Falling back to the local cursor
-   * only when nothing is selected is what makes auto-advance move the ring
-   * for free: it calls `select()`, and this effect picks that id straight up.
+   * the way. The cursor is tracked BY ID (like home.tsx's ring), not by index
+   * — an index synced off `ids` identity would snap back to the selected row
+   * every time the 5s poll refetches (any status flip anywhere gives `rows` a
+   * new array identity even when its CONTENT is unchanged), silently undoing
+   * a mid-browse cursor. Sync effect #1 below fires only when `selectedId`
+   * itself changes (Enter, a click, or auto-advance after a resolve/dismiss)
+   * — that is what hands the cursor off to `selectedId` as the single source
+   * of truth the moment a selection exists, for free. Sync effect #2 handles
+   * the one case an id-based cursor still needs reconciling: the highlighted
+   * ROW ITSELF disappearing (resolved, dismissed, or removed elsewhere) —
+   * falling back to the still-selected row if any, else the first remaining
+   * row, else nothing. That also closes the "ghost ring after the last
+   * resolve" case: selecting `null` clears the cursor's fallback target, and
+   * the next poll that drops the resolved row from `ids` reconciles the rest.
    */
   const ids = React.useMemo(() => rows.map((m) => m.id), [rows]);
-  const [localHighlightIdx, setLocalHighlightIdx] = React.useState(-1);
+  const [highlightedId, setHighlightedId] = React.useState<number | null>(null);
+
+  // #1 — hand off to selectedId, and ONLY on a real selection change.
   React.useEffect(() => {
-    if (selectedId == null) return;
-    const idx = ids.indexOf(selectedId);
-    if (idx !== -1) setLocalHighlightIdx(idx);
-  }, [selectedId, ids]);
-  const highlightId = localHighlightIdx >= 0 && localHighlightIdx < ids.length
-    ? ids[localHighlightIdx]
-    : null;
+    if (selectedId != null) setHighlightedId(selectedId);
+  }, [selectedId]);
+
+  // #2 — reconcile only when the highlighted row itself is gone; a poll that
+  // leaves it in place (even under a brand new `ids` array reference) must
+  // not touch the cursor at all.
+  React.useEffect(() => {
+    if (highlightedId == null || ids.includes(highlightedId)) return;
+    setHighlightedId(selectedId ?? (ids.length > 0 ? ids[0] : null));
+  }, [ids, highlightedId, selectedId]);
+
   const moveHighlight = React.useCallback((delta: 1 | -1) => {
     if (ids.length === 0) return;
-    setLocalHighlightIdx((at) => (at === -1
+    const at = highlightedId == null ? -1 : ids.indexOf(highlightedId);
+    const next = at === -1
       ? (delta === 1 ? 0 : ids.length - 1)
-      : Math.min(ids.length - 1, Math.max(0, at + delta))));
-  }, [ids]);
+      : Math.min(ids.length - 1, Math.max(0, at + delta));
+    setHighlightedId(ids[next]);
+  }, [ids, highlightedId]);
   useKeyboardNav({
     enabled: split,
     onMove: moveHighlight,
-    onOpen: () => { if (highlightId != null) select(highlightId); },
-    onEscape: () => { select(null); setLocalHighlightIdx(-1); },
+    onOpen: () => { if (highlightedId != null) select(highlightedId); },
+    onEscape: () => { select(null); setHighlightedId(null); },
   });
 
   const [bulkClearing, setBulkClearing] = React.useState<{ i: number; n: number } | null>(null);
@@ -340,7 +356,13 @@ export function MatchesPage() {
           key={m.id}
           className={cn(
             'rounded-[var(--radius-sm)]',
-            split && highlightId === m.id && 'bg-[var(--color-elevated)] ring-1 ring-[var(--color-text)]',
+            // A quiet, persistent marker for the row that's OPEN (its panel is
+            // on the right, resolve buttons live) — independent of the ring,
+            // so browsing away with j/k never makes the open row invisible.
+            split && selectedId === m.id && 'bg-[var(--color-elevated)]',
+            // The cursor itself — always shown, coincides with the marker
+            // above when the cursor sits on the selected row.
+            split && highlightedId === m.id && 'ring-1 ring-[var(--color-text)]',
           )}
         >
           <RuledRow
