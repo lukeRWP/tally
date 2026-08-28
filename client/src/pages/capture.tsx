@@ -170,6 +170,35 @@ interface Dupe {
   areaName: string;
 }
 
+/** What a barcode lookup resolved to. `product` null means not in any catalogue. */
+interface BarcodeLookup {
+  product: { id?: number; name?: string; shortName?: string } | null;
+  dupes: Dupe[];
+}
+
+/**
+ * Ask both questions about a product barcode at once: what is this, and do I
+ * already own one? Without the second, the primary add flow would silently
+ * grow duplicates.
+ *
+ * Shared by the camera flow's handleCode and the desk form's barcode field —
+ * one implementation of the network + parsing so the two paths cannot drift.
+ * Each call site keeps its own UI reaction. The duplicate check is
+ * best-effort and never fails the lookup; the lookup itself throws, and the
+ * caller decides what a failure means on its surface.
+ */
+async function lookupBarcode(code: string): Promise<BarcodeLookup> {
+  const [result, dup] = await Promise.all([
+    api.post<{ product?: { id?: number; name?: string; shortName?: string } | null }>(
+      '/api/products/_y_/lookup', { barcode: code },
+    ),
+    api.post<{ existingItems: Dupe[] }>(
+      '/api/products/_y_/check-duplicate', { barcode: code },
+    ).catch(() => ({ existingItems: [] as Dupe[] })),
+  ]);
+  return { product: result?.product ?? null, dupes: dup?.existingItems ?? [] };
+}
+
 /**
  * Everything a commit needs, frozen at the instant the user committed.
  *
@@ -807,18 +836,9 @@ export function Capture() {
     // Otherwise it is a product barcode.
     setBusy('Looking it up…');
     try {
-      // Ask both questions at once: what is this, and do I already own one?
-      // Without the second, the primary add flow would silently grow duplicates.
-      const [result, dup] = await Promise.all([
-        api.post<{ product?: { id?: number; name?: string; shortName?: string } | null }>(
-          '/api/products/_y_/lookup', { barcode: code },
-        ),
-        api.post<{ existingItems: Dupe[] }>(
-          '/api/products/_y_/check-duplicate', { barcode: code },
-        ).catch(() => ({ existingItems: [] as Dupe[] })),
-      ]);
-      setDupes(dup?.existingItems ?? []);
-      const product = result?.product;
+      // What is this, and do I already own one — see lookupBarcode.
+      const { product, dupes: existing } = await lookupBarcode(code);
+      setDupes(existing);
       // Same reason as the label branch above — spreading the pre-await
       // snapshot would wipe anything typed while the lookup was in flight.
       const live = stateRef.current.draft;
@@ -858,6 +878,49 @@ export function Capture() {
       setBusy(null);
     }
   }, [createItem, uploadFile]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /**
+   * The desk form's reaction to a barcode lookup (#230): the same draft, dupe
+   * and vision writes handleCode makes for a scanned code, minus the phase
+   * moves — the form has no steps to advance and no scanner to hand focus
+   * back to. The outcome goes back to the FIELD, which owns focus and the
+   * lookup-guard re-arm; the shared network + parsing is lookupBarcode.
+   */
+  async function applyBarcodeLookup(code: string): Promise<'hit' | 'miss' | 'failed'> {
+    try {
+      const { product, dupes: existing } = await lookupBarcode(code);
+      setDupes(existing);
+      // Read the draft fresh, exactly like handleCode: the lookup round trip
+      // is long enough for the user to have typed a description, and spreading
+      // a pre-await snapshot would silently discard it.
+      const live = stateRef.current.draft;
+      setDraft({
+        ...live,
+        barcode: code,
+        name: product?.shortName || product?.name || live.name,
+        fullName: product?.id ? undefined : product?.name,
+        productId: product?.id,
+      });
+      if (product?.name) {
+        // A catalogue hit is a fact about this exact object; the photo guess
+        // is an inference. Drop the guess, exactly as the camera path does.
+        catalogueHit.current = true;
+        setVision(null);
+        setReviewOpen(false);
+        setNameIsSuggested(false);
+        return 'hit';
+      }
+      // Same message as the camera path: half the household is in no catalogue.
+      toast('Not in the catalogue — name it yourself');
+      return 'miss';
+    } catch {
+      // The typed code is already in the draft — the field wrote it on every
+      // keystroke — so unlike the camera path there is nothing to keep here,
+      // only a failure to report (and a guard to re-arm, the caller's job).
+      toast('Lookup failed — the barcode was kept');
+      return 'failed';
+    }
+  }
 
   /**
    * Ask what the photo shows. Fired unawaited: the answer is a convenience, and
@@ -1188,6 +1251,23 @@ export function Capture() {
           // shape exists to prevent. (busy is barcode-lookup only now, and
           // unreachable in form mode — kept wired for honesty.)
           pending={busy !== null}
+          // #230: the scanner-grade barcode path. The reaction (draft, dupes,
+          // vision writes) lives on this page; the field's own behaviour
+          // (Enter/blur guards, focus) lives in ManualCreate.
+          onLookupBarcode={applyBarcodeLookup}
+          // The submit is optimistic, so the transition ManualCreate can see
+          // a commit in is the receipt APPENDING — synchronously, at commit —
+          // not any network settle. Its focus-return effect keys on this.
+          receiptCount={receipts.length}
+          // The vision surface the camera flow already renders — same state,
+          // same component (VisionReview), same unconfirmed-name styling. A
+          // photo dropped on the form already ran identify; before these
+          // props its answer was silently unreachable here.
+          vision={vision}
+          reviewOpen={reviewOpen}
+          setReviewOpen={setReviewOpen}
+          nameIsSuggested={nameIsSuggested}
+          setNameIsSuggested={setNameIsSuggested}
           seedAreaId={ctxArea || dest?.areaId}
           seedPropertyId={ctxProperty || undefined}
           // Switching back to the flow must land on the LIVE camera, not
@@ -1294,85 +1374,8 @@ export function Capture() {
             // layout is built on, stated in the comment above. Stacking is what
             // made this invisible: the step is exactly one screen tall and has
             // no spare rows, so a new block below the controls lands off-screen.
-            <div className="flex flex-col gap-2 border-2 border-[var(--color-text)] rounded-[var(--radius-sm)] p-3 flex-1 min-h-0 overflow-y-auto">
-              <div className="flex items-center justify-between shrink-0">
-                <span className="font-mono text-[10px] uppercase tracking-wide text-[var(--color-text-muted)]">
-                  From the photo — {vision.confidence === 'high' ? 'read' : 'guessed'}
-                </span>
-                <Button size="sm" variant="ghost" onClick={() => setReviewOpen(false)}>Close</Button>
-              </div>
-              {vision.description && !draft.description && (
-                <div className="flex items-start gap-2">
-                  <p className="flex-1 text-xs text-[var(--color-text-secondary)]">{vision.description}</p>
-                  <Button size="sm" variant="outline" className="shrink-0"
-                    onClick={() => setDraft((d) => ({ ...d, description: vision.description || undefined }))}>
-                    Keep
-                  </Button>
-                </div>
-              )}
-              {vision.category && !draft.category && (
-                <div className="flex items-center gap-2">
-                  <p className="flex-1 font-mono text-xs uppercase tracking-wide">{vision.category}</p>
-                  <Button size="sm" variant="outline" className="shrink-0"
-                    onClick={() => setDraft((d) => ({ ...d, category: vision.category || undefined }))}>
-                    Keep
-                  </Button>
-                </div>
-              )}
-              {vision.brand && !draft.name.toLowerCase().includes(vision.brand.toLowerCase()) && (
-                <div className="flex items-center gap-2">
-                  <p className="flex-1 text-xs">
-                    <span className="text-[var(--color-text-muted)]">Brand: </span>{vision.brand}
-                  </p>
-                  {/* items has no BRAND column — products does. For an item with
-                      no catalogue match the name is where brand lives, so
-                      keeping it means putting it there. */}
-                  <Button size="sm" variant="outline" className="shrink-0"
-                    onClick={() => setDraft((d) => ({ ...d, name: `${vision.brand} ${d.name}`.trim() }))}>
-                    Add to name
-                  </Button>
-                </div>
-              )}
-              {vision.quantity != null && vision.quantity > 1 && draft.quantity == null && (
-                <div className="flex items-center gap-2">
-                  <p className="flex-1 text-xs">
-                    <span className="text-[var(--color-text-muted)]">Quantity: </span>{vision.quantity}
-                  </p>
-                  <Button size="sm" variant="outline" className="shrink-0"
-                    onClick={() => setDraft((d) => ({ ...d, quantity: vision.quantity || undefined }))}>
-                    Keep
-                  </Button>
-                </div>
-              )}
-              {vision.estimatedValue != null && draft.currentValue == null && (
-                <div className="flex items-center gap-2">
-                  <p className="flex-1 text-xs">
-                    <span className="text-[var(--color-text-muted)]">Est. value: </span>
-                    ~${vision.estimatedValue}
-                    <span className="block font-mono text-[9px] uppercase tracking-wide text-[var(--color-text-muted)]">
-                      a guess from the photo — appears in insurance reports
-                    </span>
-                  </p>
-                  <Button size="sm" variant="outline" className="shrink-0"
-                    onClick={() => setDraft((d) => ({ ...d, currentValue: vision.estimatedValue || undefined }))}>
-                    Keep
-                  </Button>
-                </div>
-              )}
-              {(draft.description || draft.category || draft.currentValue != null || draft.quantity != null) && (
-                <p className="font-mono text-[10px] uppercase tracking-wide text-[var(--color-text-muted)]">
-                  Kept: {[draft.description ? 'description' : null,
-                          draft.category ? `category (${draft.category})` : null,
-                          draft.quantity != null ? `qty ${draft.quantity}` : null,
-                          draft.currentValue != null ? `value ~$${draft.currentValue}` : null]
-                          .filter(Boolean).join(', ')}
-                </p>
-              )}
-              {!vision.description && !vision.category && !vision.brand
-                && vision.estimatedValue == null && (vision.quantity ?? 0) <= 1 && (
-                <p className="text-xs text-[var(--color-text-muted)]">Only a name was offered.</p>
-              )}
-            </div>
+            <VisionReview vision={vision} draft={draft} setDraft={setDraft}
+              onClose={() => setReviewOpen(false)} />
           ) : phase === 'identify' && identifying ? (
             <div className="flex flex-col gap-2 border-2 border-[var(--color-text)] rounded-[var(--radius-sm)] p-3 flex-1 min-h-0">
               <div className="flex items-center justify-between shrink-0">
@@ -1660,6 +1663,102 @@ export default Capture;
 
 
 /**
+ * The "From the photo" review panel: everything the model offered beyond the
+ * name, each field behind its own Keep — the consent gate the Vision type
+ * describes. Extracted verbatim from the camera flow's step 2 so the desk
+ * form (#230) can render the SAME surface: one component, both call sites,
+ * and the styling and consent rules cannot fork.
+ */
+function VisionReview({ vision, draft, setDraft, onClose }: {
+  vision: Vision;
+  draft: Draft;
+  setDraft: React.Dispatch<React.SetStateAction<Draft>>;
+  onClose: () => void;
+}) {
+  return (
+    <div className="flex flex-col gap-2 border-2 border-[var(--color-text)] rounded-[var(--radius-sm)] p-3 flex-1 min-h-0 overflow-y-auto">
+      <div className="flex items-center justify-between shrink-0">
+        <span className="font-mono text-[10px] uppercase tracking-wide text-[var(--color-text-muted)]">
+          From the photo — {vision.confidence === 'high' ? 'read' : 'guessed'}
+        </span>
+        <Button size="sm" variant="ghost" onClick={onClose}>Close</Button>
+      </div>
+      {vision.description && !draft.description && (
+        <div className="flex items-start gap-2">
+          <p className="flex-1 text-xs text-[var(--color-text-secondary)]">{vision.description}</p>
+          <Button size="sm" variant="outline" className="shrink-0"
+            onClick={() => setDraft((d) => ({ ...d, description: vision.description || undefined }))}>
+            Keep
+          </Button>
+        </div>
+      )}
+      {vision.category && !draft.category && (
+        <div className="flex items-center gap-2">
+          <p className="flex-1 font-mono text-xs uppercase tracking-wide">{vision.category}</p>
+          <Button size="sm" variant="outline" className="shrink-0"
+            onClick={() => setDraft((d) => ({ ...d, category: vision.category || undefined }))}>
+            Keep
+          </Button>
+        </div>
+      )}
+      {vision.brand && !draft.name.toLowerCase().includes(vision.brand.toLowerCase()) && (
+        <div className="flex items-center gap-2">
+          <p className="flex-1 text-xs">
+            <span className="text-[var(--color-text-muted)]">Brand: </span>{vision.brand}
+          </p>
+          {/* items has no BRAND column — products does. For an item with
+              no catalogue match the name is where brand lives, so
+              keeping it means putting it there. */}
+          <Button size="sm" variant="outline" className="shrink-0"
+            onClick={() => setDraft((d) => ({ ...d, name: `${vision.brand} ${d.name}`.trim() }))}>
+            Add to name
+          </Button>
+        </div>
+      )}
+      {vision.quantity != null && vision.quantity > 1 && draft.quantity == null && (
+        <div className="flex items-center gap-2">
+          <p className="flex-1 text-xs">
+            <span className="text-[var(--color-text-muted)]">Quantity: </span>{vision.quantity}
+          </p>
+          <Button size="sm" variant="outline" className="shrink-0"
+            onClick={() => setDraft((d) => ({ ...d, quantity: vision.quantity || undefined }))}>
+            Keep
+          </Button>
+        </div>
+      )}
+      {vision.estimatedValue != null && draft.currentValue == null && (
+        <div className="flex items-center gap-2">
+          <p className="flex-1 text-xs">
+            <span className="text-[var(--color-text-muted)]">Est. value: </span>
+            ~${vision.estimatedValue}
+            <span className="block font-mono text-[9px] uppercase tracking-wide text-[var(--color-text-muted)]">
+              a guess from the photo — appears in insurance reports
+            </span>
+          </p>
+          <Button size="sm" variant="outline" className="shrink-0"
+            onClick={() => setDraft((d) => ({ ...d, currentValue: vision.estimatedValue || undefined }))}>
+            Keep
+          </Button>
+        </div>
+      )}
+      {(draft.description || draft.category || draft.currentValue != null || draft.quantity != null) && (
+        <p className="font-mono text-[10px] uppercase tracking-wide text-[var(--color-text-muted)]">
+          Kept: {[draft.description ? 'description' : null,
+                  draft.category ? `category (${draft.category})` : null,
+                  draft.quantity != null ? `qty ${draft.quantity}` : null,
+                  draft.currentValue != null ? `value ~$${draft.currentValue}` : null]
+                  .filter(Boolean).join(', ')}
+        </p>
+      )}
+      {!vision.description && !vision.category && !vision.brand
+        && vision.estimatedValue == null && (vision.quantity ?? 0) <= 1 && (
+        <p className="text-xs text-[var(--color-text-muted)]">Only a name was offered.</p>
+      )}
+    </div>
+  );
+}
+
+/**
  * Creating something at a desk.
  *
  * The three-step flow is a camera flow: photograph the thing, scan its barcode,
@@ -1675,7 +1774,9 @@ export default Capture;
  */
 function ManualCreate({
   draft, setDraft, dest, onPickDest, onChoosePhoto, dragging, setDragging,
-  onDropFile, onSubmit, pending, seedAreaId, seedPropertyId, onUseCamera,
+  onDropFile, onSubmit, pending, onLookupBarcode, receiptCount,
+  vision, reviewOpen, setReviewOpen, nameIsSuggested, setNameIsSuggested,
+  seedAreaId, seedPropertyId, onUseCamera,
 }: {
   draft: Draft;
   setDraft: React.Dispatch<React.SetStateAction<Draft>>;
@@ -1687,6 +1788,20 @@ function ManualCreate({
   onDropFile: (f: File) => void;
   onSubmit: () => void;
   pending: boolean;
+  /** The page's reaction to a barcode (#230) — lookup + dupe check + draft
+   *  and vision writes. This component owns only the FIELD's behaviour:
+   *  when to fire, when not to fire twice, and where focus goes after. */
+  onLookupBarcode: (code: string) => Promise<'hit' | 'miss' | 'failed'>;
+  /** Ticks up when a commit appends its receipt — the submit is optimistic,
+   *  so this is the only transition a completed submit is visible in here. */
+  receiptCount: number;
+  /** The camera flow's vision state, rendered here with the same component
+   *  and the same unconfirmed-name styling — no second variant. */
+  vision: Vision | null;
+  reviewOpen: boolean;
+  setReviewOpen: (v: boolean) => void;
+  nameIsSuggested: boolean;
+  setNameIsSuggested: (v: boolean) => void;
   seedAreaId?: number;
   seedPropertyId?: number;
   /**
@@ -1697,8 +1812,47 @@ function ManualCreate({
   onUseCamera?: () => void;
 }) {
   const [picking, setPicking] = React.useState(false);
+  /** A lookup in flight: the submit is disabled so the form cannot commit a
+   *  draft the lookup is about to rewrite underneath it. */
+  const [lookingUp, setLookingUp] = React.useState(false);
   const nameRef = React.useRef<HTMLInputElement>(null);
-  React.useEffect(() => { nameRef.current?.focus(); }, []);
+  /**
+   * The last barcode a lookup actually ran for. A USB scanner is a keyboard
+   * that types the code and sends Enter, and the field blurs a moment later
+   * when focus moves on — Enter followed by blur must be ONE lookup, not two,
+   * so both handlers funnel through lookupIfNew and this guard. A ref, not
+   * state: the blur can land before React re-renders the Enter's setState.
+   */
+  const lastLookedUp = React.useRef<string | null>(null);
+  React.useEffect(() => {
+    // Mount, and again each time a submit completes (= its receipt appends;
+    // the commit is optimistic so that is synchronous with the submit): the
+    // next item starts at Name, without a mouse trip back to the field.
+    nameRef.current?.focus();
+    // New item, clean guard: the next unit of the SAME product re-scans the
+    // same code, and the dedupe above must not swallow that lookup.
+    lastLookedUp.current = null;
+  }, [receiptCount]);
+
+  /** Fire the lookup once per distinct value — see lastLookedUp. */
+  async function lookupIfNew(raw: string) {
+    const code = raw.trim();
+    if (!code || lookingUp || code === lastLookedUp.current) return;
+    lastLookedUp.current = code;
+    setLookingUp(true);
+    const outcome = await onLookupBarcode(code);
+    setLookingUp(false);
+    if (outcome === 'failed') {
+      // Re-arm: pressing Enter again on the unchanged code is a retry, not
+      // a duplicate.
+      lastLookedUp.current = null;
+    } else {
+      // Both remaining outcomes land in Name: a miss to type the name the
+      // catalogue didn't have, a hit to read what it did — and Enter there
+      // submits, so scan → glance → Enter is the whole loop.
+      nameRef.current?.focus();
+    }
+  }
 
   const ready = draft.name.trim().length > 0 && dest != null;
 
@@ -1712,10 +1866,17 @@ function ManualCreate({
           </Button>
         </div>
       )}
+    {/* The same review surface the camera flow shows on step 2, above the
+        fields it feeds. A photo dropped on this form already ran identify;
+        this is the display surface that used to be missing (#230). */}
+    {reviewOpen && vision && (
+      <VisionReview vision={vision} draft={draft} setDraft={setDraft}
+        onClose={() => setReviewOpen(false)} />
+    )}
     <div className="grid grid-cols-[minmax(0,1fr)_minmax(260px,320px)] items-start gap-6">
       <form
         className="flex flex-col gap-4"
-        onSubmit={(e) => { e.preventDefault(); if (ready && !pending) onSubmit(); }}
+        onSubmit={(e) => { e.preventDefault(); if (ready && !pending && !lookingUp) onSubmit(); }}
       >
         <div className="flex flex-col gap-1">
           <label htmlFor="mc-name" className="font-mono text-[10px] uppercase tracking-[0.1em] text-[var(--color-text-muted)]">
@@ -1727,7 +1888,14 @@ function ManualCreate({
             value={draft.name}
             maxLength={255}
             placeholder="Cordless drill"
-            onChange={(e) => setDraft((d) => ({ ...d, name: e.target.value }))}
+            // Same unconfirmed styling as the camera flow's name field: a
+            // model-suggested name must not look like one a person typed.
+            className={cn(nameIsSuggested && 'border-dashed border-[var(--color-primary)]')}
+            onChange={(e) => {
+              // Editing it makes it theirs.
+              setNameIsSuggested(false);
+              setDraft((d) => ({ ...d, name: e.target.value }));
+            }}
           />
         </div>
 
@@ -1758,13 +1926,25 @@ function ManualCreate({
             <label htmlFor="mc-barcode" className="font-mono text-[10px] uppercase tracking-[0.1em] text-[var(--color-text-muted)]">
               Barcode <span className="normal-case tracking-normal">— optional</span>
             </label>
-            {/* Typed rather than scanned. A USB barcode reader is a keyboard,
-                so this field also catches one without any camera involved. */}
+            {/* Typed rather than scanned. A USB barcode reader is a keyboard
+                that ends every code with Enter — so Enter here fires the
+                SAME lookup + dupe check the camera flow runs, and must never
+                submit the form (#230). Blur covers the hand-typed code that
+                tabs on without pressing Enter; lookupIfNew keeps the pair
+                from running twice for one unchanged value. */}
             <Input
               id="mc-barcode"
               value={draft.barcode ?? ''}
               placeholder="Type or scan"
               onChange={(e) => setDraft((d) => ({ ...d, barcode: e.target.value || undefined }))}
+              onKeyDown={(e) => {
+                if (e.key !== 'Enter') return;
+                e.preventDefault();
+                void lookupIfNew(e.currentTarget.value);
+              }}
+              onBlur={(e) => {
+                if (e.currentTarget.value.trim()) void lookupIfNew(e.currentTarget.value);
+              }}
             />
           </div>
         </div>
@@ -1788,9 +1968,11 @@ function ManualCreate({
         </div>
 
         <div className="flex items-center gap-3 pt-1">
-          <Button type="submit" disabled={!ready || pending} className="min-w-[160px]">
+          {/* Disabled mid-lookup too: committing while the lookup is in
+              flight would save a draft the answer is about to rewrite. */}
+          <Button type="submit" disabled={!ready || pending || lookingUp} className="min-w-[160px]">
             <Check className="h-4 w-4" />
-            {pending ? 'Saving…' : 'Create item'}
+            {pending ? 'Saving…' : lookingUp ? 'Looking it up…' : 'Create item'}
           </Button>
           {/* Says WHICH requirement is missing rather than just sitting dead. */}
           {!ready && (
