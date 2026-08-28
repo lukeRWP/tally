@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { RotateCcw, Trash2, Box, Package, MapPin } from 'lucide-react';
-import { api } from '@/lib/api';
+import { Link } from 'react-router-dom';
+import { RotateCcw, Trash2, Box, Package, MapPin, CheckSquare, Check } from 'lucide-react';
+import { api, ApiError } from '@/lib/api';
 import { queryKeys } from '@/lib/query-client';
 import { Button } from '@/components/ui/button';
 import { ColHead } from '@/components/ui/col-head';
@@ -63,11 +64,75 @@ function describeContents(b: DeleteBatch): string | null {
   return parts.length ? `with ${parts.join(', ')}` : null;
 }
 
+/** What restore's error payload might carry when the blocking ancestor is
+ * itself named — same three-way shape as every other endpoint's `errors`
+ * field (see lib/api.ts's ApiError doc comment): callers narrow it themselves. */
+interface AncestorBlockErrors {
+  ancestorType?: 'property' | 'area' | 'container';
+  ancestorId?: number;
+  ancestorName?: string;
+}
+
+function ancestorPath(type: 'property' | 'area' | 'container', id: number): string {
+  switch (type) {
+    case 'property': return `/property/${id}`;
+    case 'area': return `/area/${id}`;
+    case 'container': return `/container/${id}`;
+  }
+}
+
+/**
+ * Today, `errors` is always undefined here — recycle.routes.js calls
+ * `error(res, err.message, err.statusCode)` with no fourth argument (see
+ * recycle.service.js:_assertAncestorsLive, which only ever throws a plain
+ * message like "Restore the area this was in first"), so this always falls
+ * to the plain-message branch in production. It's written to also handle a
+ * payload that does carry the ancestor — an id (rendered as a link) or just
+ * a name — so nothing here needs to change if that payload ever grows one.
+ * No server change accompanies this.
+ */
+function BlockedRestoreNotice({ error }: { error: unknown }) {
+  const info = error instanceof ApiError ? (error.errors as AncestorBlockErrors | undefined) : undefined;
+
+  let body: ReactNode;
+  if (info?.ancestorId != null && info.ancestorType) {
+    body = (
+      <>
+        Restore{' '}
+        <Link to={ancestorPath(info.ancestorType, info.ancestorId)} className="underline hover:opacity-80">
+          {info.ancestorName ?? 'its ancestor'}
+        </Link>{' '}
+        first
+      </>
+    );
+  } else if (info?.ancestorName) {
+    body = `Restore ${info.ancestorName} first`;
+  } else {
+    body = error instanceof Error ? error.message : 'Could not restore it';
+  }
+
+  return (
+    <p className="font-mono text-[10px] text-[var(--color-red)] mt-1">
+      {body}
+    </p>
+  );
+}
+
 export function RecycleBinList() {
   // Above every early return — hooks must run on each render.
   const wide = useLayoutMode() === 'sidebar';
   const qc = useQueryClient();
   const [purgeOpen, setPurgeOpen] = useState(false);
+  // Select mode: minimal on purpose (#229) — a toggle, checkboxes and a
+  // bulk Restore, no delete/tag here. Mirrors container-detail's select
+  // mode (#231) at a much smaller scale.
+  const [selecting, setSelecting] = useState(false);
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [restoreProgress, setRestoreProgress] = useState<{ i: number; total: number } | null>(null);
+  // Keyed by batch id — a failed restore (most commonly the ancestor-blocked
+  // 409) renders inline on that row rather than as a toast, for both a
+  // single-row Restore click and a bulk-restore loop failure alike.
+  const [rowErrors, setRowErrors] = useState<Record<number, unknown>>({});
 
   const { data: batches, isLoading } = useQuery({
     queryKey: [...queryKeys.items.all, 'recycle'],
@@ -87,13 +152,23 @@ export function RecycleBinList() {
 
   const restore = useMutation({
     mutationFn: (batchId: number) => api.post(`/api/recycle/_y_/restore/${batchId}`),
-    onSuccess: () => {
+    onSuccess: (_data, batchId) => {
       invalidateEverything();
-      toast.success('Restored');
+      setRowErrors((prev) => {
+        if (!(batchId in prev)) return prev;
+        const next = { ...prev };
+        delete next[batchId];
+        return next;
+      });
     },
-    // The server refuses with a message naming the ancestor to restore first,
-    // and that instruction is now actually followable — surface it verbatim.
-    onError: (err: Error) => toast(err.message),
+    // The server refuses with a message naming the ancestor to restore
+    // first (recycle.service.js:_assertAncestorsLive) — stashed per-row so
+    // it renders (as a link when the payload carries one — see
+    // BlockedRestoreNotice) next to whichever row it blocked, for both a
+    // single click and a bulk-restore loop failure alike.
+    onError: (err, batchId) => {
+      setRowErrors((prev) => ({ ...prev, [batchId]: err }));
+    },
   });
 
   const purgeExpired = useMutation({
@@ -107,16 +182,85 @@ export function RecycleBinList() {
 
   const list = batches ?? [];
 
+  // A background refetch can remove rows out from under an open selection —
+  // prune ghosts so "N selected" only ever counts rows still here.
+  useEffect(() => {
+    if (!selecting) return;
+    const valid = new Set(list.map((b) => b.id));
+    setSelected((prev) => {
+      const next = new Set([...prev].filter((id) => valid.has(id)));
+      return next.size === prev.size ? prev : next;
+    });
+  }, [selecting, batches]);
+
+  function exitSelectMode() {
+    setSelecting(false);
+    setSelected(new Set());
+  }
+
+  function toggleSelected(batchId: number) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(batchId)) next.delete(batchId);
+      else next.add(batchId);
+      return next;
+    });
+  }
+
+  /**
+   * Sequential, continue-on-failure, per-entity isolation: one blocked
+   * restore (ancestor still deleted) does not stop the rest of the batch.
+   * Failed rows stay selected — same discipline as container-detail's
+   * runBulkDelete — with the specific reason visible inline on each one via
+   * rowErrors/BlockedRestoreNotice.
+   */
+  async function runBulkRestore() {
+    const targets = [...selected];
+    if (targets.length === 0) return;
+
+    let ok = 0;
+    const failed: number[] = [];
+    for (let idx = 0; idx < targets.length; idx++) {
+      setRestoreProgress({ i: idx + 1, total: targets.length });
+      const batchId = targets[idx];
+      try {
+        await restore.mutateAsync(batchId);
+        ok += 1;
+      } catch {
+        failed.push(batchId);
+      }
+    }
+
+    setRestoreProgress(null);
+    setSelected(new Set(failed));
+    toast(failed.length ? `Restored ${ok} · ${failed.length} failed` : `Restored ${ok}`);
+  }
+
+  const bulkRunning = !!restoreProgress;
+
   return (
     <div className="flex flex-col gap-3">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-2">
         <span className="font-mono text-[11px] uppercase tracking-[0.1em] text-[var(--color-text-muted)]">
           {isLoading ? 'Loading' : `${list.length} ${list.length === 1 ? 'deletion' : 'deletions'}`}
         </span>
-        <Button variant="outline" size="sm" onClick={() => setPurgeOpen(true)} disabled={purgeExpired.isPending}>
-          <Trash2 className="w-4 h-4" />
-          Purge Expired
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" onClick={() => setPurgeOpen(true)} disabled={purgeExpired.isPending || bulkRunning}>
+            <Trash2 className="w-4 h-4" />
+            Purge Expired
+          </Button>
+          {list.length > 0 && (
+            <Button
+              variant={selecting ? 'default' : 'outline'}
+              size="sm"
+              onClick={() => (selecting ? exitSelectMode() : setSelecting(true))}
+              disabled={bulkRunning}
+            >
+              <CheckSquare className="w-4 h-4" />
+              Select
+            </Button>
+          )}
+        </div>
       </div>
 
       <ConfirmDialog
@@ -161,11 +305,35 @@ export function RecycleBinList() {
           {list.map((b) => {
             const Icon = ICON[b.rootType] ?? Package;
             const contents = describeContents(b);
+            const isSelected = selected.has(b.id);
             return (
               <div
                 key={b.id}
                 className="flex items-center gap-3 py-3 border-b border-[var(--color-rule)] last:border-b-0"
+                onClick={selecting ? () => toggleSelected(b.id) : undefined}
+                role={selecting ? 'button' : undefined}
+                tabIndex={selecting ? 0 : undefined}
+                aria-pressed={selecting ? isSelected : undefined}
+                aria-label={selecting ? `Select ${b.rootName}` : undefined}
+                onKeyDown={selecting ? (e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    toggleSelected(b.id);
+                  }
+                } : undefined}
               >
+                {selecting && (
+                  <span
+                    className={cn(
+                      'flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-[2px] border-[1.6px]',
+                      isSelected
+                        ? 'border-[var(--color-text)] bg-[var(--color-text)] text-[var(--color-bg)]'
+                        : 'border-[var(--color-text)] text-transparent',
+                    )}
+                  >
+                    <Check className="h-3 w-3" strokeWidth={3} />
+                  </span>
+                )}
                 <Icon className="w-4 h-4 shrink-0 text-[var(--color-text-muted)]" />
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-semibold truncate">{b.rootName}</p>
@@ -184,21 +352,44 @@ export function RecycleBinList() {
                       </span>
                     )}
                   </p>
+                  {rowErrors[b.id] !== undefined && <BlockedRestoreNotice error={rowErrors[b.id]} />}
                 </div>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => restore.mutate(b.id)}
-                  disabled={restore.isPending}
-                  className="shrink-0"
-                >
-                  <RotateCcw className="w-4 h-4" />
-                  Restore
-                </Button>
+                {!selecting && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => restore.mutate(b.id, { onSuccess: () => toast.success('Restored') })}
+                    disabled={restore.isPending}
+                    className="shrink-0"
+                  >
+                    <RotateCcw className="w-4 h-4" />
+                    Restore
+                  </Button>
+                )}
               </div>
             );
           })}
           </div>
+        </div>
+      )}
+
+      {/* Select-mode action bar — mirrors container-detail's, at the minimum
+          this page needs: count, All/Cancel, and the one bulk action. */}
+      {selecting && (
+        <div className="fixed bottom-[calc(5.5rem+env(safe-area-inset-bottom))] lg:bottom-8 left-4 right-4 lg:left-auto lg:right-8 lg:w-[24rem] z-30 bg-[var(--color-card)] border-2 border-[var(--color-text)] rounded-[var(--radius-md)] shadow-lg px-3 py-2.5 flex flex-wrap items-center gap-2">
+          <p className="font-mono text-xs uppercase tracking-[0.06em] text-[var(--color-text)] flex-1 min-w-0 truncate tabular-nums">
+            {selected.size} selected
+          </p>
+          <Button variant="ghost" size="sm" onClick={() => setSelected(new Set(list.map((b) => b.id)))} disabled={bulkRunning}>
+            All
+          </Button>
+          <Button variant="outline" size="sm" onClick={exitSelectMode} disabled={bulkRunning}>
+            Cancel
+          </Button>
+          <Button size="sm" variant="outline" disabled={selected.size === 0 || bulkRunning} onClick={runBulkRestore}>
+            <RotateCcw className="w-4 h-4" />
+            {restoreProgress ? `Restoring… ${restoreProgress.i} of ${restoreProgress.total}` : `Restore ${selected.size}`}
+          </Button>
         </div>
       )}
     </div>

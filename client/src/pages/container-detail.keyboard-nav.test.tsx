@@ -53,17 +53,30 @@ const items: Item[] = [
   makeItem({ id: 21, name: 'Item B' }),
 ];
 
+// Mutable so the reconciliation test below can simulate a bulk delete (#231)
+// shrinking the list mid-visit — same pattern as matches.keyboard-nav.test.tsx.
+let currentItems: Item[] = items;
+
 vi.mock('@/hooks/use-inventory', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/hooks/use-inventory')>();
   return {
     ...actual,
     useContainer: () => ({ data: container, isLoading: false, isError: false, refetch: vi.fn() }),
     useContainerChildren: () => ({ data: children, isLoading: false }),
-    useItems: () => ({ data: items, isLoading: false }),
+    useItems: () => ({ data: currentItems, isLoading: false }),
     useCreateContainer: () => ({ mutateAsync: vi.fn(), isPending: false }),
     useCreateItem: () => ({ mutateAsync: vi.fn(), isPending: false }),
-    useDeleteContainer: () => ({ mutate: vi.fn(), isPending: false }),
+    useDeleteContainer: () => ({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false }),
+    useDeleteItem: () => ({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false }),
   };
+});
+
+// Bulk delete/tag (#231) added a useAddTag() call to the page — stub it the
+// same way the hooks above are stubbed, so this file doesn't need a real
+// QueryClientProvider just because the component now imports one more hook.
+vi.mock('@/hooks/use-tags', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/hooks/use-tags')>();
+  return { ...actual, useAddTag: () => ({ mutateAsync: vi.fn(), isPending: false }) };
 });
 
 /** The div this file's ring styling is applied to, one level above the row's own button. */
@@ -85,6 +98,7 @@ function renderPage() {
 beforeEach(() => {
   vi.mocked(useLayoutMode).mockReturnValue('sidebar');
   navigateSpy.mockClear();
+  currentItems = items;
 });
 
 afterEach(() => {
@@ -164,4 +178,31 @@ test('the ring is off entirely on touch chrome', () => {
 
   fireEvent.keyDown(window, { key: 'j' });
   expect(ringOn('Nested A')).toBe(false);
+});
+
+// ── Fix round 1 (#231 review, LOW) ──────────────────────────────────────
+
+test('the ring reconciles (clears) when the highlighted row disappears from the list', () => {
+  const { rerender } = renderPage();
+
+  fireEvent.keyDown(window, { key: 'j' }); // Nested A
+  fireEvent.keyDown(window, { key: 'j' }); // Nested B
+  fireEvent.keyDown(window, { key: 'j' }); // Item A
+  expect(ringOn('Item A')).toBe(true);
+
+  // Simulate what a bulk delete (#231) does once the invalidated query
+  // refetches: Item A is gone. Tracking by index would silently land the
+  // ring on whatever now sits in that slot (Item B); tracking by (type, id)
+  // key must clear it instead.
+  currentItems = [items[1]];
+  rerender(
+    <MemoryRouter initialEntries={['/container/1']}>
+      <Routes>
+        <Route path="/container/:containerId" element={<ContainerDetail />} />
+      </Routes>
+    </MemoryRouter>,
+  );
+
+  expect(screen.queryByText('Item A')).toBeNull();
+  expect(ringOn('Item B')).toBe(false);
 });

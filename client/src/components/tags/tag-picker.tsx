@@ -29,9 +29,22 @@ interface TagPickerProps {
   entityType: 'item' | 'container' | 'area';
   entityId: number;
   propertyId: number;
+  /**
+   * Batch mode: apply a tag across many entities at once instead of the
+   * single `entityId` above (pass 0 there — it disables the "already
+   * applied" lookup, which has no single entity to ask about anyway).
+   * Clicking an available tag (or creating a new one) calls `onApply`
+   * instead of mutating directly, so the caller can fan it out into its own
+   * per-entity loop with error isolation and progress tracking.
+   */
+  batchMode?: {
+    onApply: (tagId: number) => void;
+    /** Disables tag selection while the caller's batch loop is in flight. */
+    busy?: boolean;
+  };
 }
 
-export function TagPicker({ entityType, entityId, propertyId }: TagPickerProps) {
+export function TagPicker({ entityType, entityId, propertyId, batchMode }: TagPickerProps) {
   const [dropdownOpen, setDropdownOpen] = React.useState(false);
   const [newTagName, setNewTagName] = React.useState('');
   const [newTagColor, setNewTagColor] = React.useState(PRESET_COLORS[3]); // blue default
@@ -59,6 +72,14 @@ export function TagPicker({ entityType, entityId, propertyId }: TagPickerProps) 
   const availableTags = (propertyTags as Tag[]).filter((t) => !entityTagIds.has(t.id));
 
   function handleAddTag(tagId: number) {
+    if (batchMode) {
+      // The caller owns the mutation here — it needs to fan this out across
+      // every selected entity with its own error isolation, not mutate the
+      // single `entityId` this instance was given (0, unused in this mode).
+      batchMode.onApply(tagId);
+      setDropdownOpen(false);
+      return;
+    }
     addTag.mutate(
       { tagId, entityType, entityId },
       {
@@ -83,12 +104,17 @@ export function TagPicker({ entityType, entityId, propertyId }: TagPickerProps) 
         onSuccess: (result) => {
           const tag = (result as unknown as { tag: Tag }).tag ?? result;
           setNewTagName('');
-          // Immediately apply the newly created tag to the entity
+          // Immediately apply the newly created tag to the entity (or, in
+          // batch mode, hand it to the caller's per-entity loop).
           if (tag?.id) {
-            addTag.mutate(
-              { tagId: tag.id, entityType, entityId },
-              { onError: (err) => toast(err.message) },
-            );
+            if (batchMode) {
+              batchMode.onApply(tag.id);
+            } else {
+              addTag.mutate(
+                { tagId: tag.id, entityType, entityId },
+                { onError: (err) => toast(err.message) },
+              );
+            }
           }
           setDropdownOpen(false);
         },
@@ -99,8 +125,10 @@ export function TagPicker({ entityType, entityId, propertyId }: TagPickerProps) 
 
   return (
     <div className="flex flex-wrap items-center gap-1.5">
-      {/* Applied tags */}
-      {(entityTags as Tag[]).map((tag) => (
+      {/* Applied tags — meaningless in batch mode: there is no single entity
+          to ask "already has this tag", only many, possibly with different
+          answers each. */}
+      {!batchMode && (entityTags as Tag[]).map((tag) => (
         <TagBadge
           key={tag.id}
           tag={tag}

@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ScanLine, Printer, Share2, Plus, Package, Box, CheckSquare, Camera, MoveRight, Trash2 } from 'lucide-react';
+import { ScanLine, Printer, Share2, Plus, Package, Box, CheckSquare, Camera, MoveRight, Trash2, Tag as TagIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { TitleBar } from '@/components/ui/title-bar';
@@ -19,14 +19,18 @@ import {
   useCreateContainer,
   useCreateItem,
   useDeleteContainer,
+  useDeleteItem,
 } from '@/hooks/use-inventory';
+import { useAddTag } from '@/hooks/use-tags';
 import { toast } from '@/components/ui/toast';
 import { TagPicker } from '@/components/tags/tag-picker';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { LabelPrintDialog } from '@/components/labels/label-print-dialog';
 import { ShareDialog } from '@/components/sharing/share-dialog';
 import { usePrintQueueStore } from '@/store/print-queue-store';
 import { useCarryStore } from '@/store/carry-store';
+import type { Item } from '@/types/inventory';
 import { cn } from '@/lib/utils';
 import { useLayoutMode } from '@/hooks/use-layout-mode';
 import { useKeyboardNav } from '@/hooks/use-keyboard-nav';
@@ -47,6 +51,24 @@ export function ContainerDetail() {
   // print-queue staging area in one batch instead of a dialog per label.
   const [selecting, setSelecting] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  // Bulk delete/tag from select mode (#231): one confirm/picker for the whole
+  // selection instead of a per-row round trip. Progress is tracked separately
+  // per action so "N of total" and the disabled state are always about
+  // whichever loop is actually running.
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+  const [bulkTagOpen, setBulkTagOpen] = useState(false);
+  const [deleteProgress, setDeleteProgress] = useState<{ i: number; total: number } | null>(null);
+  const [tagProgress, setTagProgress] = useState<{ i: number; total: number } | null>(null);
+  // Snapshotted once when the Tag dialog opens (fix round 1, #231 review):
+  // runBulkTag drops succeeded items from `selected` after every apply so
+  // the page's own selection state stays truthful, but the dialog stays
+  // open to let one visit apply more than one tag. Deriving the loop's
+  // target list straight from `selected` meant a second apply, in the same
+  // visit, over a selection the first apply had already fully succeeded on,
+  // saw zero items and silently no-opped. This snapshot is the dialog's own
+  // working set — untouched by the loop, so a retry-apply (including one
+  // that failed last time) always reaches the whole original selection.
+  const [bulkTagTargets, setBulkTagTargets] = useState<Item[]>([]);
 
   // Navigating bin→bin only changes :containerId — the component stays
   // mounted, so without this a selection from the previous bin leaks in.
@@ -62,6 +84,8 @@ export function ContainerDetail() {
   const createItem = useCreateItem();
   const stageMany = usePrintQueueStore((s) => s.addMany);
   const deleteContainer = useDeleteContainer();
+  const deleteItem = useDeleteItem();
+  const addTag = useAddTag();
   const pickUp = useCarryStore((s) => s.pickUp);
   const carried = useCarryStore((s) => s.carried);
 
@@ -74,23 +98,44 @@ export function ContainerDetail() {
     ...(children ?? []).map((c) => ({ type: 'container' as const, id: c.id })),
     ...(items ?? []).map((i) => ({ type: 'item' as const, id: i.id })),
   ], [children, items]);
+  const visibleKeys = React.useMemo(
+    () => visibleOrder.map((e) => `${e.type}:${e.id}`),
+    [visibleOrder],
+  );
 
-  const [highlightIdx, setHighlightIdx] = useState(-1);
+  /**
+   * Tracked by (type, id) key, not index — an index survives a bulk delete
+   * (#231) shrinking the list right out from under it and silently ends up
+   * pointing at whatever row now occupies that slot instead. Mirrors the
+   * by-id ring in matches.tsx.
+   */
+  const [highlightedKey, setHighlightedKey] = useState<string | null>(null);
 
   // Navigating bin -> bin keeps the component mounted (same as the select-mode
-  // reset above) — without this a row index from the PREVIOUS bin would still
-  // point at something here, just not the thing the user was looking at.
-  useEffect(() => { setHighlightIdx(-1); }, [id]);
+  // reset above) — without this a highlighted row from the PREVIOUS bin would
+  // still point at something here, just not the thing the user was looking at.
+  useEffect(() => { setHighlightedKey(null); }, [id]);
+
+  // Reconcile only when the highlighted row itself is gone (bulk delete, or
+  // any other removal) — a poll/refetch that leaves it in place, even under
+  // a brand new array reference, must not touch the cursor at all.
+  useEffect(() => {
+    if (highlightedKey != null && !visibleKeys.includes(highlightedKey)) {
+      setHighlightedKey(null);
+    }
+  }, [visibleKeys, highlightedKey]);
 
   const moveHighlight = React.useCallback((delta: 1 | -1) => {
-    if (visibleOrder.length === 0) return;
-    setHighlightIdx((at) => (at === -1
-      ? (delta === 1 ? 0 : visibleOrder.length - 1)
-      : Math.min(visibleOrder.length - 1, Math.max(0, at + delta))));
-  }, [visibleOrder.length]);
+    if (visibleKeys.length === 0) return;
+    const at = highlightedKey == null ? -1 : visibleKeys.indexOf(highlightedKey);
+    const next = at === -1
+      ? (delta === 1 ? 0 : visibleKeys.length - 1)
+      : Math.min(visibleKeys.length - 1, Math.max(0, at + delta));
+    setHighlightedKey(visibleKeys[next]);
+  }, [visibleKeys, highlightedKey]);
 
-  const highlighted = highlightIdx >= 0 && highlightIdx < visibleOrder.length
-    ? visibleOrder[highlightIdx]
+  const highlighted = highlightedKey != null
+    ? visibleOrder[visibleKeys.indexOf(highlightedKey)] ?? null
     : null;
 
   useKeyboardNav({
@@ -103,7 +148,7 @@ export function ContainerDetail() {
       if (!highlighted) return;
       navigate(highlighted.type === 'container' ? `/container/${highlighted.id}` : `/item/${highlighted.id}`);
     },
-    onEscape: () => setHighlightIdx(-1),
+    onEscape: () => setHighlightedKey(null),
   });
 
   // A background refetch (30s staleTime + refetch-on-focus) can remove rows
@@ -346,7 +391,100 @@ export function ContainerDetail() {
     );
   }
 
+  const pickedItemsForBulk = (items ?? []).filter((i) => selected.has(`item:${i.id}`));
+  const pickedBinsForBulk = (children ?? []).filter((c) => selected.has(`container:${c.id}`));
+
+  /**
+   * Sequential, continue-on-failure: one entity's 500 does not stop the rest
+   * of the batch. Bins go first, then items — the same order shift-click
+   * ranges over — purely so the progress count means something; either kind
+   * can fail independently of the other.
+   */
+  async function runBulkDelete() {
+    const targets = [
+      ...pickedBinsForBulk.map((c) => ({ key: `container:${c.id}`, id: c.id, kind: 'container' as const })),
+      ...pickedItemsForBulk.map((i) => ({ key: `item:${i.id}`, id: i.id, kind: 'item' as const })),
+    ];
+    if (targets.length === 0) return;
+
+    // Close now, not on completion — a modal dialog marks everything behind
+    // it aria-hidden and unclickable, which would bury the progress label
+    // and the disabled state on the select-mode bar for the whole loop.
+    setBulkDeleteOpen(false);
+
+    const failed: string[] = [];
+    let ok = 0;
+    for (let idx = 0; idx < targets.length; idx++) {
+      setDeleteProgress({ i: idx + 1, total: targets.length });
+      const t = targets[idx];
+      try {
+        if (t.kind === 'item') await deleteItem.mutateAsync(t.id);
+        else await deleteContainer.mutateAsync(t.id);
+        ok += 1;
+      } catch {
+        failed.push(t.key);
+      }
+    }
+
+    setDeleteProgress(null);
+    // Failed rows stay selected — the point of the batch is that the user
+    // shouldn't have to remember which ones didn't take. Everything else
+    // is gone from the underlying lists once the invalidated queries
+    // refetch, so there is nothing left to keep selected for it.
+    setSelected(new Set(failed));
+    toast(failed.length ? `Deleted ${ok} · ${failed.length} failed` : `Deleted ${ok}`);
+  }
+
+  /**
+   * Additive per-item tag apply, over the dialog's own snapshot
+   * (`bulkTagTargets`) — NOT the live selection. Containers are never
+   * touched — tags are an item concept here — so they were never part of
+   * the snapshot and stay selected exactly as they were.
+   */
+  async function runBulkTag(tagId: number) {
+    if (bulkTagTargets.length === 0) return;
+
+    const failed = new Set<number>();
+    let ok = 0;
+    for (let idx = 0; idx < bulkTagTargets.length; idx++) {
+      setTagProgress({ i: idx + 1, total: bulkTagTargets.length });
+      const it = bulkTagTargets[idx];
+      try {
+        await addTag.mutateAsync({ tagId, entityType: 'item', entityId: it.id });
+        ok += 1;
+      } catch {
+        failed.add(it.id);
+      }
+    }
+
+    setTagProgress(null);
+    setSelected((prev) => {
+      const next = new Set(prev);
+      for (const it of bulkTagTargets) {
+        if (!failed.has(it.id)) next.delete(`item:${it.id}`);
+      }
+      return next;
+    });
+    toast(failed.size ? `Tagged ${ok} · ${failed.size} failed` : `Tagged ${ok}`);
+  }
+
   const selectable = (children?.length ?? 0) + (items?.length ?? 0) > 0;
+  const bulkRunning = !!deleteProgress || !!tagProgress;
+
+  const bulkDeleteParts: string[] = [];
+  if (pickedItemsForBulk.length > 0) {
+    bulkDeleteParts.push(`${pickedItemsForBulk.length} item${pickedItemsForBulk.length === 1 ? '' : 's'}`);
+  }
+  if (pickedBinsForBulk.length > 0) {
+    bulkDeleteParts.push(`${pickedBinsForBulk.length} bin${pickedBinsForBulk.length === 1 ? '' : 's'}`);
+  }
+  const bulkDeleteTitle = `Delete ${bulkDeleteParts.join(' and ') || 'the selection'}?`;
+  // Nested bins cascade their own contents on delete (server-side, always —
+  // there is no 409 here, see containers.service.js softDelete). Only worth
+  // saying out loud when it would actually do something.
+  const bulkDeleteCascades = pickedBinsForBulk.some((c) => (c.containerCount ?? 0) > 0 || (c.itemCount ?? 0) > 0);
+  const bulkDeleteDescription = "They'll move to the recycle bin, where you can put them back for 30 days."
+    + (bulkDeleteCascades ? ' Nested bins bring their contents with them.' : '');
 
   return (
     <div className="flex flex-col gap-4 pb-16">
@@ -495,22 +633,50 @@ export function ContainerDetail() {
         </div>
       </section>
 
-      {/* Select-mode action bar — replaces the FAB so the two never overlap */}
+      {/* Select-mode action bar — replaces the FAB so the two never overlap.
+          flex-wrap: Move/Tag/Delete/Queue plus All/Cancel no longer fit one
+          line on a phone now that Tag and Delete joined Move and Queue. */}
       {selecting && (
-        <div className="fixed bottom-[calc(5.5rem+env(safe-area-inset-bottom))] lg:bottom-8 left-4 right-4 lg:left-auto lg:right-8 lg:w-[26rem] z-30 bg-[var(--color-card)] border-2 border-[var(--color-text)] rounded-[var(--radius-md)] shadow-lg px-3 py-2.5 flex items-center gap-2">
+        <div className="fixed bottom-[calc(5.5rem+env(safe-area-inset-bottom))] lg:bottom-8 left-4 right-4 lg:left-auto lg:right-8 lg:w-[26rem] z-30 bg-[var(--color-card)] border-2 border-[var(--color-text)] rounded-[var(--radius-md)] shadow-lg px-3 py-2.5 flex flex-wrap items-center gap-2">
           <p className="font-mono text-xs uppercase tracking-[0.06em] text-[var(--color-text)] flex-1 min-w-0 truncate tabular-nums">
             {selected.size} selected
           </p>
-          <Button variant="ghost" size="sm" onClick={handleSelectAll}>
+          <Button variant="ghost" size="sm" onClick={handleSelectAll} disabled={bulkRunning}>
             All
           </Button>
-          <Button variant="outline" size="sm" onClick={exitSelectMode}>
+          <Button variant="outline" size="sm" onClick={exitSelectMode} disabled={bulkRunning}>
             Cancel
           </Button>
-          <Button size="sm" variant="outline" disabled={selected.size === 0} onClick={handleMoveSelected}>
+          <Button size="sm" variant="outline" disabled={selected.size === 0 || bulkRunning} onClick={handleMoveSelected}>
             Move
           </Button>
-          <Button size="sm" disabled={selected.size === 0} onClick={handleAddSelected}>
+          {hasTags && (
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={selected.size === 0 || bulkRunning}
+              onClick={() => {
+                // Snapshot NOW — this is the dialog's own working set for
+                // the whole visit, independent of `selected` shrinking as
+                // applies succeed (see bulkTagTargets above).
+                setBulkTagTargets(pickedItemsForBulk);
+                setBulkTagOpen(true);
+              }}
+            >
+              <TagIcon className="w-4 h-4" />
+              {tagProgress ? `Tagging… ${tagProgress.i} of ${tagProgress.total}` : 'Tag'}
+            </Button>
+          )}
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={selected.size === 0 || bulkRunning}
+            onClick={() => setBulkDeleteOpen(true)}
+          >
+            <Trash2 className="w-4 h-4" />
+            {deleteProgress ? `Deleting… ${deleteProgress.i} of ${deleteProgress.total}` : 'Delete'}
+          </Button>
+          <Button size="sm" disabled={selected.size === 0 || bulkRunning} onClick={handleAddSelected}>
             Queue
           </Button>
         </div>
@@ -617,6 +783,54 @@ export function ContainerDetail() {
         isOpen={shareOpen}
         onOpenChange={setShareOpen}
       />
+
+      <ConfirmDialog
+        open={bulkDeleteOpen}
+        // Ignored while a loop is running — Escape/backdrop must not be able
+        // to dismiss the dialog out from under an in-flight batch.
+        onOpenChange={(open) => { if (!deleteProgress) setBulkDeleteOpen(open); }}
+        title={bulkDeleteTitle}
+        description={bulkDeleteDescription}
+        destructive
+        confirmLabel="Delete"
+        isPending={!!deleteProgress}
+        onConfirm={runBulkDelete}
+      />
+
+      {hasTags && (
+        <Dialog open={bulkTagOpen} onOpenChange={(open) => { if (!tagProgress) setBulkTagOpen(open); }}>
+          <DialogContent className="max-w-sm">
+            <DialogHeader>
+              {/* bulkTagTargets, not pickedItemsForBulk: the latter shrinks
+                  as each apply succeeds and would read "Tag 0 items" right
+                  after the first one, even though this dialog stays open to
+                  take a second tag against the same original selection. */}
+              <DialogTitle className="text-base font-semibold text-[var(--color-text)]">
+                Tag {bulkTagTargets.length} item{bulkTagTargets.length === 1 ? '' : 's'}
+              </DialogTitle>
+              <DialogDescription className="text-sm text-[var(--color-text-secondary)]">
+                Adds a tag to every selected item — it never removes tags they already have.
+              </DialogDescription>
+            </DialogHeader>
+            {pickedBinsForBulk.length > 0 && (
+              <p className="text-xs text-[var(--color-text-muted)]">
+                Tags apply to items — skipping {pickedBinsForBulk.length} bin{pickedBinsForBulk.length === 1 ? '' : 's'}.
+              </p>
+            )}
+            <TagPicker
+              entityType="item"
+              entityId={0}
+              propertyId={propertyId}
+              batchMode={{ onApply: runBulkTag, busy: !!tagProgress }}
+            />
+            {tagProgress && (
+              <p className="font-mono text-[11px] uppercase tracking-[0.06em] text-[var(--color-text-muted)] mt-3">
+                Tagging… {tagProgress.i} of {tagProgress.total}
+              </p>
+            )}
+          </DialogContent>
+        </Dialog>
+      )}
     </div>
   );
 }

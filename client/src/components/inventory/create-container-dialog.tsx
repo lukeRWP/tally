@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Select } from '@/components/ui/select';
 import { toast } from '@/components/ui/toast';
 import { useAreas, useCreateContainer, useProperties } from '@/hooks/use-inventory';
+import type { Container } from '@/types/inventory';
 
 interface CreateContainerDialogProps {
   open: boolean;
@@ -14,6 +15,13 @@ interface CreateContainerDialogProps {
   seedAreaId?: number;
   seedAreaName?: string;
   seedPropertyId?: number;
+  /**
+   * When supplied, a successful create hands the new container back to the
+   * caller instead of navigating to its detail page — for a picker's
+   * empty-area dead end, the container was made to be picked, not visited.
+   * The dialog still closes and toasts either way.
+   */
+  onCreated?: (container: Container) => void;
 }
 
 /**
@@ -29,7 +37,7 @@ interface CreateContainerDialogProps {
  * a choice the current page already made.
  */
 export function CreateContainerDialog({
-  open, onOpenChange, seedAreaId, seedAreaName, seedPropertyId,
+  open, onOpenChange, seedAreaId, seedAreaName, seedPropertyId, onCreated,
 }: CreateContainerDialogProps) {
   const navigate = useNavigate();
   const { data: properties } = useProperties();
@@ -71,7 +79,8 @@ export function CreateContainerDialog({
       .then((res) => {
         toast('Container created');
         onOpenChange(false);
-        navigate(`/container/${res.container.id}`);
+        if (onCreated) onCreated(res.container);
+        else navigate(`/container/${res.container.id}`);
       })
       .catch((err: Error) => { toast(err.message); throw err; });
   }

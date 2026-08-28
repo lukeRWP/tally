@@ -13,7 +13,6 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { useItem, useDeleteItem, useUpdateItem } from '@/hooks/use-inventory';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { EntityForm } from '@/components/inventory/entity-form';
-import { MoveItemDialog } from '@/components/inventory/move-item-dialog';
 import { useCarryStore } from '@/store/carry-store';
 import { ErrorState } from '@/components/ui/error-state';
 import { toast } from '@/components/ui/toast';
@@ -418,7 +417,6 @@ export function ItemDetail() {
 
   const updateItem = useUpdateItem();
   const [editOpen, setEditOpen] = React.useState(false);
-  const [moveOpen, setMoveOpen] = React.useState(false);
   const pickUp = useCarryStore((s) => s.pickUp);
   const [conditionFormOpen, setConditionFormOpen] = React.useState(false);
   const [printOpen, setPrintOpen] = React.useState(false);
@@ -1044,16 +1042,6 @@ export function ItemDetail() {
           }}
         />
       )}
-
-      <MoveItemDialog
-        open={moveOpen}
-        onOpenChange={setMoveOpen}
-        itemId={id}
-        itemName={item.name}
-        defaultPropertyId={propertyId || undefined}
-        currentContainerId={containerId}
-        onMoved={() => refetch()}
-      />
 
       <ShareDialog
         entityType="item"

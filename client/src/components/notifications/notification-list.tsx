@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Clock,
@@ -16,6 +17,7 @@ import {
   useDismissNotification,
   type Notification,
 } from '@/hooks/use-notifications';
+import { toast } from '@/components/ui/toast';
 import { cn } from '@/lib/utils';
 
 function relativeTime(dateStr: string): string {
@@ -72,7 +74,10 @@ function NotificationRow({ notification }: { notification: Notification }) {
       markRead.mutate(notification.id);
     }
     if (notification.entityType && notification.entityId) {
-      navigate(entityPath(notification.entityType, notification.entityId));
+      // {state:{from:'alerts'}} is read by the shared Breadcrumbs component
+      // on whichever detail page this lands on, so acting there renders a
+      // way back to this list instead of stranding the user.
+      navigate(entityPath(notification.entityType, notification.entityId), { state: { from: 'alerts' } });
     }
   }
 
@@ -136,24 +141,65 @@ function NotificationRow({ notification }: { notification: Notification }) {
 export function NotificationList() {
   const { data: notifications, isLoading } = useNotifications();
   const markAllRead = useMarkAllRead();
+  const dismiss = useDismissNotification();
+  const [dismissProgress, setDismissProgress] = useState<{ i: number; total: number } | null>(null);
   const items = notifications ?? [];
   const hasUnread = items.some((n) => n.readAt === null);
+
+  /**
+   * There is no bulk-dismiss endpoint — this loops the same single-dismiss
+   * DELETE the row's own X button uses, sequentially and continue-on-failure,
+   * per the wave's bulk-loop discipline (see container-detail.tsx runBulkDelete).
+   */
+  async function runDismissAll() {
+    const targets = [...items];
+    if (targets.length === 0) return;
+
+    let ok = 0;
+    let failed = 0;
+    for (let idx = 0; idx < targets.length; idx++) {
+      setDismissProgress({ i: idx + 1, total: targets.length });
+      try {
+        await dismiss.mutateAsync(targets[idx].id);
+        ok += 1;
+      } catch {
+        failed += 1;
+      }
+    }
+
+    setDismissProgress(null);
+    toast(failed ? `Dismissed ${ok} · ${failed} failed` : `Dismissed ${ok}`);
+  }
+
+  const dismissRunning = !!dismissProgress;
 
   return (
     <div className="flex flex-col gap-3 max-w-2xl mx-auto">
       {/* Header row */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-2">
         <h2 className="text-lg font-bold text-[var(--color-text)]">Notifications</h2>
-        {hasUnread && (
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => markAllRead.mutate()}
-            disabled={markAllRead.isPending}
-          >
-            Mark all read
-          </Button>
-        )}
+        <div className="flex items-center gap-2">
+          {hasUnread && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => markAllRead.mutate()}
+              disabled={markAllRead.isPending || dismissRunning}
+            >
+              Mark all read
+            </Button>
+          )}
+          {(items.length > 0 || dismissRunning) && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={runDismissAll}
+              disabled={dismissRunning}
+            >
+              {dismissProgress ? `Dismissing… ${dismissProgress.i} of ${dismissProgress.total}` : `Dismiss ${items.length}`}
+            </Button>
+          )}
+        </div>
       </div>
 
       {/* Loading */}

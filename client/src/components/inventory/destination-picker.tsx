@@ -1,8 +1,9 @@
 import * as React from 'react';
-import { X, MapPin } from 'lucide-react';
+import { X, MapPin, Plus } from 'lucide-react';
 import { api } from '@/lib/api';
 import { useProperties, useAreas, useContainers } from '@/hooks/use-inventory';
 import { useKeyboardNav } from '@/hooks/use-keyboard-nav';
+import { CreateContainerDialog } from '@/components/inventory/create-container-dialog';
 import { cn } from '@/lib/utils';
 
 export interface PickedBin {
@@ -80,6 +81,19 @@ export function DestinationPicker({
   }, [seedAreaId, propertyId]);
 
   const containerList = containers ?? [];
+  const areaName = areas?.find((a) => a.id === areaId)?.name;
+  // The empty-area state used to be a dead end — no bins, no way to make one
+  // without abandoning whatever flow opened this picker (capture, put-down).
+  // Seeded with the area already selected here, so the only thing left to
+  // answer is name + type.
+  const [createOpen, setCreateOpen] = React.useState(false);
+  // CreateContainerDialog calls useNavigate() unconditionally, so mounting it
+  // requires a Router ancestor. Both real hosts (capture.tsx, put-down.tsx)
+  // are pages rendered under the app's Router, but the picker itself carries
+  // no such guarantee (its own keyboard-nav tests mount it bare) — so it is
+  // only ever instantiated once the create affordance has actually been
+  // used, never just because an area with no bins happens to be selected.
+  const [createEverOpened, setCreateEverOpened] = React.useState(false);
   const [highlightIdx, setHighlightIdx] = React.useState(-1);
   // A new area's bin list means a stale index would point at an unrelated row.
   React.useEffect(() => { setHighlightIdx(-1); }, [areaId]);
@@ -109,69 +123,110 @@ export function DestinationPicker({
   });
 
   return (
-    <div className="flex flex-col gap-2 border-2 border-[var(--color-text)] rounded-[var(--radius-sm)] p-3 flex-1 min-h-0">
-      <div className="flex items-center justify-between shrink-0">
-        <span className="font-mono text-[10px] uppercase tracking-[0.1em] font-bold">Choose a bin</span>
-        <button
-          type="button"
-          aria-label="Close"
-          onClick={onClose}
-          className="min-w-[32px] min-h-[32px] flex items-center justify-center text-[var(--color-text-muted)]"
+    <>
+      <div className="flex flex-col gap-2 border-2 border-[var(--color-text)] rounded-[var(--radius-sm)] p-3 flex-1 min-h-0">
+        <div className="flex items-center justify-between shrink-0">
+          <span className="font-mono text-[10px] uppercase tracking-[0.1em] font-bold">Choose a bin</span>
+          <button
+            type="button"
+            aria-label="Close"
+            onClick={onClose}
+            className="min-w-[32px] min-h-[32px] flex items-center justify-center text-[var(--color-text-muted)]"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        {showPropertySelector && (properties?.length ?? 0) > 1 && (
+          <select
+            value={propertyId}
+            onChange={(e) => {
+              seeded.current = true; // a deliberate choice outranks any seed
+              setPropertyId(Number(e.target.value));
+              setAreaId(0);
+            }}
+            className="w-full min-h-[40px] px-2 rounded-[var(--radius-sm)] border border-[var(--color-rule)] bg-[var(--color-bg)] text-sm shrink-0"
+          >
+            <option value={0}>Property…</option>
+            {properties?.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+          </select>
+        )}
+
+        <select
+          value={areaId}
+          onChange={(e) => { seeded.current = true; setAreaId(Number(e.target.value)); }}
+          disabled={!propertyId}
+          className="w-full min-h-[40px] px-2 rounded-[var(--radius-sm)] border border-[var(--color-rule)] bg-[var(--color-bg)] text-sm disabled:opacity-50 shrink-0"
         >
-          <X className="w-4 h-4" />
-        </button>
+          <option value={0}>Area…</option>
+          {areas?.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+        </select>
+
+        {areaId > 0 && (
+          (containers?.length ?? 0) === 0 ? (
+            <div className="flex flex-col gap-2 py-2 shrink-0">
+              <p className="font-mono text-[10px] uppercase tracking-[0.06em] text-[var(--color-text-muted)]">
+                No bins in this area yet — scan its area label to file loose
+              </p>
+              <button
+                type="button"
+                onClick={() => { setCreateEverOpened(true); setCreateOpen(true); }}
+                className="flex items-center gap-1.5 self-start font-mono text-[10px] uppercase tracking-[0.06em] text-[var(--color-primary)] underline decoration-dotted"
+              >
+                <Plus className="w-3 h-3" />
+                Create a container here
+              </button>
+            </div>
+          ) : (
+            <div className="flex flex-col flex-1 min-h-[100px] overflow-y-auto">
+              {containerList.map((c, idx) => (
+                <button
+                  key={c.id}
+                  type="button"
+                  onClick={() => onPick({ id: c.id, name: c.name, areaId: c.areaId })}
+                  className={cn(
+                    'flex items-center gap-2 py-2.5 border-b border-[var(--color-rule)] last:border-b-0 text-left',
+                    highlightIdx === idx && 'bg-[var(--color-elevated)] ring-1 ring-[var(--color-text)]',
+                  )}
+                >
+                  <MapPin className="w-3.5 h-3.5 shrink-0 text-[var(--color-text-muted)]" />
+                  <span className="min-w-0 flex-1 text-sm font-medium truncate">{c.name}</span>
+                  <span className="font-mono text-[10px] text-[var(--color-text-muted)]">{c.itemCount ?? 0}</span>
+                </button>
+              ))}
+            </div>
+          )
+        )}
       </div>
 
-      {showPropertySelector && (properties?.length ?? 0) > 1 && (
-        <select
-          value={propertyId}
-          onChange={(e) => {
-            seeded.current = true; // a deliberate choice outranks any seed
-            setPropertyId(Number(e.target.value));
-            setAreaId(0);
+      {/*
+        A real Radix Dialog, rendered as a controlled sibling of the panel
+        above rather than nested inside it. It doesn't need to be — this
+        picker is itself just a bordered div (see the keyboard-nav test's
+        header comment), never a Dialog/Sheet in either of its two call sites
+        (capture.tsx, put-down.tsx) — but keeping it a sibling here means
+        that stays true regardless of what a future host wraps the picker in.
+
+        onCreated skips CreateContainerDialog's default "navigate to the new
+        container's page" — from inside a picker, the container was made to
+        be picked, not visited. useCreateContainer's onSuccess already
+        invalidates the whole container tree (see use-inventory.ts), so
+        containerList refetches this area's bins on its own; onPick still
+        fires immediately rather than waiting on that refetch, so the choice
+        lands without a round trip.
+      */}
+      {areaId > 0 && createEverOpened && (
+        <CreateContainerDialog
+          open={createOpen}
+          onOpenChange={setCreateOpen}
+          seedAreaId={areaId}
+          seedAreaName={areaName}
+          seedPropertyId={propertyId || undefined}
+          onCreated={(container) => {
+            onPick({ id: container.id, name: container.name, areaId: container.areaId });
           }}
-          className="w-full min-h-[40px] px-2 rounded-[var(--radius-sm)] border border-[var(--color-rule)] bg-[var(--color-bg)] text-sm shrink-0"
-        >
-          <option value={0}>Property…</option>
-          {properties?.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-        </select>
+        />
       )}
-
-      <select
-        value={areaId}
-        onChange={(e) => { seeded.current = true; setAreaId(Number(e.target.value)); }}
-        disabled={!propertyId}
-        className="w-full min-h-[40px] px-2 rounded-[var(--radius-sm)] border border-[var(--color-rule)] bg-[var(--color-bg)] text-sm disabled:opacity-50 shrink-0"
-      >
-        <option value={0}>Area…</option>
-        {areas?.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
-      </select>
-
-      {areaId > 0 && (
-        (containers?.length ?? 0) === 0 ? (
-          <p className="font-mono text-[10px] uppercase tracking-[0.06em] text-[var(--color-text-muted)] py-2 shrink-0">
-            No bins in this area yet — scan its area label to file loose
-          </p>
-        ) : (
-          <div className="flex flex-col flex-1 min-h-[100px] overflow-y-auto">
-            {containerList.map((c, idx) => (
-              <button
-                key={c.id}
-                type="button"
-                onClick={() => onPick({ id: c.id, name: c.name, areaId: c.areaId })}
-                className={cn(
-                  'flex items-center gap-2 py-2.5 border-b border-[var(--color-rule)] last:border-b-0 text-left',
-                  highlightIdx === idx && 'bg-[var(--color-elevated)] ring-1 ring-[var(--color-text)]',
-                )}
-              >
-                <MapPin className="w-3.5 h-3.5 shrink-0 text-[var(--color-text-muted)]" />
-                <span className="min-w-0 flex-1 text-sm font-medium truncate">{c.name}</span>
-                <span className="font-mono text-[10px] text-[var(--color-text-muted)]">{c.itemCount ?? 0}</span>
-              </button>
-            ))}
-          </div>
-        )
-      )}
-    </div>
+    </>
   );
 }
