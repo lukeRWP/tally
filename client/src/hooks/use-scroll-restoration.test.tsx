@@ -81,6 +81,9 @@ function makeHarness(useHook: typeof UseScrollRestoration) {
         <button onClick={() => navigate('/detail')}>to-detail</button>
         <button onClick={() => navigate('/other')}>to-other</button>
         <button onClick={() => navigate(-1)}>back</button>
+        {/* Mirrors Home's debounced search (#224): same pathname, different
+            search params, replace:true — a real REPLACE, not a mock. */}
+        <button onClick={() => navigate('/list?q=xyz', { replace: true })}>replace-list-search</button>
         <div ref={mainRef as React.RefObject<HTMLDivElement>} data-testid="container" />
       </div>
     );
@@ -197,5 +200,43 @@ describe('useScrollRestoration', () => {
 
     const persisted = JSON.parse(sessionStorage.getItem(STORAGE_KEY) ?? '{}');
     expect(persisted).not.toHaveProperty('/detail');
+  });
+
+  it('(e) a same-pathname REPLACE (Home\'s debounced search, #224) is a full no-op', async () => {
+    const raf = installRafMock();
+    const useHook = await freshHook();
+    const { getByText, mainRef } = renderHarness(useHook, ['/list']);
+    const el = mainRef.current!;
+
+    scrollTo(el, 300); // recorded into the cache for '/list'
+    raf.flush();
+
+    // A bit more scroll since that last throttled flush, deliberately NOT
+    // dispatched as a 'scroll' event — this leaves the cache at 300 while
+    // the live DOM sits at 305, so the three possible (wrong) behaviours
+    // are each distinguishable from "left alone": reset would show 0,
+    // a spurious restore-from-cache would show 300, only "untouched" shows
+    // 305.
+    el.scrollTop = 305;
+
+    // REPLACE, same pathname, only the search params differ — exactly
+    // Home's debounced-search navigation (#224).
+    fireEvent.click(getByText('replace-list-search'));
+    raf.flush();
+
+    // (a) scrollTop untouched — no reset to 0.
+    expect(el.scrollTop).toBe(305);
+
+    // (c) no restore write happened either: had one been scheduled, flushing
+    // the rAF queue above would have overwritten 305 with the cached 300.
+    // (Verified together with (a) since they'd produce the same wrong value.)
+
+    // (b) the cached entry for '/list' was not cleared — force a persist
+    // (route-leave normally does this; pagehide is the other trigger) and
+    // check sessionStorage still holds the original 300, not deleted and
+    // not clobbered by the untouched live 305.
+    window.dispatchEvent(new Event('pagehide'));
+    const persisted = JSON.parse(sessionStorage.getItem(STORAGE_KEY) ?? '{}');
+    expect(persisted['/list']).toBe(300);
   });
 });
