@@ -90,6 +90,14 @@ export interface PutDownResult {
    */
   aborted: boolean;
   abortError?: unknown;
+  /**
+   * How many entities hard-failed (a real, non-409 error, in either pass).
+   * `aborted` alone can't tell a caller "11 of 12 moved" from "0 of 12
+   * moved" — a batch that partially lands must say so truthfully rather
+   * than reusing the same all-or-nothing failure toast for both. Counts
+   * every hard failure, not just the first (unlike `abortError`).
+   */
+  failedCount: number;
 }
 
 /**
@@ -175,6 +183,7 @@ export function usePutDown() {
       let crossProperty = false;
       let aborted = false;
       let abortError: unknown;
+      let failedCount = 0;
 
       const total = attempted.length;
       setProgress({ done: 0, total });
@@ -209,8 +218,9 @@ export function usePutDown() {
 
       const recordHardFailure = (err: unknown) => {
         // First one wins — it is what the caller's toast names. Later hard
-        // failures in the same batch still count toward `aborted` being
-        // true, they just are not individually surfaced.
+        // failures in the same batch still count toward `aborted` (and
+        // `failedCount`) being right, they just are not individually named.
+        failedCount++;
         if (!aborted) { aborted = true; abortError = err; }
       };
 
@@ -314,7 +324,7 @@ export function usePutDown() {
       return {
         moved, skipped, destinationName: dest.name,
         targetId: itemTarget?.id ?? dest.id,
-        unlinkedCount, tagsCarried, crossProperty, aborted, abortError,
+        unlinkedCount, tagsCarried, crossProperty, aborted, abortError, failedCount,
       };
     },
     [moveItem, moveContainer, completeMove],

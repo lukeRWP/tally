@@ -317,13 +317,13 @@ Scanning a TLY code navigates to `/s/TLY-X-XXXX` on the client. The `ScanRedirec
 
 ### Scan-Scan-Done Workflow (Move Mode)
 
-The scan page supports a two-scan move flow:
+`/move` (not `/scan`) is a station you stay at, with two modes:
 
-1. First scan — select a destination container (enters "move mode", shown as an amber banner).
-2. Second scan — scan an item; it is immediately moved to the selected container via `PATCH /api/items/_p_/:id/move`.
-3. Repeat step 2 to move more items to the same destination, or cancel move mode to start over.
+1. **Gather** — while carrying a load, scan a bin/area to land the whole load (unchanged `PATCH /api/items/_p_/:id/move` / `.../containers/_p_/:id/move`), or scan an item/bin not already in hand to add it to the load (`Carrying N`).
+2. **Distribute** — after a landing, the destination stays **pinned** as a banner instead of navigating away. Scanning an item/bin now moves it straight to the pin (`Moved N to X`, with a toast Undo); scanning a new bin/area re-pins instead — nothing moves.
+3. **Done** (button, or Esc at a desk) leaves to the pinned destination's page — leaving is the explicit act, staying is the default.
 
-This allows rapid relocation of many items without navigating away from the scan page.
+A typed-code field under the scanner is the fallback for a damaged label; the same field is the primary control at a desk in distribute mode, which has no camera.
 
 ### Label Printing (PDF, 4 presets)
 
