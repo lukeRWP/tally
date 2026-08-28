@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Camera, Check, X, Printer, Plus, MapPin, SkipForward, List, AlertTriangle, Search, ImagePlus, Sparkles, Keyboard, Loader2 } from 'lucide-react';
+import { Camera, Check, X, Printer, Plus, MapPin, SkipForward, List, AlertTriangle, Search, ImagePlus, Sparkles, Keyboard, Loader2, Undo2 } from 'lucide-react';
 import { ProductScanner } from '@/components/scanner/product-scanner';
 import { TagScanner } from '@/components/scanner/tag-scanner';
 import { ProductSearch } from '@/components/scanner/product-search';
@@ -12,7 +12,7 @@ import { toast } from '@/components/ui/toast';
 import { api, getCsrfToken, parseEnvelope } from '@/lib/api';
 import { findOrCreateLooseContainer } from '@/hooks/use-put-down';
 import { DestinationPicker } from '@/components/inventory/destination-picker';
-import { useCreateItem } from '@/hooks/use-inventory';
+import { useCreateItem, useDeleteItem } from '@/hooks/use-inventory';
 import { useUploadFile } from '@/hooks/use-files';
 import { useQueueMatch } from '@/hooks/use-matches';
 import { usePrinters, useCreatePrintJob } from '@/hooks/use-print';
@@ -191,7 +191,10 @@ interface CommitSnapshot {
 interface Receipt {
   /** Stable client key — the receipt exists before (and without) a server id. */
   key: string;
-  state: 'pending' | 'saved' | 'failed';
+  /** `undone` is TERMINAL: the toast's Undo soft-deleted the item, the row
+   *  stays struck-through as the session's account of the scan, and nothing
+   *  on it can act again — Retry/undo handlers all guard on this state. */
+  state: 'pending' | 'saved' | 'failed' | 'undone';
   /** Shown while pending; replaced by the server's copy once saved. */
   name: string;
   /** The frozen inputs — Retry re-runs from these, never from live state. */
@@ -362,6 +365,11 @@ export function Capture() {
   }
 
   const createItem = useCreateItem();
+  // The soft-delete behind the toast's Undo — the recycle-bin path, so an
+  // undone item is restorable from there. The hook (not raw api.del) because
+  // its onSuccess runs invalidateTree: the mis-filed bin's item list and
+  // counts must stop showing the item the moment the undo lands.
+  const deleteItem = useDeleteItem();
   const uploadFile = useUploadFile();
   const queueMatch = useQueueMatch();
   const createPrintJob = useCreatePrintJob();
@@ -461,6 +469,13 @@ export function Capture() {
    *  synchronously at the top of the detached blocks, before any await, so a
    *  double-fired retry can never run two creates for one receipt. */
   const inFlight = React.useRef(new Set<string>());
+
+  /** Receipts whose toast Undo has already fired, by key. The same idiom as
+   *  `inFlight`, for the same reason: the guard must be a synchronous ref
+   *  check before any await, because the toast's onClick reads no fresh
+   *  React state — a double click on the still-visible toast (sonner takes
+   *  a frame to dismiss it) must be a no-op, not a second DELETE. */
+  const undoneKeys = React.useRef(new Set<string>());
 
   /** Patch one receipt in place by key. A map, never a sort or a move: the
    *  list keeps commit order and state patches must not reorder it. Also safe
@@ -589,7 +604,14 @@ export function Capture() {
         propertyId: (created as unknown as { breadcrumb?: { id: number; type: string }[] })
           .breadcrumb?.find((b) => b.type === 'property')?.id,
       });
-      toast.success(`${created.name} → ${destination.name}`);
+      // The Undo closes over THIS commit's key and created id — never shared
+      // state read at click time. Commits are rapid-fire and sonner stacks
+      // several ~4s toasts at once; a shared "last created" slot would undo
+      // whatever landed most recently, not the item this toast is about
+      // (the exact bug the distribute toast's per-toast closure fixed).
+      toast.success(`${created.name} → ${destination.name}`, {
+        action: { label: 'Undo', onClick: () => { void undoCreate(key, created.id, created.name); } },
+      });
 
       // Read from the SNAPSHOT (`seen`/`matchOn`), never live state: by now
       // the next item's photo may have landed and overwritten `vision`, and
@@ -671,6 +693,37 @@ export function Capture() {
     }
   }
 
+  /**
+   * The success toast's Undo (#227): a mis-scanned bin files the item
+   * silently, and before this the only way back was hunting it down on the
+   * item page. Soft-delete it instead — DELETE /api/items is the recycle-bin
+   * path, so the undo itself is reversible from there, which is why it can
+   * run without a confirm.
+   *
+   * The receipt flips to `undone` optimistically and terminally: the row
+   * stays, struck through, so the session list still accounts for the scan.
+   * The one failure path flips it back to `saved` (the item IS still filed —
+   * a struck-through row would be a lie) and re-arms the guard.
+   *
+   * Photo upload / product match possibly still in flight for this item are
+   * deliberately NOT awaited or cancelled (spec §2): a late arrival against
+   * a soft-deleted item is harmless server-side, and match rows for deleted
+   * items are invisible by the existing joins. No coordination.
+   */
+  async function undoCreate(key: string, itemId: number, name: string) {
+    if (undoneKeys.current.has(key)) return; // single-shot, checked before any await
+    undoneKeys.current.add(key);
+    patchReceipt(key, { state: 'undone' });
+    try {
+      await deleteItem.mutateAsync(itemId);
+      toast(`${name} moved to the recycle bin`);
+    } catch {
+      undoneKeys.current.delete(key);
+      patchReceipt(key, { state: 'saved' });
+      toast.error(`Couldn't undo "${name}" — it's still where you filed it`);
+    }
+  }
+
   /** Re-run the whole save from the snapshot stored on the receipt. */
   function retryCommit(r: Receipt) {
     // Only a failed row may re-run: the receipt flips out of 'failed' before
@@ -683,7 +736,10 @@ export function Capture() {
 
   /** Re-run only the photo leg — the item row already exists. */
   function retryPhoto(r: Receipt) {
-    if (r.photoState !== 'failed') return; // same shape as retryCommit's guard
+    // `saved` only: an undone receipt is terminal — its photoState may still
+    // read 'failed' from before the undo, but the item is soft-deleted and
+    // nothing may act for it again. Same shape as retryCommit's guard.
+    if (r.state !== 'saved' || r.photoState !== 'failed') return;
     if (r.id == null || !r.snapshot.draft.photo) return;
     void uploadReceiptPhoto(r.key, r.id, r.snapshot.draft.photo);
   }
@@ -1509,14 +1565,20 @@ export function Capture() {
                 <Check className="w-4 h-4 text-[var(--color-green)] shrink-0" />
               ) : r.state === 'failed' ? (
                 <AlertTriangle className="w-4 h-4 text-[var(--color-red)] shrink-0" />
+              ) : r.state === 'undone' ? (
+                <Undo2 className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
               ) : (
                 <Loader2 className="w-4 h-4 animate-spin text-[var(--color-text-muted)] shrink-0" />
               )}
               <span className="min-w-0 flex-1">
-                <span className="block text-sm font-semibold truncate">{r.name}</span>
+                <span className={cn('block text-sm font-semibold truncate',
+                  r.state === 'undone' && 'line-through text-[var(--color-text-muted)]')}>{r.name}</span>
                 <span className="block font-mono text-[10px] text-[var(--color-text-muted)]">
                   {r.state === 'pending' ? 'saving…'
                     : r.state === 'failed' ? 'not saved'
+                    // Terminal: no qr code (the item is gone), no Retry, no
+                    // label actions — `saved` above is null for this row.
+                    : r.state === 'undone' ? 'removed · in the recycle bin'
                     : (
                       <>
                         {r.qrCode}
