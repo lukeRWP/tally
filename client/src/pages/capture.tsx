@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Camera, Check, X, Printer, Plus, MapPin, SkipForward, List, AlertTriangle, Search, ImagePlus, Sparkles, Keyboard } from 'lucide-react';
+import { Camera, Check, X, Printer, Plus, MapPin, SkipForward, List, AlertTriangle, Search, ImagePlus, Sparkles, Keyboard, Loader2 } from 'lucide-react';
 import { ProductScanner } from '@/components/scanner/product-scanner';
 import { TagScanner } from '@/components/scanner/tag-scanner';
 import { ProductSearch } from '@/components/scanner/product-search';
@@ -169,12 +169,55 @@ interface Dupe {
   areaName: string;
 }
 
+/**
+ * Everything a commit needs, frozen at the instant the user committed.
+ *
+ * The commit is optimistic — the flow is scan-ready again before the create
+ * round trip resolves — so by the time the network answers, the live draft
+ * and vision state belong to the NEXT item. The detached save must only ever
+ * read this snapshot: the known race is the next item's photo landing (and
+ * overwriting `vision`) before the previous item's create resolves, which
+ * would queue a product match under the wrong item's identity. Retry re-runs
+ * from the copy stored on the receipt for the same reason — data on the
+ * receipt rather than a closure, so the entry survives re-renders identically.
+ */
+interface CommitSnapshot {
+  draft: Draft;
+  dest: Destination;
+  vision: Vision | null;
+  matchAvailable: boolean;
+}
+
 interface Receipt {
-  id: number;
+  /** Stable client key — the receipt exists before (and without) a server id. */
+  key: string;
+  state: 'pending' | 'saved' | 'failed';
+  /** Shown while pending; replaced by the server's copy once saved. */
   name: string;
-  qrCode: string;
+  /** The frozen inputs — Retry re-runs from these, never from live state. */
+  snapshot: CommitSnapshot;
+  /** Server identity, present once state === 'saved'. */
+  id?: number;
+  qrCode?: string;
   propertyId?: number;
-  photoFailed?: boolean;
+  photoState?: 'uploading' | 'failed' | 'done';
+}
+
+/**
+ * `crypto.randomUUID` needs a secure context, and this app is reachable over
+ * plain http on the LAN — the fallback is not paranoia, it is the phone
+ * pointed at http://10.x address. Uniqueness within one session's receipt
+ * list is all that is asked of it.
+ */
+function newReceiptKey(): string {
+  return typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+    ? crypto.randomUUID()
+    : `rk-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+}
+
+/** The name commit() writes: synthesised rather than blocking the unnamed. */
+function displayName(d: Draft): string {
+  return d.name.trim() || (d.barcode ? `Item ${d.barcode}` : 'Untitled item');
 }
 
 type Phase = 'photo' | 'identify' | 'place';
@@ -311,6 +354,11 @@ export function Capture() {
     setVisionFailed(false);
     setVisionEmpty(false);
     catalogueHit.current = false;
+    // Mirrored into stateRef SYNCHRONOUSLY, not left to the effect: with the
+    // commit optimistic, the scanner stays live between items, and a second
+    // scan callback can fire before React has re-rendered. Reading the dead
+    // draft back out of the ref there would commit the same item twice.
+    stateRef.current = { ...stateRef.current, draft: { name: '' }, vision: null };
   }
 
   const createItem = useCreateItem();
@@ -319,13 +367,23 @@ export function Capture() {
   const createPrintJob = useCreatePrintJob();
   const stage = usePrintQueueStore((s) => s.add);
   const stageMany = usePrintQueueStore((s) => s.addMany);
-  const { data: printers } = usePrinters(receipts[0]?.propertyId || undefined);
+  // Any receipt that has already saved knows the property; a pending one does
+  // not yet (the propertyId arrives on the create response's breadcrumb).
+  const { data: printers } = usePrinters(receipts.find((r) => r.propertyId != null)?.propertyId || undefined);
   const hasPrinter = !!printers?.length;
+  /** The rows label actions can act on — the server has confirmed these. */
+  const savedReceipts = receipts.filter(
+    (r): r is Receipt & { id: number; qrCode: string } =>
+      r.state === 'saved' && r.id != null && r.qrCode != null,
+  );
 
   // The scanner callback is handed to the camera once, so it must not close
-  // over stale state.
-  const stateRef = React.useRef({ dest, draft, phase, destConfirmed });
-  React.useEffect(() => { stateRef.current = { dest, draft, phase, destConfirmed }; }, [dest, draft, phase, destConfirmed]);
+  // over stale state. vision/matchAvailable ride along for commit()'s
+  // snapshot: commit can be reached through that same long-lived callback, so
+  // reading them off the render that created it would freeze the values from
+  // whenever the camera was mounted, not from the moment of commit.
+  const stateRef = React.useRef({ dest, draft, phase, destConfirmed, vision, matchAvailable });
+  React.useEffect(() => { stateRef.current = { dest, draft, phase, destConfirmed, vision, matchAvailable }; }, [dest, draft, phase, destConfirmed, vision, matchAvailable]);
 
   // Where you were standing when you tapped Add. A container pre-pins outright;
   // an area or property only seeds the picker, because "somewhere in the garage"
@@ -398,21 +456,88 @@ export function Capture() {
     });
   }
 
-  async function commit(d: Draft, destination: Destination) {
-    const name = d.name.trim() || (d.barcode ? `Item ${d.barcode}` : 'Untitled item');
-    // Without a product row there is nothing to inherit from and no way back —
-    // items has no BARCODE column. Whatever the scan did learn rides along as
-    // the description so it stays searchable (ft_items_search covers NAME and
-    // DESCRIPTION) rather than surviving only by disfiguring the title.
-    const kept = !d.productId
-      ? [d.fullName && d.fullName !== name ? d.fullName : null,
-         d.barcode ? `UPC ${d.barcode}` : null].filter(Boolean).join('\n')
-      : '';
-    // An accepted description leads; what the scan salvaged follows it. Both
-    // are already in the draft, so neither can be here without consent.
-    const description = [d.description || null, kept || null].filter(Boolean).join('\n');
-    setBusy('Saving…');
+  /** Save/upload legs currently running, by receipt key (`photo:`-prefixed
+   *  for the upload leg). A ref, not state: it exists to be checked
+   *  synchronously at the top of the detached blocks, before any await, so a
+   *  double-fired retry can never run two creates for one receipt. */
+  const inFlight = React.useRef(new Set<string>());
+
+  /** Patch one receipt in place by key. A map, never a sort or a move: the
+   *  list keeps commit order and state patches must not reorder it. Also safe
+   *  after unmount — the detached save below outlives navigation, and a
+   *  setState on an unmounted component is a no-op in React 18 (deliberately
+   *  no mountedRef guard: one set false on cleanup never re-arms under
+   *  StrictMode's dev double-mount, and this codebase has been bitten). */
+  function patchReceipt(key: string, patch: Partial<Receipt>) {
+    setReceipts((prev) => prev.map((r) => (r.key === key ? { ...r, ...patch } : r)));
+  }
+
+  /**
+   * Commit optimistically. The synchronous part is the whole user experience:
+   * prepend a pending receipt, reset the draft, put the camera back on step 1 —
+   * the phone user is aiming at the next item while the network works. The
+   * hundred-item session must never wait on a round trip.
+   *
+   * Everything that needs the network happens in a detached async block that
+   * reads ONLY the snapshot frozen here (see CommitSnapshot for the race this
+   * closes) and reports back by patching the receipt. Failure's recovery
+   * surface is the receipt's Retry, which re-runs the same block from the
+   * same snapshot — the live draft has long since moved on.
+   */
+  function commit(d: Draft, destination: Destination) {
+    const snapshot: CommitSnapshot = {
+      draft: d,
+      dest: destination,
+      // From the ref, not the render closure — commit can be invoked through
+      // the camera's long-lived callback, whose closure predates this item.
+      vision: stateRef.current.vision,
+      matchAvailable: stateRef.current.matchAvailable,
+    };
+    const key = newReceiptKey();
+    // Newest first: the list renders below the step-1 block and is unbounded,
+    // so the just-committed row — the one whose failure toast says "Retry
+    // from the list" — must be the row above the fold, not underneath six
+    // older ones. Ordering STABILITY is patchReceipt's job (keyed map, never
+    // a move); direction is decided here, once, at insert.
+    setReceipts((prev) => [{ key, state: 'pending', name: displayName(d), snapshot }, ...prev]);
+    // Scan-ready NOW. The warning (and the suggestion) belong to the draft
+    // just committed, not to the next one — leaving either up would claim
+    // something about an object that has not been photographed yet.
+    resetDraft();
+    setPhase('photo');
+    void runCommit(key, snapshot);
+  }
+
+  /**
+   * The detached save. Never awaited by commit(), and never able to reject
+   * unhandled — every path runs inside a try. Reads only the snapshot.
+   */
+  async function runCommit(key: string, snap: CommitSnapshot) {
+    // Structural re-entry guard: a double-fired Retry (or any future second
+    // caller) must not run two creates for one receipt. The retry handler
+    // checks the row's state at render time; this closes the residual
+    // not-yet-rendered window by construction instead of leaning on React's
+    // discrete-event flush timing.
+    if (inFlight.current.has(key)) return;
+    inFlight.current.add(key);
+    const { draft: d, dest: destination, vision: seen, matchAvailable: matchOn } = snap;
+    const name = displayName(d);
+    // The create leg. Its catch spans ONLY the create: past it, the item row
+    // exists, and a receipt marked failed after that point would offer a
+    // Retry that duplicates the item.
+    let created;
     try {
+      // Without a product row there is nothing to inherit from and no way back —
+      // items has no BARCODE column. Whatever the scan did learn rides along as
+      // the description so it stays searchable (ft_items_search covers NAME and
+      // DESCRIPTION) rather than surviving only by disfiguring the title.
+      const kept = !d.productId
+        ? [d.fullName && d.fullName !== name ? d.fullName : null,
+           d.barcode ? `UPC ${d.barcode}` : null].filter(Boolean).join('\n')
+        : '';
+      // An accepted description leads; what the scan salvaged follows it. Both
+      // are already in the draft, so neither can be here without consent.
+      const description = [d.description || null, kept || null].filter(Boolean).join('\n');
       const res = await createItem.mutateAsync({
         name,
         containerId: destination.id,
@@ -437,21 +562,47 @@ export function Capture() {
         // be restating the norm.
         ...(d.completeness ? { completeness: d.completeness } : {}),
       });
-      const created = res?.item;
+      created = res?.item;
       if (!created) throw new Error('Create returned no item');
+    } catch {
+      // The receipt is the recovery surface — the toast points at it rather
+      // than carrying its own retry.
+      patchReceipt(key, { state: 'failed' });
+      toast.error(`Couldn't save "${name}" — Retry from the list`);
+    }
+    if (!created) {
+      // The create failed (the catch above has already said so) — nothing
+      // more may run for this receipt until its Retry re-arms it.
+      inFlight.current.delete(key);
+      return;
+    }
 
-      // Re-checked here (not read off the `canMatch` closed over by the
-      // render) so this reads the vision state as of the moment the item
-      // actually landed, and so `vision.brand` narrows for TypeScript. A
-      // queue failure must never block the capture — mutate() is
-      // fire-and-forget and the item is already saved either way; it can
-      // still be scanned by hand later.
+    // Past here the item IS saved. Nothing below may demote the receipt to
+    // failed — each leg handles its own partial-failure state — so this
+    // catch only reports: 'failed' here would invite a duplicating Retry.
+    try {
+      patchReceipt(key, {
+        state: 'saved',
+        id: created.id,
+        name: created.name,
+        qrCode: created.qrCode,
+        propertyId: (created as unknown as { breadcrumb?: { id: number; type: string }[] })
+          .breadcrumb?.find((b) => b.type === 'property')?.id,
+      });
+      toast.success(`${created.name} → ${destination.name}`);
+
+      // Read from the SNAPSHOT (`seen`/`matchOn`), never live state: by now
+      // the next item's photo may have landed and overwritten `vision`, and
+      // queueing a match under that item's identity is exactly the race the
+      // snapshot exists to close. A queue failure must never block the
+      // capture — mutate() is fire-and-forget and the item is already saved
+      // either way; it can still be scanned by hand later.
       //
-      // `matchAvailable` MUST be repeated here, not just in `canMatch` up
-      // above: this condition decides whether the POST fires at all, and
-      // without it a capture with the kill switch off would still queue —
-      // 503, then the onError toast below fires on every branded capture,
-      // which is worse than the silent version this replaced.
+      // `matchOn` MUST be part of this condition: it decides whether the
+      // POST fires at all, and without it a capture with the kill switch off
+      // would still queue — 503, then the onError toast below fires on every
+      // branded capture, which is worse than the silent version this
+      // replaced.
       //
       // `!d.productId` is a second, independent gate: adoptProduct() clears
       // `vision` the moment a product is picked by hand, but requiring this
@@ -459,13 +610,13 @@ export function Capture() {
       // for an item that already resolved to a real product — no future path
       // that sets productId without remembering to clear vision can reopen
       // this hole.
-      if (matchAvailable && vision?.confidence === 'high' && vision.brand && !d.productId) {
+      if (matchOn && seen?.confidence === 'high' && seen.brand && !d.productId) {
         queueMatch.mutate({
           itemId: created.id,
-          brand: vision.brand,
-          name: vision.name ?? name,
-          category: vision.category,
-          description: vision.description,
+          brand: seen.brand,
+          name: seen.name ?? name,
+          category: seen.category,
+          description: seen.description,
         }, {
           // Every 503/429/400/network failure used to vanish here — after
           // step 2 was already skipped in favor of "Finding this product",
@@ -481,40 +632,60 @@ export function Capture() {
         });
       }
 
-      const receipt: Receipt = {
-        id: created.id,
-        name: created.name,
-        qrCode: created.qrCode,
-        propertyId: (created as unknown as { breadcrumb?: { id: number; type: string }[] })
-          .breadcrumb?.find((b) => b.type === 'property')?.id,
-      };
-
       // Photo second — the item must exist for the upload route to accept it.
+      // Awaited only within this detached block; the user is long gone.
       if (d.photo) {
-        setBusy('Uploading photo…');
-        try {
-          await uploadFile.mutateAsync({
-            itemId: created.id,
-            file: new File([d.photo], `capture-${created.id}.jpg`, { type: 'image/jpeg' }),
-            fileType: 'photo',
-          });
-        } catch {
-          receipt.photoFailed = true; // the item is saved; only the photo failed
-        }
+        await uploadReceiptPhoto(key, created.id, d.photo);
       }
-
-      setReceipts((prev) => [receipt, ...prev]);
-      // The warning (and the suggestion) belong to the draft that just landed,
-      // not to the next one — leaving either up would claim something about an
-      // object that has not been photographed yet.
-      resetDraft();
-      setPhase('photo');
-      toast.success(`${created.name} → ${destination.name}`);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Could not save the item');
+      console.warn('[capture] post-create step threw; the item is saved', err);
     } finally {
-      setBusy(null);
+      inFlight.current.delete(key);
     }
+  }
+
+  /** The photo leg, shared by the commit and the receipt's own retry. The
+   *  item is saved either way — only the photoState is at stake here. */
+  async function uploadReceiptPhoto(key: string, itemId: number, photo: Blob) {
+    const token = `photo:${key}`;
+    if (inFlight.current.has(token)) return;
+    inFlight.current.add(token);
+    patchReceipt(key, { photoState: 'uploading' });
+    try {
+      await uploadFile.mutateAsync({
+        itemId,
+        file: new File([photo], `capture-${itemId}.jpg`, { type: 'image/jpeg' }),
+        fileType: 'photo',
+      });
+      // The blob was held on the snapshot only so a retry could re-run from
+      // it; with the photo landed, no retry can need it again (commit Retry
+      // shows only on failed rows, photo retry only on photoState 'failed').
+      // A hundred-item session must not retain a hundred JPEGs.
+      setReceipts((prev) => prev.map((r) => (r.key === key
+        ? { ...r, photoState: 'done', snapshot: { ...r.snapshot, draft: { ...r.snapshot.draft, photo: undefined } } }
+        : r)));
+    } catch {
+      patchReceipt(key, { photoState: 'failed' }); // the item is saved; only the photo failed
+    } finally {
+      inFlight.current.delete(token);
+    }
+  }
+
+  /** Re-run the whole save from the snapshot stored on the receipt. */
+  function retryCommit(r: Receipt) {
+    // Only a failed row may re-run: the receipt flips out of 'failed' before
+    // any async work, so a second click is a no-op rather than a second
+    // create. (runCommit's inFlight set covers the not-yet-rendered window.)
+    if (r.state !== 'failed') return;
+    patchReceipt(r.key, { state: 'pending' });
+    void runCommit(r.key, r.snapshot);
+  }
+
+  /** Re-run only the photo leg — the item row already exists. */
+  function retryPhoto(r: Receipt) {
+    if (r.photoState !== 'failed') return; // same shape as retryCommit's guard
+    if (r.id == null || !r.snapshot.draft.photo) return;
+    void uploadReceiptPhoto(r.key, r.id, r.snapshot.draft.photo);
   }
 
   const handleCode = React.useCallback(async (code: string) => {
@@ -558,7 +729,7 @@ export function Capture() {
         const live = stateRef.current.draft;
         // If a draft is already waiting on a home, this completes it.
         if (live.name || live.photo || live.barcode) {
-          void commit(live, target);
+          commit(live, target);
         } else {
           setPhase('photo');
         }
@@ -942,8 +1113,16 @@ export function Capture() {
           dragging={dragging}
           setDragging={setDragging}
           onDropFile={(f) => void acceptPhotoFile(f)}
-          onSubmit={() => { if (dest) void commit(draft, dest); }}
-          pending={busy !== null || createItem.isPending}
+          onSubmit={() => { if (dest) commit(draft, dest); }}
+          // The desk form commits through the same optimistic path as the
+          // camera flow: the submit returns synchronously, the form clears,
+          // and the receipt list below the form carries the network's answer.
+          // `createItem.isPending` deliberately dropped — keying the button
+          // on a background save would make the NEXT item wait on the
+          // previous one's round trip, which is the exact thing this commit
+          // shape exists to prevent. (busy is barcode-lookup only now, and
+          // unreachable in form mode — kept wired for honesty.)
+          pending={busy !== null}
           seedAreaId={ctxArea || dest?.areaId}
           seedPropertyId={ctxProperty || undefined}
           // Switching back to the flow must land on the LIVE camera, not
@@ -1141,7 +1320,7 @@ export function Capture() {
                 setPicking(false);
                 toast.success(`Adding to ${bin.name}`);
                 const d = stateRef.current.draft;
-                if (d.name || d.photo || d.barcode) void commit(d, { id: bin.id, name: bin.name, areaId: bin.areaId });
+                if (d.name || d.photo || d.barcode) commit(d, { id: bin.id, name: bin.name, areaId: bin.areaId });
                 else setPhase('photo');
               }}
               onClose={() => setPicking(false)}
@@ -1210,7 +1389,7 @@ export function Capture() {
                         onClick={() => {
                           pinDestination(r);
                           const d = stateRef.current.draft;
-                          if (d.name || d.photo || d.barcode) void commit(d, r);
+                          if (d.name || d.photo || d.barcode) commit(d, r);
                           else setPhase('photo');
                         }}
                         className={cn(
@@ -1303,12 +1482,14 @@ export function Capture() {
       {phase === 'photo' && receipts.length > 0 && (
         <div className="flex flex-col">
           <ColHead
-            action={receipts.length > 1 ? `Queue all ${receipts.length}` : undefined}
+            // Only rows the server has confirmed can be queued — a pending
+            // receipt has no id or qr code yet, and a failed one never will.
+            action={savedReceipts.length > 1 ? `Queue all ${savedReceipts.length}` : undefined}
             onAction={() => {
               // addMany dedupes and returns how many were NEWLY staged. Report
               // that, not the number asked for — queueing the same receipts
               // twice stages nothing, and saying "Queued 5" would be a lie.
-              const n = stageMany(receipts.map((r) => ({
+              const n = stageMany(savedReceipts.map((r) => ({
                 id: r.id, entityType: 'item' as const, name: r.name, qrCode: r.qrCode, propertyId: r.propertyId,
               })));
               toast.success(n > 0 ? `${n} labels queued` : 'Already queued');
@@ -1316,30 +1497,66 @@ export function Capture() {
           >
             Added this session · {receipts.length}
           </ColHead>
-          {receipts.map((r) => (
-            <div key={r.id} className="flex items-center gap-2 py-2.5 border-b border-[var(--color-rule)] last:border-b-0">
-              <Check className="w-4 h-4 text-[var(--color-green)] shrink-0" />
+          {receipts.map((r) => {
+            // Narrowed into a plain object so the button closures below hold
+            // concrete numbers — `r.id` alone un-narrows inside a callback.
+            const saved = r.state === 'saved' && r.id != null && r.qrCode != null
+              ? { id: r.id, qrCode: r.qrCode }
+              : null;
+            return (
+            <div key={r.key} className="flex items-center gap-2 py-2.5 border-b border-[var(--color-rule)] last:border-b-0">
+              {r.state === 'saved' ? (
+                <Check className="w-4 h-4 text-[var(--color-green)] shrink-0" />
+              ) : r.state === 'failed' ? (
+                <AlertTriangle className="w-4 h-4 text-[var(--color-red)] shrink-0" />
+              ) : (
+                <Loader2 className="w-4 h-4 animate-spin text-[var(--color-text-muted)] shrink-0" />
+              )}
               <span className="min-w-0 flex-1">
                 <span className="block text-sm font-semibold truncate">{r.name}</span>
                 <span className="block font-mono text-[10px] text-[var(--color-text-muted)]">
-                  {r.qrCode}{r.photoFailed ? ' · photo failed' : ''}
+                  {r.state === 'pending' ? 'saving…'
+                    : r.state === 'failed' ? 'not saved'
+                    : (
+                      <>
+                        {r.qrCode}
+                        {r.photoState === 'uploading' && ' · uploading photo'}
+                        {r.photoState === 'failed' && (
+                          <>
+                            {' · '}
+                            <button type="button" onClick={() => retryPhoto(r)}
+                              className="underline decoration-dotted text-[var(--color-red)]">
+                              photo failed · retry
+                            </button>
+                          </>
+                        )}
+                      </>
+                    )}
                 </span>
               </span>
-              {hasPrinter && (
+              {r.state === 'failed' && (
+                <Button size="sm" variant="outline" onClick={() => retryCommit(r)}>
+                  Retry
+                </Button>
+              )}
+              {saved && hasPrinter && (
                 <Button size="sm" variant="outline"
                   onClick={() => createPrintJob.mutate(
-                    { entityType: 'item', entityIds: [r.id], preset: 'small', propertyId: r.propertyId },
+                    { entityType: 'item', entityIds: [saved.id], preset: 'small', propertyId: r.propertyId },
                     { onSuccess: () => toast.success('Printing label'),
                       onError: (e) => toast.error(e instanceof Error ? e.message : 'Could not print') })}>
                   <Printer className="w-3.5 h-3.5" />
                 </Button>
               )}
-              <Button size="sm" variant="outline"
-                onClick={() => { stage({ id: r.id, entityType: 'item', name: r.name, qrCode: r.qrCode, propertyId: r.propertyId }); toast.success('Queued'); }}>
-                Queue
-              </Button>
+              {saved && (
+                <Button size="sm" variant="outline"
+                  onClick={() => { stage({ id: saved.id, entityType: 'item', name: r.name, qrCode: saved.qrCode, propertyId: r.propertyId }); toast.success('Queued'); }}>
+                  Queue
+                </Button>
+              )}
             </div>
-          ))}
+            );
+          })}
           <Button className="mt-3" onClick={() => { resetDraft(); setPhase('photo'); }}>
             <Plus className="w-4 h-4" />
             Add another

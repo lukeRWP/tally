@@ -1,14 +1,16 @@
 import * as React from 'react';
 import { useNavigate } from 'react-router-dom';
-import { PackageOpen, List, Undo2, X } from 'lucide-react';
+import { PackageOpen, List, Undo2, X, ArrowRight } from 'lucide-react';
 import { TagScanner } from '@/components/scanner/tag-scanner';
 import { DestinationPicker } from '@/components/inventory/destination-picker';
 import { MoveConsequencesSheet } from '@/components/inventory/move-consequences-sheet';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { TitleBar } from '@/components/ui/title-bar';
 import { toast } from '@/components/ui/toast';
 import { api } from '@/lib/api';
-import { useCarryStore } from '@/store/carry-store';
+import { extractTlyCode } from '@/lib/tly';
+import { useCarryStore, type CarriedItem, type PinnedTarget } from '@/store/carry-store';
 import { usePutDown, type ConfirmPrompt } from '@/hooks/use-put-down';
 import { useMoveItem, useMoveContainer, useProperties, type MoveConsequences } from '@/hooks/use-inventory';
 import { cn } from '@/lib/utils';
@@ -16,7 +18,7 @@ import { useLayoutMode } from '@/hooks/use-layout-mode';
 import { useCoarsePointer } from '@/hooks/use-coarse-pointer';
 
 /**
- * Put it down.
+ * Put it down — and then keep putting things down.
  *
  * Scanning is not one activity. Adding an item asks "what is this?" and wants a
  * product barcode; putting something away asks "where does this go?" and wants
@@ -24,24 +26,26 @@ import { useCoarsePointer } from '@/hooks/use-coarse-pointer';
  * page offering to add an item and search a product catalogue — an answer to a
  * question nobody had asked.
  *
- * This screen has exactly one question. Every code it sees is read as a
- * destination: a bin nests or receives, an area takes the load into its
- * catch-all. A product barcode is not an error, it is just the wrong kind of
- * answer, and is told so.
+ * This screen has exactly one question, but it stays open for as long as you
+ * are standing at the shelf. Two modes answer it:
+ *
+ *   GATHER     — while carrying, every scan either adds another thing to the
+ *                load (an item/bin not already in hand) or lands the whole
+ *                load (a bin/area).
+ *   DISTRIBUTE — after a landing, the destination stays pinned. Every scan
+ *                either moves one more thing straight there, or re-pins to a
+ *                new destination. Leaving is the explicit act (Done); staying
+ *                is the default.
+ *
+ * A product barcode is not an error in either mode — it is just the wrong
+ * kind of answer, and is told so.
  */
 
 interface ResolvedEntity {
-  type: string;
+  type: 'property' | 'area' | 'container' | 'item';
   id: number;
   name: string;
   exists: boolean;
-}
-
-/** What the property-switcher + picker together decide the load is landing on. */
-interface LandTarget {
-  type: string;
-  id: number;
-  name: string;
 }
 
 /**
@@ -57,22 +61,60 @@ interface PendingConfirm {
   consequences: MoveConsequences;
 }
 
+/**
+ * A distribute-mode scan arrives with no known origin — unlike a pickUp,
+ * which captures it from the page the load was gathered on, this is an
+ * ad-hoc scan of something never added to the carry. The "standard toast
+ * undo" this mode promises has to know where to send the thing BACK, so one
+ * extra read buys that: the entity's own detail endpoint already returns
+ * exactly enough (an item's current container, a container's parent or
+ * area) to make the move reversible through the exact same lastMove/undo
+ * machinery a landing uses. Failing quietly (empty object) is not a new
+ * failure mode — an entity with no known origin was already a documented
+ * "not reversible" case (see CompletedMove in the carry store); this is
+ * just one more way to land there.
+ */
+async function resolveOrigin(entity: ResolvedEntity): Promise<Pick<CarriedItem, 'fromContainerId' | 'fromAreaId'>> {
+  try {
+    if (entity.type === 'item') {
+      const { item } = await api.get<{ item: { containerId: number } }>(`/api/items/_x_/${entity.id}`);
+      return { fromContainerId: item.containerId };
+    }
+    const { container } = await api.get<{ container: { parentContainerId: number | null; areaId: number } }>(
+      `/api/containers/_x_/${entity.id}`,
+    );
+    return container.parentContainerId
+      ? { fromContainerId: container.parentContainerId }
+      : { fromAreaId: container.areaId };
+  } catch {
+    return {};
+  }
+}
+
 export function PutDown() {
   const atDesk = useLayoutMode() === 'sidebar';
   const coarse = useCoarsePointer();
   // Scanner where a rear camera plausibly exists: phones, and tablets in
   // landscape (sidebar chrome + coarse pointer — see use-coarse-pointer.ts
   // for why camera-presence is NOT the test). Fine-pointer desks keep the
-  // picker-only flow.
+  // picker-only flow for GATHER's landing step.
   const showScanner = !atDesk || coarse;
   const navigate = useNavigate();
   const carried = useCarryStore((s) => s.carried);
   const lastMove = useCarryStore((s) => s.lastMove);
+  const pinnedDest = useCarryStore((s) => s.pinnedDest);
+  const lastDest = useCarryStore((s) => s.lastDest);
+  const pinDest = useCarryStore((s) => s.pinDest);
+  const clearPin = useCarryStore((s) => s.clearPin);
+  const addToCarry = useCarryStore((s) => s.addToCarry);
   const clear = useCarryStore((s) => s.clear);
   const clearLastMove = useCarryStore((s) => s.clearLastMove);
-  const putDown = usePutDown();
+  const { putDown, progress } = usePutDown();
   const moveItem = useMoveItem();
   const moveContainer = useMoveContainer();
+
+  const gathering = carried.length > 0;
+  const distributing = !gathering && !!pinnedDest;
 
   // Fine-pointer desks have no scanner to land on, so they still open
   // straight into the list. Coarse tablets DO have a scanner now (see
@@ -82,11 +124,12 @@ export function PutDown() {
   // flag pre-dates it and was never taught about `coarse`).
   const [picking, setPicking] = React.useState(atDesk && !coarse);
   const [busy, setBusy] = React.useState(false);
-  // Mirrors `busy` for the reentrancy guard inside land() (below). land is a
-  // useCallback that does not — and should not — depend on `busy` (it has no
-  // reason to be recreated when it flips), so reading the STATE there would
-  // close over a stale value from whenever land was last created. The ref is
-  // written alongside every setBusy call via setBusyBoth and is always current.
+  // Mirrors `busy` for the reentrancy guard inside land()/moveToPin (below).
+  // Both are useCallbacks that do not — and should not — depend on `busy`
+  // (they have no reason to be recreated when it flips), so reading the
+  // STATE there would close over a stale value from whenever they were last
+  // created. The ref is written alongside every setBusy call via
+  // setBusyBoth and is always current.
   const busyRef = React.useRef(false);
   function setBusyBoth(value: boolean) {
     busyRef.current = value;
@@ -94,15 +137,27 @@ export function PutDown() {
   }
   const [pendingConfirm, setPendingConfirm] = React.useState<PendingConfirm | null>(null);
   // The loop that's paused lives inside usePutDown's Promise chain, not in
-  // this component — this is the resume handle for it.
-  const decisionRef = React.useRef<((decision: 'confirm' | 'cancel') => void) | null>(null);
+  // this component — this is the resume handle for it. The resolution
+  // widened to carry applyToRest (the sheet's "apply to the rest of this
+  // batch" checkbox) alongside the choice — see ConfirmPrompt.
+  const decisionRef = React.useRef<((decision: { choice: 'confirm' | 'cancel'; applyToRest: boolean }) => void) | null>(null);
   // Set false in the SAME unmount cleanup that resolves a pending decision as
-  // cancel (below) — land() checks it after putDown resolves so that an
-  // unmount mid-batch (browser Back while the confirm sheet is up, a
+  // cancel (below) — land()/moveToPin check it after putDown resolves so
+  // that an unmount mid-batch (browser Back while the confirm sheet is up, a
   // bottom-nav tap) can't still navigate the user forward or toast on a page
   // they've already left. completeMove (inside usePutDown) already ran by
   // then and is NOT gated on this — only the navigation/UI tail is.
   const mountedRef = React.useRef(true);
+
+  // Distribute mode's per-scan "Moved N to X" toast needs a running total.
+  // Never rendered, so it lives in a ref rather than state — there is no
+  // reason to trigger a re-render for it.
+  const runningCountRef = React.useRef(0);
+
+  const pin = React.useCallback((dest: PinnedTarget) => {
+    pinDest(dest);
+    runningCountRef.current = 0;
+  }, [pinDest]);
 
   // The property switcher only appears with more than one property — most
   // households have exactly one, and that case must render today's UI with
@@ -173,8 +228,8 @@ export function PutDown() {
     [],
   );
 
-  function decide(decision: 'confirm' | 'cancel') {
-    decisionRef.current?.(decision);
+  function decide(choice: 'confirm' | 'cancel', applyToRest: boolean) {
+    decisionRef.current?.({ choice, applyToRest });
     decisionRef.current = null;
     setPendingConfirm(null);
   }
@@ -183,21 +238,32 @@ export function PutDown() {
   // the browser back button — while the sheet is up) must not leave
   // usePutDown's loop awaiting forever: that is the exact stuck-carry
   // failure this whole round exists to kill, just triggered by navigation
-  // instead of a network error. Resolve as CANCEL, never confirm — an
-  // unmount means we can no longer ask the user anything, and silently
-  // confirming would commit a lossy cross-property move nobody agreed to.
-  // The paused entity ends up skipped; completeMove (inside usePutDown)
-  // still reconciles whatever DID move before the pause.
+  // instead of a network error.
+  //
+  // applyToRest is TRUE — not false. A batch with more than one entity
+  // waiting on a decision pauses on the FIRST and, once resolved, the loop
+  // immediately calls confirmPrompt again for the SECOND — but confirmPrompt
+  // just sets state on a component that no longer exists, so that second
+  // promise NEVER resolves and putDown hangs forever, completeMove never
+  // runs, and every entity that already moved stays stuck showing as
+  // carried. applyToRest:true takes the loop's OWN "apply to the rest of
+  // this batch" path instead of prompting again: it skips this entity AND
+  // every other one still waiting, then stops — no further prompts, no
+  // hang. choice stays 'cancel': an unmount means we can no longer ask the
+  // user anything, and confirming would commit a lossy cross-property move
+  // nobody agreed to. Every skipped entity ends up back in `carried`;
+  // completeMove (inside usePutDown) still reconciles whatever DID move
+  // before the pause.
   React.useEffect(() => {
     mountedRef.current = true; // re-arm — StrictMode's remount runs setup again
     return () => {
       mountedRef.current = false;
-      decisionRef.current?.('cancel');
+      decisionRef.current?.({ choice: 'cancel', applyToRest: true });
       decisionRef.current = null;
     };
   }, []);
 
-  const land = React.useCallback(async (dest: LandTarget) => {
+  const land = React.useCallback(async (dest: PinnedTarget) => {
     // One batch at a time, enforced HERE rather than at each entry point —
     // the camera (isActive/handleCode already gate it), the picker's
     // onPick (never gated at all — the gap this guard closes), and anything
@@ -210,31 +276,51 @@ export function PutDown() {
       const result = await putDown(carriedRef.current, dest, confirmPrompt);
       // Unmounted while putDown was paused on a confirm (or just mid-flight)
       // — state reconciliation already happened inside putDown, but this
-      // page is gone, so no navigation and no toast for whoever isn't here
-      // to see it.
+      // page is gone, so no toast for whoever isn't here to see it.
       if (!mountedRef.current) return;
       if (!result) {
         toast(`Already in ${dest.name}`);
         return;
       }
-      const { moved, skipped, aborted, abortError, crossProperty, tagsCarried } = result;
+      const { moved, skipped, abortError, failedCount, crossProperty, tagsCarried } = result;
 
-      if (aborted) {
-        // Whatever moved before the failure was already reconciled (dropped
-        // from carry, undo armed for it) inside usePutDown — this toast is
-        // just the honest report that the rest did not go through.
-        toast.error(abortError instanceof Error ? abortError.message : 'Could not move it there');
-        return;
+      // A landing pins the destination (see the store's completeMove/
+      // recordMove — it writes the TRUE type, not this `dest`, since a
+      // bins-only load landing on an area and an item load landing on that
+      // same area resolve to different real places). Reset the running
+      // count whenever a NEW landing succeeds, gather or not: distribute
+      // mode's count is about THIS pin, not a lifetime total.
+      if (moved.length > 0) {
+        runningCountRef.current = 0;
       }
 
       if (moved.length === 0) {
-        // Every attempted entity was declined at its confirm sheet — nothing
-        // landed, so there is nowhere to navigate to.
-        toast('Nothing moved');
+        // Nothing landed — either every entity was declined at its confirm
+        // sheet, or the sole entity in the batch hard-failed. Either way
+        // there is nowhere to navigate to, and there never was — this
+        // screen no longer navigates on success either (below).
+        if (failedCount > 0) {
+          toast.error(abortError instanceof Error ? abortError.message : 'Could not move it there');
+        } else {
+          toast('Nothing moved');
+        }
         return;
       }
 
-      if (skipped.length > 0) {
+      // Truthful partial-outcome reporting: a batch is not all-or-nothing,
+      // so its report can't collapse to "it worked" or "it didn't" either.
+      // A hard failure alongside a real success used to hit the OLD
+      // `if (aborted) { toast.error(...); return; }` branch first and
+      // suppress the success half entirely — eleven moved, one failed, and
+      // the toast said only "could not move it there," as if none had.
+      if (failedCount > 0) {
+        const total = moved.length + skipped.length + failedCount;
+        const failureName = abortError instanceof Error ? abortError.message : 'a move failed';
+        toast.error(
+          `Moved ${moved.length} of ${total} · ${failedCount} failed (${failureName})`
+          + (skipped.length > 0 ? ` · skipped ${skipped.length}` : ''),
+        );
+      } else if (skipped.length > 0) {
         toast.success(`Moved ${moved.length} · skipped ${skipped.length}`);
       } else if (crossProperty) {
         toast.success(`Moved to the other property · ${tagsCarried} tags carried`);
@@ -243,20 +329,111 @@ export function PutDown() {
           moved.length === 1 ? `${moved[0].name} → ${dest.name}` : `${moved.length} moved → ${dest.name}`,
         );
       }
-      // Go to where it landed: the point of the move is that the thing is now
-      // somewhere, and this shows you it is.
-      if (dest.type === 'area') navigate(`/area/${dest.id}`);
-      else navigate(`/container/${dest.id}`);
+      // Stay. The destination is now pinned (see the store's completeMove/
+      // recordMove) and rendered as a banner below — leaving is Done's job,
+      // not a landing's.
     } catch (err) {
       if (!mountedRef.current) return;
       toast.error(err instanceof Error ? err.message : 'Could not move it there');
     } finally {
       setBusyBoth(false);
     }
-  }, [putDown, navigate, confirmPrompt]);
+  }, [putDown, confirmPrompt]);
 
-  // Only tally tags reach here — the scanner decodes nothing else — so this
-  // only has to decide whether the tag names somewhere a load can go.
+  // Puts a set of entities back where they came from, and reports the
+  // outcome — the mechanics shared by the whole-lastMove undo (below) and
+  // each distribute-mode toast's OWN undo. Deliberately takes the items and
+  // unlinkedCount as PARAMETERS rather than reading `lastMove` off the
+  // store: distribute is rapid-fire, sonner stacks several ~4s toasts at
+  // once, and `lastMove` is a single shared slot that the NEXT scan
+  // overwrites before the FIRST toast's Undo is even clicked. A closure
+  // that reads `lastMove` at click time reverses whatever is CURRENTLY
+  // there, not the move the toast was actually about — reversing move B
+  // into move A's origin. Every caller here passes its own captured record,
+  // so which move gets reversed is fixed at the moment the toast is created.
+  async function undoMove(items: CarriedItem[], unlinkedCount: number | undefined) {
+    const reversible = items.filter((i) => i.fromContainerId || i.fromAreaId);
+    try {
+      await Promise.all(
+        reversible.map((i) =>
+          i.kind === 'container'
+            ? moveContainer.mutateAsync(
+                i.fromContainerId
+                  ? { id: i.id, parentContainerId: i.fromContainerId }
+                  : { id: i.id, parentContainerId: null, areaId: i.fromAreaId as number },
+              )
+            : moveItem.mutateAsync({ id: i.id, containerId: i.fromContainerId as number }),
+        ),
+      );
+      const skipped = items.length - reversible.length;
+      toast(
+        unlinkedCount && unlinkedCount > 0
+          ? 'Moved back · unlinked accessories were not restored'
+          : skipped > 0
+            ? `Put ${reversible.length} back — ${skipped} had no previous home`
+            : 'Put back',
+      );
+    } catch (err) {
+      toast(err instanceof Error ? err.message : 'Could not undo the move');
+    }
+  }
+
+  // DISTRIBUTE mode's per-scan move: one entity, straight to the pin. Reuses
+  // putDown wholesale rather than calling the move mutations directly — a
+  // single-entity load is just a batch of one, so the exact same "already
+  // there" no-op, 409-confirm-sheet, and lastMove/pinnedDest reconciliation
+  // a landing gets apply here for free.
+  const moveToPin = React.useCallback(async (entity: ResolvedEntity) => {
+    if (!pinnedDest || busyRef.current || decisionRef.current) return;
+    setBusyBoth(true);
+    try {
+      const origin = await resolveOrigin(entity);
+      const load: CarriedItem[] = [{
+        id: entity.id,
+        name: entity.name,
+        kind: entity.type === 'container' ? 'container' : 'item',
+        ...origin,
+      }];
+      // pinnedDest already IS a {id, name, type} — the store carries the
+      // true type now, so there is nothing to reconstruct here.
+      const result = await putDown(load, pinnedDest, confirmPrompt);
+      if (!mountedRef.current) return;
+      if (!result) {
+        toast(`Already in ${pinnedDest.name}`);
+        return;
+      }
+      const { moved, aborted, abortError, unlinkedCount } = result;
+      if (moved.length === 0) {
+        toast.error(
+          aborted
+            ? (abortError instanceof Error ? abortError.message : 'Could not move it there')
+            : 'Not moved',
+        );
+        return;
+      }
+      runningCountRef.current += moved.length;
+      // Captures THIS move's own `moved`/`unlinkedCount` right now — not a
+      // ref to the shared `lastMove`, which a later scan can overwrite
+      // before this toast is dismissed or clicked. See undoMove's comment.
+      toast.success(`Moved ${runningCountRef.current} to ${pinnedDest.name}`, {
+        action: { label: 'Undo', onClick: () => { void undoMove(moved, unlinkedCount); } },
+      });
+    } catch (err) {
+      if (!mountedRef.current) return;
+      toast.error(err instanceof Error ? err.message : 'Could not move it there');
+    } finally {
+      setBusyBoth(false);
+    }
+  }, [pinnedDest, putDown, confirmPrompt]);
+
+  // Every code the scanner (or the typed fallback below) decodes passes
+  // through here, and this is the whole station: which mode is live decides
+  // what a code means.
+  //
+  //   GATHER (carrying)     bin/area  -> land the whole carry (unchanged)
+  //                          item/bin -> add to the carry
+  //   DISTRIBUTE (pinned)    bin/area  -> re-pin, nothing moves
+  //                          item/bin -> move it to the pin now
   //
   // One batch at a time is the rule: while a confirm is pending, TagScanner
   // is handed isActive={false} below, which tears the camera down — but that
@@ -275,47 +452,115 @@ export function PutDown() {
         toast.error(`Code ${code} is not in your inventory`);
         return;
       }
-      if (entity.type !== 'container' && entity.type !== 'area') {
-        toast.error('That label is not a bin or an area');
+
+      if (carriedRef.current.length > 0) {
+        // GATHER — the load is still being built. `entity` stays typed as
+        // the whole ResolvedEntity union even inside this narrowed branch
+        // (TS narrows a property READ like `entity.type`, not the object's
+        // assignability elsewhere), so land() takes a literal built from
+        // the narrowed `entity.type` read rather than `entity` itself.
+        if (entity.type === 'container' || entity.type === 'area') {
+          await land({ id: entity.id, name: entity.name, type: entity.type });
+          return;
+        }
+        // Only 'item' | 'property' remain at this point — the branch above
+        // already returned for every other case.
+        if (entity.type !== 'item') {
+          toast.error('That label is not an item, bin, or area');
+          return;
+        }
+        if (carriedRef.current.some((c) => c.id === entity.id)) {
+          toast('Already carrying');
+          return;
+        }
+        addToCarry({ id: entity.id, name: entity.name, kind: entity.type });
+        toast(`Carrying ${carriedRef.current.length + 1}`);
         return;
       }
-      await land(entity);
+
+      // DISTRIBUTE — nothing carried. Only reachable once something is
+      // pinned (the scanner/typed field below aren't rendered otherwise),
+      // so a bin/area code here is always a re-pin, never a first pin.
+      if (entity.type === 'container' || entity.type === 'area') {
+        // A re-pin while a moveToPin is still in flight is the one entry
+        // point that WASN'T gated on busyRef: the in-flight putDown's own
+        // completeMove writes pinnedDest LAST, unconditionally overwriting
+        // whatever this branch just pinned — the toast below would say
+        // "Now moving to D" while every later scan actually kept moving to
+        // C. Same "dropped, not queued" rule land()/moveToPin already
+        // follow, so the toast here can never promise a pin that doesn't
+        // actually stick.
+        if (busyRef.current) {
+          toast('Still moving — scan the bin again');
+          return;
+        }
+        pin({ id: entity.id, name: entity.name, type: entity.type });
+        toast(`Now moving to ${entity.name}`);
+        return;
+      }
+      if (entity.type !== 'item') {
+        toast.error('That label is not an item, bin, or area');
+        return;
+      }
+      if (!pinnedDest) {
+        toast.error('Scan a bin first');
+        return;
+      }
+      await moveToPin(entity);
     } catch {
       toast.error('Could not read that label');
     }
-  }, [land]);
+  }, [land, addToCarry, pinnedDest, pin, moveToPin]);
 
-  async function undo() {
-    if (!lastMove) return;
-    const reversible = lastMove.items.filter((i) => i.fromContainerId || i.fromAreaId);
-    try {
-      await Promise.all(
-        reversible.map((i) =>
-          i.kind === 'container'
-            ? moveContainer.mutateAsync(
-                i.fromContainerId
-                  ? { id: i.id, parentContainerId: i.fromContainerId }
-                  : { id: i.id, parentContainerId: null, areaId: i.fromAreaId as number },
-              )
-            : moveItem.mutateAsync({ id: i.id, containerId: i.fromContainerId as number }),
-        ),
-      );
-      const skipped = lastMove.items.length - reversible.length;
-      toast(
-        lastMove.unlinkedCount && lastMove.unlinkedCount > 0
-          ? 'Moved back · unlinked accessories were not restored'
-          : skipped > 0
-            ? `Put ${reversible.length} back — ${skipped} had no previous home`
-            : 'Put back',
-      );
-      clearLastMove();
-    } catch (err) {
-      toast(err instanceof Error ? err.message : 'Could not undo the move');
-    }
+  const [typed, setTyped] = React.useState('');
+  function submitTyped() {
+    // The typed field accepts anything a person can paste — including the
+    // full label URL, which is what a phone's share sheet hands back after
+    // scanning one — so it runs through the same parser scan.tsx uses
+    // rather than trusting the caller.
+    const code = extractTlyCode(typed);
+    if (!code) { toast('That is not a tally tag'); return; }
+    setTyped('');
+    void handleCode(code);
   }
 
-  // Nothing in hand: this screen has no question to ask.
-  if (carried.length === 0) {
+  // The shared "last landing" undo — the empty state's button and (while
+  // still carrying or freshly pinned) the banner both point here. Reads
+  // `lastMove` from the store, unlike undoMove's other callers, because this
+  // IS the "undo whatever most recently landed" action — there is only ever
+  // one lastMove, and this is the one place that slot is meant to be read.
+  async function undo() {
+    if (!lastMove) return;
+    await undoMove(lastMove.items, lastMove.unlinkedCount);
+    clearLastMove();
+  }
+
+  // Gated on busyRef for the same reason the re-pin branch above is: an
+  // in-flight land()/moveToPin's completeMove writes pinnedDest AFTER this
+  // runs, so leaving mid-batch would have the pin resurrect right behind
+  // the user's explicit "Done, leave" — the next /move visit reopens
+  // distribute-armed to a destination they already dismissed. Esc shares
+  // this function, so gating it here covers both.
+  const handleDone = React.useCallback(() => {
+    if (!pinnedDest || busyRef.current) return;
+    navigate(pinnedDest.type === 'area' ? `/area/${pinnedDest.id}` : `/container/${pinnedDest.id}`);
+    clearPin();
+  }, [pinnedDest, navigate, clearPin]);
+
+  // Esc-as-Done at a desk: a keyboard-only convenience for the flow that has
+  // no camera to close instead. Skipped while a confirm sheet is open — its
+  // own Escape handling (Radix's dialog) owns that keystroke instead.
+  React.useEffect(() => {
+    if (!atDesk) return;
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === 'Escape' && pinnedDest && !pendingConfirm) handleDone();
+    }
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [atDesk, pinnedDest, pendingConfirm, handleDone]);
+
+  // Nothing in hand and nowhere pinned: this screen has no question to ask.
+  if (carried.length === 0 && !pinnedDest) {
     return (
       <div className="flex flex-col gap-4 max-w-lg mx-auto">
         <TitleBar className="w-fit">Move</TitleBar>
@@ -325,9 +570,23 @@ export function PutDown() {
             Nothing in hand
           </p>
           <p className="text-sm text-[var(--color-text-secondary)] max-w-xs">
-            Pick something up first — tap <b>Move</b> on an item or a bin, or select several
-            inside a bin and move them together.
+            Pick something up — tap Move on an item or a bin — then scan where it goes.
           </p>
+          {/* This state renders no scanner and no typed field — a fresh pin
+              can only come from landing a carry, or from this chip. The old
+              second line promised "scan a bin or area here first," which
+              this screen cannot do at all; the chip below is the only other
+              real affordance, and its own label already says what it does. */}
+          {lastDest && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="mt-2"
+              onClick={() => { pin(lastDest); toast(`Now moving to ${lastDest.name}`); }}
+            >
+              Again to: {lastDest.name}
+            </Button>
+          )}
           {lastMove && (
             <Button variant="outline" size="sm" className="mt-2" onClick={undo}>
               <Undo2 className="w-4 h-4" />
@@ -339,15 +598,44 @@ export function PutDown() {
     );
   }
 
+  const scannerLabel = pendingConfirm
+    ? 'Paused — resolve the prompt'
+    : busy
+      ? progress
+        ? `Moving… ${progress.done} of ${progress.total}`
+        : 'Moving…'
+      : distributing
+        ? 'Scan item to move · scan a bin to re-pin'
+        : 'Scan item, bin, or area';
+
+  const typedCodeForm = (
+    <form
+      className="flex gap-2 shrink-0"
+      onSubmit={(e) => { e.preventDefault(); if (typed.trim()) submitTyped(); }}
+    >
+      <Input
+        value={typed}
+        onChange={(e) => setTyped(e.target.value)}
+        placeholder={showScanner ? 'Or type the code (TLY-…)' : 'Type or scan a code (TLY-…)'}
+        autoCapitalize="characters"
+        spellCheck={false}
+      />
+      <Button size="sm" type="submit" className="shrink-0" disabled={!typed.trim()}>
+        <ArrowRight className="w-4 h-4" />
+        Go
+      </Button>
+    </form>
+  );
+
   return (
     /*
      * At a desk this is a two-column job, not a stack.
      *
      * The load and the destination are one decision — "put THESE, THERE" — and
      * on a phone they have to take turns because there is no room for both. A
-     * desk can show them at once, so what you are carrying stays visible while
-     * you browse for somewhere to put it, instead of scrolling out of view the
-     * moment the picker opens.
+     * desk can show them at once, so what you are carrying (and/or where it's
+     * headed) stays visible while you browse or scan, instead of scrolling
+     * out of view.
      */
     <div className={cn(
       'h-full',
@@ -355,31 +643,50 @@ export function PutDown() {
         ? 'grid w-full max-w-[1100px] grid-cols-[minmax(280px,360px)_minmax(0,1fr)] items-start gap-6 mx-auto'
         : 'flex flex-col gap-3 max-w-lg mx-auto',
     )}>
-      {/* What is in your hands, and the one question this screen asks. */}
-      <div className="flex items-center gap-2 border-2 border-[var(--color-primary)] bg-[var(--color-primary-bg)] rounded-[var(--radius-sm)] px-3 py-2 shrink-0">
-        <span className="min-w-0 flex-1">
-          <span className="block font-mono text-[10px] uppercase tracking-[0.1em] text-[var(--color-primary)] font-bold">
-            carrying
-          </span>
-          <span className="block text-sm font-semibold truncate">{summary}</span>
-          {carried.length === 1 && carried[0].fromContainerName && (
-            <span className="block font-mono text-[10px] text-[var(--color-text-muted)] truncate">
-              from {carried[0].fromContainerName}
+      {/* Left column at a desk, top of the stack on a phone. Carrying and a
+          pin are independent facts (a partial-batch landing can leave both
+          true at once) so each renders on its own condition rather than as
+          an either/or. */}
+      <div className="flex flex-col gap-3 shrink-0">
+        {carried.length > 0 && (
+          <div className="flex items-center gap-2 border-2 border-[var(--color-primary)] bg-[var(--color-primary-bg)] rounded-[var(--radius-sm)] px-3 py-2">
+            <span className="min-w-0 flex-1">
+              <span className="block font-mono text-[10px] uppercase tracking-[0.1em] text-[var(--color-primary)] font-bold">
+                carrying
+              </span>
+              <span className="block text-sm font-semibold truncate">{summary}</span>
+              {carried.length === 1 && carried[0].fromContainerName && (
+                <span className="block font-mono text-[10px] text-[var(--color-text-muted)] truncate">
+                  from {carried[0].fromContainerName}
+                </span>
+              )}
             </span>
-          )}
-        </span>
-        <button
-          type="button"
-          aria-label="Put down without moving"
-          onClick={() => { clear(); navigate(-1); }}
-          className="shrink-0 min-w-[36px] min-h-[36px] flex items-center justify-center text-[var(--color-primary)]"
-        >
-          <X className="w-4 h-4" />
-        </button>
+            <button
+              type="button"
+              aria-label="Put down without moving"
+              onClick={() => { clear(); navigate(-1); }}
+              className="shrink-0 min-w-[36px] min-h-[36px] flex items-center justify-center text-[var(--color-primary)]"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        )}
+
+        {pinnedDest && (
+          <div className="flex items-center gap-2 border-2 border-[var(--color-text)] bg-[var(--color-bg)] rounded-[var(--radius-sm)] px-3 py-2">
+            <span className="min-w-0 flex-1">
+              <span className="block font-mono text-[10px] uppercase tracking-[0.1em] text-[var(--color-text-muted)]">
+                moving to
+              </span>
+              <span className="block text-sm font-semibold truncate">{pinnedDest.name}</span>
+            </span>
+            <Button size="sm" onClick={handleDone} disabled={busy}>Done</Button>
+          </div>
+        )}
       </div>
 
       <div className={cn(atDesk && 'min-w-0')}>
-      {picking ? (
+      {gathering && picking ? (
         showSwitcher ? (
           // Cross-property destinations need a deliberate choice, not a
           // dropdown buried inside the picker — same segmented-Button pattern
@@ -422,7 +729,7 @@ export function PutDown() {
             onClose={() => setPicking(false)}
           />
         )
-      ) : (
+      ) : gathering ? (
         <>
           {/* Scanner-first wherever a rear camera plausibly exists: phones,
               and tablets in landscape. Fine-pointer desks stay picker-only —
@@ -439,28 +746,53 @@ export function PutDown() {
                 // keeps running underneath it and a second scan would call
                 // confirmPrompt again, stomping the paused batch's resolver.
                 isActive={!pendingConfirm}
-                label={pendingConfirm ? 'Paused — resolve the prompt' : busy ? 'Moving…' : 'Scan tote/area tag'}
+                label={scannerLabel}
                 onTag={handleCode}
                 onClose={() => navigate(-1)}
               />
             </div>
           )}
+          {showScanner && typedCodeForm}
           <Button variant="outline" size="sm" className="shrink-0" onClick={() => setPicking(true)}>
             <List className="w-4 h-4" />
             Pick a bin from the list
           </Button>
         </>
-      )}
+      ) : distributing ? (
+        <>
+          {showScanner && (
+            <div className={cn('flex flex-col flex-1 min-h-0', atDesk && coarse && 'max-h-[clamp(230px,36vh,280px)] overflow-hidden')}>
+              <TagScanner
+                isActive={!pendingConfirm}
+                label={scannerLabel}
+                onTag={handleCode}
+                onClose={handleDone}
+              />
+            </div>
+          )}
+          {/* Fine desks have no scanner at all in this mode, so the typed
+              field is the ONLY way to keep distributing there — a USB QR
+              reader is a keyboard, exactly the reasoning scan.tsx's desk
+              layout already leans on. Rendered unconditionally here, unlike
+              GATHER's desk flow (unchanged, picker-only), because
+              DISTRIBUTE never had a desk story before this feature. */}
+          {typedCodeForm}
+        </>
+      ) : null}
       </div>
 
       {pendingConfirm && (
         <MoveConsequencesSheet
           entityName={pendingConfirm.entityName}
           progress={{ index: pendingConfirm.index, total: pendingConfirm.total }}
+          // total is the whole batch, not just what's still waiting on a
+          // decision — remainingCount is what "apply to the rest" actually
+          // means, so it has to exclude everything already resolved.
+          remainingCount={Math.max(0, pendingConfirm.total - pendingConfirm.index - 1)}
           consequences={pendingConfirm.consequences}
           isPending={moveItem.isPending || moveContainer.isPending}
-          onConfirm={() => decide('confirm')}
-          onCancel={() => decide('cancel')}
+          onConfirm={(applyToRest) => decide('confirm', applyToRest)}
+          onCancel={(applyToRest) => decide('cancel', applyToRest)}
         />
       )}
     </div>

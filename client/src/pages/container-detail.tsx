@@ -330,9 +330,15 @@ export function ContainerDetail() {
         <Button
           variant="outline"
           size="sm"
-          onClick={() =>
-            navigate(`/scan?containerId=${id}&areaId=${container.areaId}&propertyId=${container.breadcrumb?.[0]?.id || ''}`)
-          }
+          onClick={() => {
+            // /capture reads these params and pre-pins this bin as the destination — /scan reads none of them (the old target silently discarded the context).
+            // propertyId is the const computed above from the flat field the
+            // real getById serves — container.breadcrumb holds ancestor
+            // CONTAINERS ({id,name}, no type), so its [0].id was never a
+            // property: empty for a top-level bin, a container id for a
+            // nested one, and /capture now actually reads what it is handed.
+            navigate(`/capture?containerId=${id}&areaId=${container.areaId}&propertyId=${propertyId || ''}`);
+          }}
         >
           <ScanLine className="w-4 h-4" />
           Scan in
