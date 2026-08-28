@@ -446,7 +446,7 @@ export function ContainerDetail() {
           <div
             key={child.id}
             className={cn(
-              'rounded-[var(--radius-sm)]',
+              'rounded-[var(--radius-sm)] border-b border-[var(--color-rule)] last:border-b-0',
               highlighted?.type === 'container' && highlighted.id === child.id
                 && 'bg-[var(--color-elevated)] ring-1 ring-[var(--color-text)]',
             )}
@@ -479,7 +479,7 @@ export function ContainerDetail() {
           <div
             key={item.id}
             className={cn(
-              'rounded-[var(--radius-sm)]',
+              'rounded-[var(--radius-sm)] border-b border-[var(--color-rule)] last:border-b-0',
               highlighted?.type === 'item' && highlighted.id === item.id
                 && 'bg-[var(--color-elevated)] ring-1 ring-[var(--color-text)]',
             )}

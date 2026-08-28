@@ -456,7 +456,7 @@ export function Home() {
             <div
               key={item.id}
               className={cn(
-                'rounded-[var(--radius-sm)]',
+                'rounded-[var(--radius-sm)] border-b border-[var(--color-rule)] last:border-b-0',
                 highlightedId === item.id && 'bg-[var(--color-elevated)] ring-1 ring-[var(--color-text)]',
               )}
             >
