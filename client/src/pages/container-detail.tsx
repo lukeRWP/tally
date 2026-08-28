@@ -330,9 +330,10 @@ export function ContainerDetail() {
         <Button
           variant="outline"
           size="sm"
-          onClick={() =>
-            navigate(`/capture?containerId=${id}&areaId=${container.areaId}&propertyId=${container.breadcrumb?.[0]?.id || ''}`)
-          }
+          onClick={() => {
+            // /capture reads these params and pre-pins this bin as the destination — /scan reads none of them (the old target silently discarded the context).
+            navigate(`/capture?containerId=${id}&areaId=${container.areaId}&propertyId=${container.breadcrumb?.[0]?.id || ''}`);
+          }}
         >
           <ScanLine className="w-4 h-4" />
           Scan in
