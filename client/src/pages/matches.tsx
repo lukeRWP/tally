@@ -13,6 +13,7 @@ import { toast } from '@/components/ui/toast';
 import { ApiError } from '@/lib/api';
 import { useProperties } from '@/hooks/use-inventory';
 import { useLayoutMode } from '@/hooks/use-layout-mode';
+import { useKeyboardNav } from '@/hooks/use-keyboard-nav';
 import { cn, safeExternalUrl } from '@/lib/utils';
 import {
   useMatches, useResolveMatch,
@@ -226,6 +227,44 @@ export function MatchesPage() {
   const rowsRef = React.useRef(rows);
   React.useEffect(() => { rowsRef.current = rows; }, [rows]);
 
+  /**
+   * The keyboard ring, over ALL rows in visible order — not just `ready` ones,
+   * so j/k can survey a whole backlog including the stuck rows a click would
+   * otherwise be the only way to reach.
+   *
+   * Unlike search.tsx/areas.tsx (where moving the ring IS selecting), Enter is
+   * a separate, deliberate step here: opening a row's panel can trigger a
+   * resolve, so browsing past several rows with j/k must not fire it along
+   * the way. `localHighlightIdx` is the ring's own cursor for that browsing;
+   * `highlightId` hands it off to `selectedId` — the single source of truth —
+   * the moment a selection exists (a click, Enter, or auto-advance after a
+   * resolve/dismiss), via the effect below. Falling back to the local cursor
+   * only when nothing is selected is what makes auto-advance move the ring
+   * for free: it calls `select()`, and this effect picks that id straight up.
+   */
+  const ids = React.useMemo(() => rows.map((m) => m.id), [rows]);
+  const [localHighlightIdx, setLocalHighlightIdx] = React.useState(-1);
+  React.useEffect(() => {
+    if (selectedId == null) return;
+    const idx = ids.indexOf(selectedId);
+    if (idx !== -1) setLocalHighlightIdx(idx);
+  }, [selectedId, ids]);
+  const highlightId = localHighlightIdx >= 0 && localHighlightIdx < ids.length
+    ? ids[localHighlightIdx]
+    : null;
+  const moveHighlight = React.useCallback((delta: 1 | -1) => {
+    if (ids.length === 0) return;
+    setLocalHighlightIdx((at) => (at === -1
+      ? (delta === 1 ? 0 : ids.length - 1)
+      : Math.min(ids.length - 1, Math.max(0, at + delta))));
+  }, [ids]);
+  useKeyboardNav({
+    enabled: split,
+    onMove: moveHighlight,
+    onOpen: () => { if (highlightId != null) select(highlightId); },
+    onEscape: () => { select(null); setLocalHighlightIdx(-1); },
+  });
+
   const [bulkClearing, setBulkClearing] = React.useState<{ i: number; n: number } | null>(null);
   const failedRows = rows.filter((r) => r.status === 'none' || r.status === 'failed');
 
@@ -301,7 +340,7 @@ export function MatchesPage() {
           key={m.id}
           className={cn(
             'rounded-[var(--radius-sm)]',
-            split && selectedId === m.id && 'bg-[var(--color-elevated)] ring-1 ring-[var(--color-text)]',
+            split && highlightId === m.id && 'bg-[var(--color-elevated)] ring-1 ring-[var(--color-text)]',
           )}
         >
           <RuledRow

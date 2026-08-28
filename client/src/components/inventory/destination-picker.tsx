@@ -2,6 +2,8 @@ import * as React from 'react';
 import { X, MapPin } from 'lucide-react';
 import { api } from '@/lib/api';
 import { useProperties, useAreas, useContainers } from '@/hooks/use-inventory';
+import { useKeyboardNav } from '@/hooks/use-keyboard-nav';
+import { cn } from '@/lib/utils';
 
 export interface PickedBin {
   id: number;
@@ -77,6 +79,35 @@ export function DestinationPicker({
     })();
   }, [seedAreaId, propertyId]);
 
+  const containerList = containers ?? [];
+  const [highlightIdx, setHighlightIdx] = React.useState(-1);
+  // A new area's bin list means a stale index would point at an unrelated row.
+  React.useEffect(() => { setHighlightIdx(-1); }, [areaId]);
+
+  const moveHighlight = React.useCallback((delta: 1 | -1) => {
+    if (containerList.length === 0) return;
+    setHighlightIdx((at) => (at === -1
+      ? (delta === 1 ? 0 : containerList.length - 1)
+      : Math.min(containerList.length - 1, Math.max(0, at + delta))));
+  }, [containerList.length]);
+
+  useKeyboardNav({
+    onMove: moveHighlight,
+    onOpen: () => {
+      const bin = containerList[highlightIdx];
+      if (bin) onPick({ id: bin.id, name: bin.name, areaId: bin.areaId });
+    },
+    // Deliberately no onEscape: this panel has no Esc-to-close affordance of
+    // its own (only the X button calls onClose), and both places that mount
+    // this picker (capture.tsx, put-down.tsx) already run their own
+    // window-level Escape handling for the surrounding flow — put-down.tsx's
+    // Esc-as-Done, in particular. The hook's Escape branch never calls
+    // preventDefault/stopPropagation regardless of whether onEscape is
+    // supplied, so the keypress was always going to reach them either way;
+    // omitting it here just avoids adding a SECOND reaction (closing this
+    // picker) to the same keypress on top of whatever the host page does.
+  });
+
   return (
     <div className="flex flex-col gap-2 border-2 border-[var(--color-text)] rounded-[var(--radius-sm)] p-3 flex-1 min-h-0">
       <div className="flex items-center justify-between shrink-0">
@@ -123,12 +154,15 @@ export function DestinationPicker({
           </p>
         ) : (
           <div className="flex flex-col flex-1 min-h-[100px] overflow-y-auto">
-            {containers?.map((c) => (
+            {containerList.map((c, idx) => (
               <button
                 key={c.id}
                 type="button"
                 onClick={() => onPick({ id: c.id, name: c.name, areaId: c.areaId })}
-                className="flex items-center gap-2 py-2.5 border-b border-[var(--color-rule)] last:border-b-0 text-left"
+                className={cn(
+                  'flex items-center gap-2 py-2.5 border-b border-[var(--color-rule)] last:border-b-0 text-left',
+                  highlightIdx === idx && 'bg-[var(--color-elevated)] ring-1 ring-[var(--color-text)]',
+                )}
               >
                 <MapPin className="w-3.5 h-3.5 shrink-0 text-[var(--color-text-muted)]" />
                 <span className="min-w-0 flex-1 text-sm font-medium truncate">{c.name}</span>
