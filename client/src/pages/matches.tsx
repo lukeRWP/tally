@@ -27,6 +27,30 @@ import {
  * into a real catalog product — one item at a time, candidates side by side.
  */
 
+/**
+ * Where the panel should land after a row resolves or gets dismissed (#228).
+ *
+ * "Pending" in the task brief means `ready` here — resolve/dismiss can only
+ * ever fire against a `ready` row (that's the only status whose panel renders
+ * "Use this" / "None of these"; queued/searching have no action yet and
+ * none/failed only link out). Scans forward from the just-acted-on row's
+ * current position in `rows`, wraps once, and always excludes that row's own
+ * id — it may still be sitting in `rows` marked `ready` at the moment this
+ * runs (the invalidation-driven refetch hasn't landed yet), and selecting it
+ * again would reopen the panel we just cleared.
+ */
+export function nextPendingAfter(rows: ProductMatch[], id: number): number | null {
+  const n = rows.length;
+  if (n === 0) return null;
+  const idx = rows.findIndex((r) => r.id === id);
+  const start = idx === -1 ? 0 : idx + 1;
+  for (let offset = 0; offset < n; offset++) {
+    const row = rows[(start + offset) % n];
+    if (row.id !== id && row.status === 'ready') return row.id;
+  }
+  return null;
+}
+
 function StatusBadge({ status, count }: { status: MatchStatus; count: number }) {
   switch (status) {
     case 'queued':
@@ -194,11 +218,23 @@ export function MatchesPage() {
   const rows = matches ?? [];
   const current = rows.find((m) => m.id === selectedId) ?? null;
 
+  // handlePick/handleDismiss's onSuccess callbacks fire asynchronously, and
+  // the list polls every 5s while anything is queued/searching — a refetch
+  // can land between the click and the mutation settling. nextPendingAfter
+  // needs `rows` as they stand AT SUCCESS TIME, not the array closed over
+  // when the handler was defined, so it reads this ref instead of `rows`.
+  const rowsRef = React.useRef(rows);
+  React.useEffect(() => { rowsRef.current = rows; }, [rows]);
+
+  const [bulkClearing, setBulkClearing] = React.useState<{ i: number; n: number } | null>(null);
+  const failedRows = rows.filter((r) => r.status === 'none' || r.status === 'failed');
+
   function handlePick(index: number) {
     if (!current) return;
-    resolve.mutate({ id: current.id, candidateIndex: index }, {
+    const id = current.id;
+    resolve.mutate({ id, candidateIndex: index }, {
       onSuccess: (res) => {
-        select(null);
+        select(nextPendingAfter(rowsRef.current, id));
         if (res?.duplicates?.length) {
           toast(`Linked — you may already have one in ${res.duplicates[0].containerName}`);
         } else {
@@ -210,6 +246,8 @@ export function MatchesPage() {
         // already invalidated the list, so clearing the selection here just
         // moves the panel back to empty in step with the row disappearing,
         // instead of leaving a still-clickable panel for a row that's gone.
+        // A 409 means the row went stale, not that work continues, so this
+        // stays select(null) rather than auto-advancing over a phantom index.
         if (err instanceof ApiError && err.status === 409) select(null);
         toast(err instanceof Error ? err.message : 'Could not resolve that match');
       },
@@ -218,13 +256,39 @@ export function MatchesPage() {
 
   function handleDismiss() {
     if (!current) return;
-    resolve.mutate({ id: current.id, dismiss: true }, {
-      onSuccess: () => { select(null); toast('Dismissed'); },
+    const id = current.id;
+    resolve.mutate({ id, dismiss: true }, {
+      onSuccess: () => { select(nextPendingAfter(rowsRef.current, id)); toast('Dismissed'); },
       onError: (err) => {
         if (err instanceof ApiError && err.status === 409) select(null);
         toast(err instanceof Error ? err.message : 'Could not dismiss that match');
       },
     });
+  }
+
+  // Sequential, not Promise.all — these share the same underlying dismiss
+  // endpoint the single-row flow uses, and firing them concurrently would
+  // just be N races against the same list invalidation. One outcome toast;
+  // a mid-loop failure stops rather than plowing through the rest blind.
+  async function handleBulkClear() {
+    const targets = failedRows;
+    const n = targets.length;
+    if (n === 0 || bulkClearing) return;
+    setBulkClearing({ i: 0, n });
+    let cleared = 0;
+    for (const row of targets) {
+      try {
+        await resolve.mutateAsync({ id: row.id, dismiss: true });
+        cleared += 1;
+        setBulkClearing({ i: cleared, n });
+      } catch {
+        setBulkClearing(null);
+        toast(`Cleared ${cleared} of ${n}`);
+        return;
+      }
+    }
+    setBulkClearing(null);
+    toast(`Cleared ${n}`);
   }
 
   const loading = isLoading || !propertyId;
@@ -265,7 +329,14 @@ export function MatchesPage() {
 
   return (
     <div className="flex flex-col gap-4">
-      <h1><TitleBar>Matches</TitleBar></h1>
+      <div className="flex items-center justify-between gap-2">
+        <h1><TitleBar>Matches</TitleBar></h1>
+        {failedRows.length > 0 && (
+          <Button variant="outline" size="sm" onClick={handleBulkClear} disabled={!!bulkClearing}>
+            {bulkClearing ? `Clearing… ${bulkClearing.i} of ${bulkClearing.n}` : `Clear ${failedRows.length} failed`}
+          </Button>
+        )}
+      </div>
 
       {loading && (
         <div className="flex flex-col gap-2">
