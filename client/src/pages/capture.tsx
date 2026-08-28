@@ -456,6 +456,12 @@ export function Capture() {
     });
   }
 
+  /** Save/upload legs currently running, by receipt key (`photo:`-prefixed
+   *  for the upload leg). A ref, not state: it exists to be checked
+   *  synchronously at the top of the detached blocks, before any await, so a
+   *  double-fired retry can never run two creates for one receipt. */
+  const inFlight = React.useRef(new Set<string>());
+
   /** Patch one receipt in place by key. A map, never a sort or a move: the
    *  list keeps commit order and state patches must not reorder it. Also safe
    *  after unmount — the detached save below outlives navigation, and a
@@ -468,7 +474,7 @@ export function Capture() {
 
   /**
    * Commit optimistically. The synchronous part is the whole user experience:
-   * append a pending receipt, reset the draft, put the camera back on step 1 —
+   * prepend a pending receipt, reset the draft, put the camera back on step 1 —
    * the phone user is aiming at the next item while the network works. The
    * hundred-item session must never wait on a round trip.
    *
@@ -488,7 +494,12 @@ export function Capture() {
       matchAvailable: stateRef.current.matchAvailable,
     };
     const key = newReceiptKey();
-    setReceipts((prev) => [...prev, { key, state: 'pending', name: displayName(d), snapshot }]);
+    // Newest first: the list renders below the step-1 block and is unbounded,
+    // so the just-committed row — the one whose failure toast says "Retry
+    // from the list" — must be the row above the fold, not underneath six
+    // older ones. Ordering STABILITY is patchReceipt's job (keyed map, never
+    // a move); direction is decided here, once, at insert.
+    setReceipts((prev) => [{ key, state: 'pending', name: displayName(d), snapshot }, ...prev]);
     // Scan-ready NOW. The warning (and the suggestion) belong to the draft
     // just committed, not to the next one — leaving either up would claim
     // something about an object that has not been photographed yet.
@@ -499,11 +510,22 @@ export function Capture() {
 
   /**
    * The detached save. Never awaited by commit(), and never able to reject
-   * unhandled — the body is one try/catch. Reads only the snapshot.
+   * unhandled — every path runs inside a try. Reads only the snapshot.
    */
   async function runCommit(key: string, snap: CommitSnapshot) {
+    // Structural re-entry guard: a double-fired Retry (or any future second
+    // caller) must not run two creates for one receipt. The retry handler
+    // checks the row's state at render time; this closes the residual
+    // not-yet-rendered window by construction instead of leaning on React's
+    // discrete-event flush timing.
+    if (inFlight.current.has(key)) return;
+    inFlight.current.add(key);
     const { draft: d, dest: destination, vision: seen, matchAvailable: matchOn } = snap;
     const name = displayName(d);
+    // The create leg. Its catch spans ONLY the create: past it, the item row
+    // exists, and a receipt marked failed after that point would offer a
+    // Retry that duplicates the item.
+    let created;
     try {
       // Without a product row there is nothing to inherit from and no way back —
       // items has no BARCODE column. Whatever the scan did learn rides along as
@@ -540,9 +562,25 @@ export function Capture() {
         // be restating the norm.
         ...(d.completeness ? { completeness: d.completeness } : {}),
       });
-      const created = res?.item;
+      created = res?.item;
       if (!created) throw new Error('Create returned no item');
+    } catch {
+      // The receipt is the recovery surface — the toast points at it rather
+      // than carrying its own retry.
+      patchReceipt(key, { state: 'failed' });
+      toast.error(`Couldn't save "${name}" — Retry from the list`);
+    }
+    if (!created) {
+      // The create failed (the catch above has already said so) — nothing
+      // more may run for this receipt until its Retry re-arms it.
+      inFlight.current.delete(key);
+      return;
+    }
 
+    // Past here the item IS saved. Nothing below may demote the receipt to
+    // failed — each leg handles its own partial-failure state — so this
+    // catch only reports: 'failed' here would invite a duplicating Retry.
+    try {
       patchReceipt(key, {
         state: 'saved',
         id: created.id,
@@ -599,17 +637,19 @@ export function Capture() {
       if (d.photo) {
         await uploadReceiptPhoto(key, created.id, d.photo);
       }
-    } catch {
-      // The receipt is the recovery surface — the toast points at it rather
-      // than carrying its own retry.
-      patchReceipt(key, { state: 'failed' });
-      toast.error(`Couldn't save "${name}" — Retry from the list`);
+    } catch (err) {
+      console.warn('[capture] post-create step threw; the item is saved', err);
+    } finally {
+      inFlight.current.delete(key);
     }
   }
 
   /** The photo leg, shared by the commit and the receipt's own retry. The
    *  item is saved either way — only the photoState is at stake here. */
   async function uploadReceiptPhoto(key: string, itemId: number, photo: Blob) {
+    const token = `photo:${key}`;
+    if (inFlight.current.has(token)) return;
+    inFlight.current.add(token);
     patchReceipt(key, { photoState: 'uploading' });
     try {
       await uploadFile.mutateAsync({
@@ -626,17 +666,24 @@ export function Capture() {
         : r)));
     } catch {
       patchReceipt(key, { photoState: 'failed' }); // the item is saved; only the photo failed
+    } finally {
+      inFlight.current.delete(token);
     }
   }
 
   /** Re-run the whole save from the snapshot stored on the receipt. */
   function retryCommit(r: Receipt) {
+    // Only a failed row may re-run: the receipt flips out of 'failed' before
+    // any async work, so a second click is a no-op rather than a second
+    // create. (runCommit's inFlight set covers the not-yet-rendered window.)
+    if (r.state !== 'failed') return;
     patchReceipt(r.key, { state: 'pending' });
     void runCommit(r.key, r.snapshot);
   }
 
   /** Re-run only the photo leg — the item row already exists. */
   function retryPhoto(r: Receipt) {
+    if (r.photoState !== 'failed') return; // same shape as retryCommit's guard
     if (r.id == null || !r.snapshot.draft.photo) return;
     void uploadReceiptPhoto(r.key, r.id, r.snapshot.draft.photo);
   }

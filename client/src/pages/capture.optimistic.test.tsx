@@ -17,6 +17,9 @@
  *       vision state — the known race this design exists to close
  *   (e) a failed photo upload marks the receipt `photo failed · retry`, and
  *       the retry re-uploads from the snapshot's blob
+ *   (f) receipts render newest first — the just-committed (and possibly
+ *       failing) row must sit above the fold of an unbounded list — and a
+ *       state patch lands in place, never reordering the rows
  *
  * Mocking follows capture.kill-switch.test.tsx: camera-dependent children are
  * stubbed, the page and its network calls are real, and the create endpoint is
@@ -280,4 +283,40 @@ test('(e) a failed photo upload marks the receipt and its retry re-uploads from 
   fireEvent.click(photoRetry);
   await waitFor(() => expect(callsTo(fetchMock, '/api/files/_y_/item/101/upload')).toHaveLength(2));
   await waitFor(() => expect(screen.queryByRole('button', { name: /photo failed · retry/i })).toBeNull());
+});
+
+test('(f) receipts render newest first, and a state patch never reorders them', async () => {
+  const gates = [deferred<Response>(), deferred<Response>()];
+  let createCalls = 0;
+  const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+    const url = typeof input === 'string' ? input : input.toString();
+    if (url.includes('/api/items/_y_/create')) {
+      const gate = gates[createCalls];
+      createCalls += 1;
+      return gate.promise;
+    }
+    return jsonResponse({ success: true, data: {} });
+  });
+  const { container } = renderCapture(fetchMock);
+
+  await driveTypedCommit('Alpha Box');
+  await driveTypedCommit('Beta Box');
+  await waitFor(() => expect(callsTo(fetchMock, '/api/items/_y_/create')).toHaveLength(2));
+
+  // Receipt names, top to bottom. On step 1 with the draft reset, the only
+  // elements in this style are the receipt rows' name spans.
+  const rowNames = () =>
+    Array.from(container.querySelectorAll('.text-sm.font-semibold')).map((el) => el.textContent);
+
+  // Newest first: the just-committed row sits at the top of the list.
+  expect(rowNames()).toEqual(['Beta Box', 'Alpha Box']);
+
+  // Resolving the OLDER create patches its row in place — no reorder.
+  gates[0].resolve(jsonResponse({ success: true, data: { item: { id: 201, name: 'Alpha Box', qrCode: 'TLY-I-alpha1' } } }));
+  await waitFor(() => expect(screen.getByText(/TLY-I-alpha1/)).toBeTruthy());
+  expect(rowNames()).toEqual(['Beta Box', 'Alpha Box']);
+
+  gates[1].resolve(jsonResponse({ success: true, data: { item: { id: 202, name: 'Beta Box', qrCode: 'TLY-I-beta22' } } }));
+  await waitFor(() => expect(screen.getByText(/TLY-I-beta22/)).toBeTruthy());
+  expect(rowNames()).toEqual(['Beta Box', 'Alpha Box']);
 });
