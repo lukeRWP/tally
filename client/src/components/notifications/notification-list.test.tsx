@@ -1,0 +1,137 @@
+// @vitest-environment jsdom
+/**
+ * Alerts return-to-list + bulk dismiss (#229).
+ *
+ * Two changes to the notification list:
+ *  - Clicking into an entity now carries {state:{from:'alerts'}} (the back
+ *    link itself renders on the shared Breadcrumbs component — see
+ *    breadcrumbs.test.tsx).
+ *  - "Dismiss N" loops the existing single-dismiss endpoint sequentially,
+ *    continue-on-failure, with a truthful outcome toast and a disabled
+ *    button + progress label while running (mark-all-read is untouched).
+ */
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
+import { afterEach, beforeEach, expect, test, vi } from 'vitest';
+import type { Notification } from '@/hooks/use-notifications';
+import { NotificationList } from './notification-list';
+
+const navigateSpy = vi.fn();
+vi.mock('react-router-dom', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('react-router-dom')>();
+  return { ...actual, useNavigate: () => navigateSpy };
+});
+
+const toastMock = vi.fn();
+vi.mock('@/components/ui/toast', () => ({ toast: (...args: unknown[]) => toastMock(...args) }));
+
+const markReadMock = vi.fn();
+const markAllReadMock = vi.fn();
+const dismissMock = vi.fn();
+
+function makeNotification(over: Partial<Notification> & { id: number }): Notification {
+  return {
+    type: 'custom_date',
+    title: `Notification ${over.id}`,
+    message: 'Something happened',
+    entityType: 'item',
+    entityId: over.id,
+    readAt: null,
+    createdAt: '2026-08-01T00:00:00Z',
+    ...over,
+  };
+}
+
+let notifications: Notification[] = [];
+
+vi.mock('@/hooks/use-notifications', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/hooks/use-notifications')>();
+  return {
+    ...actual,
+    useNotifications: () => ({ data: notifications, isLoading: false }),
+    useMarkRead: () => ({ mutate: markReadMock, isPending: false }),
+    useMarkAllRead: () => ({ mutate: markAllReadMock, isPending: false }),
+    useDismissNotification: () => ({ mutate: dismissMock, mutateAsync: dismissMock, isPending: false }),
+  };
+});
+
+function renderList() {
+  return render(
+    <MemoryRouter>
+      <NotificationList />
+    </MemoryRouter>,
+  );
+}
+
+beforeEach(() => {
+  navigateSpy.mockClear();
+  toastMock.mockClear();
+  markReadMock.mockClear();
+  markAllReadMock.mockClear();
+  dismissMock.mockReset().mockResolvedValue({});
+  notifications = [
+    makeNotification({ id: 1, title: 'Widget A due' }),
+    makeNotification({ id: 2, title: 'Widget B due' }),
+    makeNotification({ id: 3, title: 'Widget C due' }),
+  ];
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
+test('clicking a notification with an entity navigates with {state:{from:"alerts"}}', () => {
+  renderList();
+  fireEvent.click(screen.getByText('Widget A due'));
+  expect(navigateSpy).toHaveBeenCalledWith('/item/1', { state: { from: 'alerts' } });
+});
+
+test('"Dismiss 3" loops the single-dismiss endpoint over every notification and reports a clean outcome', async () => {
+  renderList();
+  fireEvent.click(screen.getByRole('button', { name: 'Dismiss 3' }));
+
+  await waitFor(() => expect(toastMock).toHaveBeenCalledWith('Dismissed 3'));
+
+  expect(dismissMock).toHaveBeenCalledWith(1);
+  expect(dismissMock).toHaveBeenCalledWith(2);
+  expect(dismissMock).toHaveBeenCalledWith(3);
+  expect(dismissMock).toHaveBeenCalledTimes(3);
+});
+
+test('a rigged failure continues the loop and reports a truthful partial outcome', async () => {
+  dismissMock.mockImplementation((id: number) =>
+    (id === 2 ? Promise.reject(new Error('boom')) : Promise.resolve({})));
+
+  renderList();
+  fireEvent.click(screen.getByRole('button', { name: 'Dismiss 3' }));
+
+  await waitFor(() => expect(toastMock).toHaveBeenCalledWith('Dismissed 2 · 1 failed'));
+
+  // Continue-on-failure: id 3 still gets attempted after id 2 rejects.
+  expect(dismissMock).toHaveBeenCalledWith(3);
+});
+
+test('the dismiss button is disabled and shows progress while the loop runs, and mark-all-read stays untouched', async () => {
+  let resolveSecond: (v?: unknown) => void = () => {};
+  dismissMock.mockImplementation((id: number) => {
+    if (id === 2) return new Promise((res) => { resolveSecond = res; });
+    return Promise.resolve({});
+  });
+
+  renderList();
+  fireEvent.click(screen.getByRole('button', { name: 'Dismiss 3' }));
+
+  await screen.findByText('Dismissing… 2 of 3');
+  const btn = screen.getByText('Dismissing… 2 of 3').closest('button') as HTMLButtonElement;
+  expect(btn.disabled).toBe(true);
+
+  // Mark all read is a separate mutation entirely — the dismiss loop must
+  // not touch it or its own pending state.
+  const markAllBtn = screen.getByRole('button', { name: 'Mark all read' }) as HTMLButtonElement;
+  expect(markAllBtn.disabled).toBe(true); // disabled only because a bulk loop is running
+  fireEvent.click(markAllBtn);
+  expect(markAllReadMock).not.toHaveBeenCalled();
+
+  resolveSecond();
+  await waitFor(() => expect(toastMock).toHaveBeenCalledWith('Dismissed 3'));
+});
