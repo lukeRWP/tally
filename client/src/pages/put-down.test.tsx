@@ -37,6 +37,14 @@ vi.mock('@/components/ui/toast', () => {
   const toastFn = Object.assign(vi.fn(), { success: vi.fn(), error: vi.fn() });
   return { toast: toastFn };
 });
+// Real navigation needs a matching <Route> tree to assert against; a spy on
+// useNavigate is the direct way to prove Done did (or, for the busy-guard
+// tests below, did NOT) fire — every other react-router export stays real.
+const navigateSpy = vi.fn();
+vi.mock('react-router-dom', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('react-router-dom')>();
+  return { ...actual, useNavigate: () => navigateSpy };
+});
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
@@ -88,6 +96,7 @@ beforeEach(() => {
   vi.mocked(toast).mockClear();
   vi.mocked(toast.success).mockClear();
   vi.mocked(toast.error).mockClear();
+  navigateSpy.mockClear();
 });
 
 afterEach(() => {
@@ -144,4 +153,155 @@ test('a distribute-mode toast Undo reverses ITS OWN move, not whatever landed af
   // And critically, item 2 was NEVER sent back to ITS origin (20) — the
   // bug this test guards against would have fired exactly that call.
   expect(patchCalls.some((c) => c.body.containerId === 20)).toBe(false);
+});
+
+/**
+ * F1 (final whole-branch review, CRITICAL): a distribute re-pin scanned
+ * while a moveToPin is still in flight used to be silently reverted.
+ *
+ * Pinned to Bin C. Scan item X — moveToPin flips busyRef true immediately,
+ * then blocks on the entity's origin lookup (held open here). While that
+ * window is open, scan Bin D: before the fix this called pin({Bin D}) and
+ * toasted "Now moving to Bin D" — a promise the in-flight move's own
+ * completeMove was about to break (it writes pinnedDest back to Bin C
+ * unconditionally once it resolves). Every other entry point (land,
+ * moveToPin) already drops a scan arriving mid-batch instead of queuing
+ * it; this is the one branch that wasn't gated the same way.
+ */
+test('a bin/area re-pin scanned mid-moveToPin is dropped, not silently reverted after the move settles', async () => {
+  let releaseOrigin: (() => void) | undefined;
+  const originGate = new Promise<void>((resolve) => { releaseOrigin = resolve; });
+  const patchCalls: { url: string; body: Record<string, unknown> }[] = [];
+
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === 'string' ? input : input.toString();
+    const method = init?.method?.toUpperCase();
+
+    if (url.includes('/api/labels/_x_/resolve/TLY-I-0001')) {
+      return jsonResponse({ success: true, data: { type: 'item', id: 1, name: 'Widget X', exists: true } });
+    }
+    if (url.includes('/api/labels/_x_/resolve/TLY-C-000D')) {
+      return jsonResponse({ success: true, data: { type: 'container', id: 99, name: 'Bin D', exists: true } });
+    }
+    if (url.includes('/api/items/_x_/1')) {
+      await originGate; // held open until the test releases it
+      return jsonResponse({ success: true, data: { item: { containerId: 10 } } });
+    }
+    if (method === 'PATCH' && url.includes('/move')) {
+      const body = init?.body ? JSON.parse(init.body as string) : {};
+      patchCalls.push({ url, body });
+      return jsonResponse({ success: true, data: { item: {}, consequences: null } });
+    }
+    return jsonResponse({ success: true, data: {} });
+  });
+  vi.stubGlobal('fetch', fetchMock);
+
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+  render(
+    <QueryClientProvider client={qc}>
+      <MemoryRouter>
+        <PutDown />
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+
+  const codeInput = screen.getByPlaceholderText(/type the code/i);
+
+  // Scan item X — moveToPin starts and blocks on the (held) origin lookup.
+  fireEvent.change(codeInput, { target: { value: 'TLY-I-0001' } });
+  fireEvent.click(screen.getByRole('button', { name: /go/i }));
+
+  // Wait until the origin GET has actually gone out — proof moveToPin is
+  // genuinely in flight (busyRef flips true synchronously before it).
+  await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+    expect.stringContaining('/api/items/_x_/1'), expect.anything(),
+  ));
+
+  // While busy: scan a new destination.
+  fireEvent.change(codeInput, { target: { value: 'TLY-C-000D' } });
+  fireEvent.click(screen.getByRole('button', { name: /go/i }));
+
+  await waitFor(() => expect(toast).toHaveBeenCalledWith('Still moving — scan the bin again'));
+
+  // The toast never lied: the pin never actually moved to D.
+  expect(useCarryStore.getState().pinnedDest).toEqual({ id: 50, name: 'Bin C', type: 'container' });
+  expect(toast).not.toHaveBeenCalledWith('Now moving to Bin D');
+
+  // Let item X's move finish.
+  releaseOrigin?.();
+  await waitFor(() => expect(toast.success).toHaveBeenCalledTimes(1));
+
+  // Still pinned to Bin C — completeMove's re-pin-to-C is a no-op repeat,
+  // not a revert away from a D that was never actually pinned — and every
+  // PATCH actually sent went to Bin C, never anywhere named "D".
+  expect(useCarryStore.getState().pinnedDest).toEqual({ id: 50, name: 'Bin C', type: 'container' });
+  expect(patchCalls.every((c) => c.body.containerId === 50)).toBe(true);
+});
+
+/**
+ * F2 (final whole-branch review, IMPORTANT): Done (or Esc) during an
+ * in-flight move used to leave, then have the pin resurrect right behind
+ * the explicit "Done, leave" once the batch's completeMove ran — the next
+ * /move visit reopened distribute-armed to a destination the user had
+ * already dismissed. Reuses the same in-flight window as the F1 test
+ * (moveToPin blocked on its origin lookup) — moveToPin is the "batch" here,
+ * consistent with the codebase's own "a single-entity load is a batch of
+ * one" framing.
+ */
+test('Done is inert while a move is in flight, and works normally once it settles', async () => {
+  let releaseOrigin: (() => void) | undefined;
+  const originGate = new Promise<void>((resolve) => { releaseOrigin = resolve; });
+
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === 'string' ? input : input.toString();
+    const method = init?.method?.toUpperCase();
+
+    if (url.includes('/api/labels/_x_/resolve/TLY-I-0001')) {
+      return jsonResponse({ success: true, data: { type: 'item', id: 1, name: 'Widget X', exists: true } });
+    }
+    if (url.includes('/api/items/_x_/1')) {
+      await originGate;
+      return jsonResponse({ success: true, data: { item: { containerId: 10 } } });
+    }
+    if (method === 'PATCH' && url.includes('/move')) {
+      return jsonResponse({ success: true, data: { item: {}, consequences: null } });
+    }
+    return jsonResponse({ success: true, data: {} });
+  });
+  vi.stubGlobal('fetch', fetchMock);
+
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+  render(
+    <QueryClientProvider client={qc}>
+      <MemoryRouter>
+        <PutDown />
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+
+  const codeInput = screen.getByPlaceholderText(/type the code/i);
+
+  fireEvent.change(codeInput, { target: { value: 'TLY-I-0001' } });
+  fireEvent.click(screen.getByRole('button', { name: /go/i }));
+
+  await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+    expect.stringContaining('/api/items/_x_/1'), expect.anything(),
+  ));
+
+  // Done is visible (the banner shows throughout) but must be inert while busy.
+  const doneButton = screen.getByRole('button', { name: /^done$/i }) as HTMLButtonElement;
+  expect(doneButton.disabled).toBe(true);
+  fireEvent.click(doneButton);
+  expect(navigateSpy).not.toHaveBeenCalled();
+  expect(useCarryStore.getState().pinnedDest).toEqual({ id: 50, name: 'Bin C', type: 'container' });
+
+  // Let the move settle — completeMove re-pins Bin C (unchanged).
+  releaseOrigin?.();
+  await waitFor(() => expect(toast.success).toHaveBeenCalledTimes(1));
+  expect(useCarryStore.getState().pinnedDest).toEqual({ id: 50, name: 'Bin C', type: 'container' });
+
+  // NOW Done actually leaves.
+  fireEvent.click(screen.getByRole('button', { name: /^done$/i }));
+  expect(navigateSpy).toHaveBeenCalledWith('/container/50');
+  expect(useCarryStore.getState().pinnedDest).toBeNull();
 });

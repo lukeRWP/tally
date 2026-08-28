@@ -319,8 +319,8 @@ Scanning a TLY code navigates to `/s/TLY-X-XXXX` on the client. The `ScanRedirec
 
 `/move` (not `/scan`) is a station you stay at, with two modes:
 
-1. **Gather** — while carrying a load, scan a bin/area to land the whole load (unchanged `PATCH /api/items/_p_/:id/move` / `.../containers/_p_/:id/move`), or scan an item/bin not already in hand to add it to the load (`Carrying N`).
-2. **Distribute** — after a landing, the destination stays **pinned** as a banner instead of navigating away. Scanning an item/bin now moves it straight to the pin (`Moved N to X`, with a toast Undo); scanning a new bin/area re-pins instead — nothing moves.
+1. **Gather** — while carrying a load, scan a bin/area to land the whole load (unchanged `PATCH /api/items/_p_/:id/move` / `.../containers/_p_/:id/move`), or scan an item not already in hand to add it to the load (`Carrying N`). Any container scan is treated as a destination, never as something to add.
+2. **Distribute** — after a landing, the destination stays **pinned** as a banner instead of navigating away. Scanning an item now moves it straight to the pin (`Moved N to X`, with a toast Undo); scanning a new bin/area re-pins instead — nothing moves.
 3. **Done** (button, or Esc at a desk) leaves to the pinned destination's page — leaving is the explicit act, staying is the default.
 
 A typed-code field under the scanner is the fallback for a damaged label; the same field is the primary control at a desk in distribute mode, which has no camera.

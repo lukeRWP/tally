@@ -482,6 +482,18 @@ export function PutDown() {
       // pinned (the scanner/typed field below aren't rendered otherwise),
       // so a bin/area code here is always a re-pin, never a first pin.
       if (entity.type === 'container' || entity.type === 'area') {
+        // A re-pin while a moveToPin is still in flight is the one entry
+        // point that WASN'T gated on busyRef: the in-flight putDown's own
+        // completeMove writes pinnedDest LAST, unconditionally overwriting
+        // whatever this branch just pinned — the toast below would say
+        // "Now moving to D" while every later scan actually kept moving to
+        // C. Same "dropped, not queued" rule land()/moveToPin already
+        // follow, so the toast here can never promise a pin that doesn't
+        // actually stick.
+        if (busyRef.current) {
+          toast('Still moving — scan the bin again');
+          return;
+        }
         pin({ id: entity.id, name: entity.name, type: entity.type });
         toast(`Now moving to ${entity.name}`);
         return;
@@ -523,8 +535,14 @@ export function PutDown() {
     clearLastMove();
   }
 
+  // Gated on busyRef for the same reason the re-pin branch above is: an
+  // in-flight land()/moveToPin's completeMove writes pinnedDest AFTER this
+  // runs, so leaving mid-batch would have the pin resurrect right behind
+  // the user's explicit "Done, leave" — the next /move visit reopens
+  // distribute-armed to a destination they already dismissed. Esc shares
+  // this function, so gating it here covers both.
   const handleDone = React.useCallback(() => {
-    if (!pinnedDest) return;
+    if (!pinnedDest || busyRef.current) return;
     navigate(pinnedDest.type === 'area' ? `/area/${pinnedDest.id}` : `/container/${pinnedDest.id}`);
     clearPin();
   }, [pinnedDest, navigate, clearPin]);
@@ -554,9 +572,11 @@ export function PutDown() {
           <p className="text-sm text-[var(--color-text-secondary)] max-w-xs">
             Pick something up — tap Move on an item or a bin — then scan where it goes.
           </p>
-          <p className="text-sm text-[var(--color-text-secondary)] max-w-xs">
-            Or scan a bin or area here first, then scan items straight to it.
-          </p>
+          {/* This state renders no scanner and no typed field — a fresh pin
+              can only come from landing a carry, or from this chip. The old
+              second line promised "scan a bin or area here first," which
+              this screen cannot do at all; the chip below is the only other
+              real affordance, and its own label already says what it does. */}
           {lastDest && (
             <Button
               variant="outline"
@@ -660,7 +680,7 @@ export function PutDown() {
               </span>
               <span className="block text-sm font-semibold truncate">{pinnedDest.name}</span>
             </span>
-            <Button size="sm" onClick={handleDone}>Done</Button>
+            <Button size="sm" onClick={handleDone} disabled={busy}>Done</Button>
           </div>
         )}
       </div>
