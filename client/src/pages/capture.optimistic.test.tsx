@@ -21,6 +21,16 @@
  *       failing) row must sit above the fold of an unbounded list — and a
  *       state patch lands in place, never reordering the rows
  *
+ * #227 adds instant-commit safety on top of the same receipt machinery:
+ *
+ *   (g) the create-success toast carries an Undo action that soft-deletes
+ *       the created item (DELETE /api/items/_d_/<id> — the recycle-bin
+ *       path) and flips THAT receipt to its terminal `undone` state:
+ *       struck-through row, no Retry, no label actions
+ *   (h) Undo is single-shot — a second invoke is a no-op (no second DELETE)
+ *   (i) each toast's Undo closes over its own receipt: undoing receipt A
+ *       while receipt B is still pending touches only A
+ *
  * Mocking follows capture.kill-switch.test.tsx: camera-dependent children are
  * stubbed, the page and its network calls are real, and the create endpoint is
  * a deferred promise the test body resolves by hand.
@@ -163,7 +173,11 @@ test('(b) the receipt appears as pending and patches to saved with the real id o
   await waitFor(() => expect(screen.getByText(/TLY-I-abc123/)).toBeTruthy());
   expect(screen.queryByText(/saving/i)).toBeNull();
   expect(screen.getByRole('button', { name: /^queue$/i })).toBeTruthy();
-  expect(vi.mocked(toast.success)).toHaveBeenCalledWith('Socket Set → Test Bin');
+  // #227: the success toast now carries the Undo action alongside the message.
+  expect(vi.mocked(toast.success)).toHaveBeenCalledWith(
+    'Socket Set → Test Bin',
+    expect.objectContaining({ action: expect.objectContaining({ label: 'Undo' }) }),
+  );
 });
 
 test('(c) a rejected create flips the receipt to failed and Retry re-fires the same payload', async () => {
@@ -283,6 +297,106 @@ test('(e) a failed photo upload marks the receipt and its retry re-uploads from 
   fireEvent.click(photoRetry);
   await waitFor(() => expect(callsTo(fetchMock, '/api/files/_y_/item/101/upload')).toHaveLength(2));
   await waitFor(() => expect(screen.queryByRole('button', { name: /photo failed · retry/i })).toBeNull());
+});
+
+/** The options object of the FIRST toast.success call whose message starts
+ *  with `name` — where the Undo action for that item's commit lives. */
+function undoActionFor(name: string) {
+  const call = vi.mocked(toast.success).mock.calls.find(
+    ([msg]) => typeof msg === 'string' && msg.startsWith(`${name} →`),
+  );
+  expect(call).toBeTruthy();
+  return (call![1] as unknown as { action: { label: string; onClick: () => void } }).action;
+}
+
+test('(g) the success toast\'s Undo soft-deletes the item and retires the receipt', async () => {
+  const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+    const url = typeof input === 'string' ? input : input.toString();
+    if (url.includes('/api/items/_y_/create')) {
+      return jsonResponse({ success: true, data: { item: CREATED_ITEM } });
+    }
+    return jsonResponse({ success: true, data: {} });
+  });
+  renderCapture(fetchMock);
+  await driveTypedCommit();
+  await waitFor(() => expect(screen.getByText(/TLY-I-abc123/)).toBeTruthy());
+
+  const action = undoActionFor('Socket Set');
+  expect(action.label).toBe('Undo');
+
+  action.onClick();
+
+  // The soft-delete fires against the id the toast's closure captured —
+  // this is the recycle-bin path, so the mis-filed item stays restorable.
+  await waitFor(() => expect(callsTo(fetchMock, '/api/items/_d_/101')).toHaveLength(1));
+  const [, init] = callsTo(fetchMock, '/api/items/_d_/101')[0];
+  expect((init as RequestInit).method).toBe('DELETE');
+
+  // Terminal receipt: the row stays (struck through) so the session list
+  // still accounts for the scan, but nothing on it can act any more.
+  await waitFor(() => expect(screen.getByText(/removed/i)).toBeTruthy());
+  expect(screen.getByText('Socket Set').className).toContain('line-through');
+  expect(screen.queryByText(/TLY-I-abc123/)).toBeNull();
+  expect(screen.queryByRole('button', { name: /^retry$/i })).toBeNull();
+  expect(screen.queryByRole('button', { name: /^queue$/i })).toBeNull();
+});
+
+test('(h) Undo is single-shot — a second invoke fires no second DELETE', async () => {
+  const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+    const url = typeof input === 'string' ? input : input.toString();
+    if (url.includes('/api/items/_y_/create')) {
+      return jsonResponse({ success: true, data: { item: CREATED_ITEM } });
+    }
+    return jsonResponse({ success: true, data: {} });
+  });
+  renderCapture(fetchMock);
+  await driveTypedCommit();
+  await waitFor(() => expect(screen.getByText(/TLY-I-abc123/)).toBeTruthy());
+
+  const action = undoActionFor('Socket Set');
+  // Sonner dismisses the toast on action click, but the second click can
+  // land in the same frame — the guard must be synchronous, not rendered.
+  action.onClick();
+  action.onClick();
+
+  await waitFor(() => expect(screen.getByText(/removed/i)).toBeTruthy());
+  expect(callsTo(fetchMock, '/api/items/_d_/')).toHaveLength(1);
+});
+
+test('(i) undoing receipt A while receipt B is still pending touches only A', async () => {
+  const gates = [deferred<Response>(), deferred<Response>()];
+  let createCalls = 0;
+  const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+    const url = typeof input === 'string' ? input : input.toString();
+    if (url.includes('/api/items/_y_/create')) {
+      const gate = gates[createCalls];
+      createCalls += 1;
+      return gate.promise;
+    }
+    return jsonResponse({ success: true, data: {} });
+  });
+  renderCapture(fetchMock);
+
+  await driveTypedCommit('Alpha Box');
+  await driveTypedCommit('Beta Box');
+  await waitFor(() => expect(callsTo(fetchMock, '/api/items/_y_/create')).toHaveLength(2));
+
+  // A (the older commit) saves; B's create is deliberately held open.
+  gates[0].resolve(jsonResponse({ success: true, data: { item: { id: 201, name: 'Alpha Box', qrCode: 'TLY-I-alpha1' } } }));
+  await waitFor(() => expect(screen.getByText(/TLY-I-alpha1/)).toBeTruthy());
+
+  undoActionFor('Alpha Box').onClick();
+
+  // A's DELETE fires with A's id; B's pending row is untouched by the patch.
+  await waitFor(() => expect(callsTo(fetchMock, '/api/items/_d_/201')).toHaveLength(1));
+  await waitFor(() => expect(screen.getByText(/removed/i)).toBeTruthy());
+  expect(screen.getByText(/saving/i)).toBeTruthy();
+  expect(screen.getByText('Beta Box').className).not.toContain('line-through');
+
+  // B still resolves to saved exactly as if no undo had happened next to it.
+  gates[1].resolve(jsonResponse({ success: true, data: { item: { id: 202, name: 'Beta Box', qrCode: 'TLY-I-beta22' } } }));
+  await waitFor(() => expect(screen.getByText(/TLY-I-beta22/)).toBeTruthy());
+  expect(callsTo(fetchMock, '/api/items/_d_/')).toHaveLength(1);
 });
 
 test('(f) receipts render newest first, and a state patch never reorders them', async () => {

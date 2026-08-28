@@ -5,6 +5,7 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { ColHead } from '@/components/ui/col-head';
 import { useLayoutMode } from '@/hooks/use-layout-mode';
+import { useKeyboardNav } from '@/hooks/use-keyboard-nav';
 import type { Property } from '@/types/inventory';
 import { ErrorState } from '@/components/ui/error-state';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -118,6 +119,13 @@ export function Home() {
   // one would leave the input box empty while results are still showing.
   const [searchInput, setSearchInput] = React.useState(() => searchParams.get('q') ?? '');
   const [searchQuery, setSearchQuery] = React.useState(() => searchParams.get('q') ?? '');
+  const searchInputRef = React.useRef<HTMLInputElement>(null);
+
+  // The results stand in front of the recent list rather than replacing it, so
+  // the exit is always the same gesture: empty the field, get the house back.
+  // Declared up here (not just once near the return) because the keyboard
+  // ring below needs it too.
+  const searching = searchQuery.length >= 1;
 
   // Filter state — also hydrated at mount. `tags` is comma-joined ids, and
   // `status` is only ever written when it isn't the 'all' default.
@@ -174,6 +182,33 @@ export function Home() {
     return () => clearTimeout(timer);
   }, [searchInput]);
 
+  /**
+   * The keyboard ring, over search RESULTS only — recents is a browsable grid
+   * of tiles/cards, not a worked list, so there is nothing here for j/k to
+   * walk until a search is actually running. `/` still works everywhere
+   * (`onSearch` is unconditional), matching search.tsx's own contract for it.
+   */
+  const resultIds = React.useMemo(() => (searchResults ?? []).map((r) => r.id), [searchResults]);
+  const [highlightedId, setHighlightedId] = React.useState<number | null>(null);
+  // A new query re-ranks (or replaces) the result set — a stale id surviving
+  // into it could highlight an unrelated row that happens to share an id.
+  React.useEffect(() => { setHighlightedId(null); }, [searchQuery]);
+  const moveHighlight = React.useCallback((delta: 1 | -1) => {
+    if (resultIds.length === 0) return;
+    const at = highlightedId == null ? -1 : resultIds.indexOf(highlightedId);
+    const next = at === -1
+      ? (delta === 1 ? 0 : resultIds.length - 1)
+      : Math.min(resultIds.length - 1, Math.max(0, at + delta));
+    setHighlightedId(resultIds[next]);
+  }, [resultIds, highlightedId]);
+  useKeyboardNav({
+    enabled: wide,
+    onSearch: () => searchInputRef.current?.focus(),
+    onMove: searching ? moveHighlight : undefined,
+    onOpen: searching ? () => { if (highlightedId != null) navigate(`/item/${highlightedId}`); } : undefined,
+    onEscape: searching ? () => setHighlightedId(null) : undefined,
+  });
+
   // Mirror the settled query and filters into the URL so Back restores this
   // screen's search instead of dumping the user on recents. `replace` keeps
   // keystrokes from flooding history — Back always leaves Home, never
@@ -227,16 +262,13 @@ export function Home() {
   const hasActiveFilters =
     selectedTagIds.length > 0 || selectedCondition !== null || selectedStatus !== 'all';
 
-  // The results stand in front of the recent list rather than replacing it, so
-  // the exit is always the same gesture: empty the field, get the house back.
-  const searching = searchQuery.length >= 1;
-
   return (
     <div className="flex flex-col gap-4">
       {/* Search */}
       <div className="relative animate-fade-up">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4.5 h-4.5 text-[var(--color-text-muted)]" />
         <Input
+          ref={searchInputRef}
           placeholder="Search items..."
           value={searchInput}
           onChange={(e) => setSearchInput(e.target.value)}
@@ -421,7 +453,15 @@ export function Home() {
           )}
 
           {searchResults?.map((item) => (
-            <ItemCard key={item.id} item={item} />
+            <div
+              key={item.id}
+              className={cn(
+                'rounded-[var(--radius-sm)] border-b border-[var(--color-rule)] last:border-b-0',
+                highlightedId === item.id && 'bg-[var(--color-elevated)] ring-1 ring-[var(--color-text)]',
+              )}
+            >
+              <ItemCard item={item} />
+            </div>
           ))}
         </section>
       ) : (

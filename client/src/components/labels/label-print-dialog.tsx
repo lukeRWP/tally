@@ -90,9 +90,16 @@ export function LabelPrintDialog({ entities, entityType, isOpen, onOpenChange, p
     createPrintJob.mutate(
       { entityType, entityIds: entities.map((e) => e.id), preset: preset as PrintablePreset, propertyId },
       {
-        onSuccess: (res) => toast(res.status === 'held'
-          ? `Queued — will print when you load the ${preset} roll`
-          : `Printing ${entities.length} label${entities.length === 1 ? '' : 's'}`),
+        // Close FIRST (#227): leaving the dialog open re-enabled this button
+        // under a still-visible success, and a second tap double-fired
+        // duplicate physical labels. Add-to-queue already closes; failure
+        // stays open so the retry costs nothing.
+        onSuccess: (res) => {
+          onOpenChange(false);
+          toast(res.status === 'held'
+            ? `Queued — will print when you load the ${preset} roll`
+            : `Printing ${entities.length} label${entities.length === 1 ? '' : 's'}`);
+        },
         onError: (err) => toast(err instanceof Error ? err.message : 'Failed to queue the print job'),
       },
     );
@@ -114,7 +121,8 @@ export function LabelPrintDialog({ entities, entityType, isOpen, onOpenChange, p
     if (entities.length === 0) return;
     generateLabels.mutate(
       { entityType, entityIds: entities.map((e) => e.id), preset },
-      { onSuccess: () => toast('PDF downloaded'),
+      // Same close-first contract as handlePrint's onSuccess (#227).
+      { onSuccess: () => { onOpenChange(false); toast('PDF downloaded'); },
         onError: (err) => toast(err instanceof Error ? err.message : 'Failed to generate labels') },
     );
   }

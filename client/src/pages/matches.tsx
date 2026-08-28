@@ -13,6 +13,7 @@ import { toast } from '@/components/ui/toast';
 import { ApiError } from '@/lib/api';
 import { useProperties } from '@/hooks/use-inventory';
 import { useLayoutMode } from '@/hooks/use-layout-mode';
+import { useKeyboardNav } from '@/hooks/use-keyboard-nav';
 import { cn, safeExternalUrl } from '@/lib/utils';
 import {
   useMatches, useResolveMatch,
@@ -26,6 +27,30 @@ import {
  * background search. This is the desk surface where that search gets turned
  * into a real catalog product — one item at a time, candidates side by side.
  */
+
+/**
+ * Where the panel should land after a row resolves or gets dismissed (#228).
+ *
+ * "Pending" in the task brief means `ready` here — resolve/dismiss can only
+ * ever fire against a `ready` row (that's the only status whose panel renders
+ * "Use this" / "None of these"; queued/searching have no action yet and
+ * none/failed only link out). Scans forward from the just-acted-on row's
+ * current position in `rows`, wraps once, and always excludes that row's own
+ * id — it may still be sitting in `rows` marked `ready` at the moment this
+ * runs (the invalidation-driven refetch hasn't landed yet), and selecting it
+ * again would reopen the panel we just cleared.
+ */
+export function nextPendingAfter(rows: ProductMatch[], id: number): number | null {
+  const n = rows.length;
+  if (n === 0) return null;
+  const idx = rows.findIndex((r) => r.id === id);
+  const start = idx === -1 ? 0 : idx + 1;
+  for (let offset = 0; offset < n; offset++) {
+    const row = rows[(start + offset) % n];
+    if (row.id !== id && row.status === 'ready') return row.id;
+  }
+  return null;
+}
 
 function StatusBadge({ status, count }: { status: MatchStatus; count: number }) {
   switch (status) {
@@ -194,11 +219,77 @@ export function MatchesPage() {
   const rows = matches ?? [];
   const current = rows.find((m) => m.id === selectedId) ?? null;
 
+  // handlePick/handleDismiss's onSuccess callbacks fire asynchronously, and
+  // the list polls every 5s while anything is queued/searching — a refetch
+  // can land between the click and the mutation settling. nextPendingAfter
+  // needs `rows` as they stand AT SUCCESS TIME, not the array closed over
+  // when the handler was defined, so it reads this ref instead of `rows`.
+  const rowsRef = React.useRef(rows);
+  React.useEffect(() => { rowsRef.current = rows; }, [rows]);
+
+  /**
+   * The keyboard ring, over ALL rows in visible order — not just `ready` ones,
+   * so j/k can survey a whole backlog including the stuck rows a click would
+   * otherwise be the only way to reach.
+   *
+   * Unlike search.tsx/areas.tsx (where moving the ring IS selecting), Enter is
+   * a separate, deliberate step here: opening a row's panel can trigger a
+   * resolve, so browsing past several rows with j/k must not fire it along
+   * the way. The cursor is tracked BY ID (like home.tsx's ring), not by index
+   * — an index synced off `ids` identity would snap back to the selected row
+   * every time the 5s poll refetches (any status flip anywhere gives `rows` a
+   * new array identity even when its CONTENT is unchanged), silently undoing
+   * a mid-browse cursor. Sync effect #1 below fires only when `selectedId`
+   * itself changes (Enter, a click, or auto-advance after a resolve/dismiss)
+   * — that is what hands the cursor off to `selectedId` as the single source
+   * of truth the moment a selection exists, for free. Sync effect #2 handles
+   * the one case an id-based cursor still needs reconciling: the highlighted
+   * ROW ITSELF disappearing (resolved, dismissed, or removed elsewhere) —
+   * falling back to the still-selected row if any, else the first remaining
+   * row, else nothing. That also closes the "ghost ring after the last
+   * resolve" case: selecting `null` clears the cursor's fallback target, and
+   * the next poll that drops the resolved row from `ids` reconciles the rest.
+   */
+  const ids = React.useMemo(() => rows.map((m) => m.id), [rows]);
+  const [highlightedId, setHighlightedId] = React.useState<number | null>(null);
+
+  // #1 — hand off to selectedId, and ONLY on a real selection change.
+  React.useEffect(() => {
+    if (selectedId != null) setHighlightedId(selectedId);
+  }, [selectedId]);
+
+  // #2 — reconcile only when the highlighted row itself is gone; a poll that
+  // leaves it in place (even under a brand new `ids` array reference) must
+  // not touch the cursor at all.
+  React.useEffect(() => {
+    if (highlightedId == null || ids.includes(highlightedId)) return;
+    setHighlightedId(selectedId ?? (ids.length > 0 ? ids[0] : null));
+  }, [ids, highlightedId, selectedId]);
+
+  const moveHighlight = React.useCallback((delta: 1 | -1) => {
+    if (ids.length === 0) return;
+    const at = highlightedId == null ? -1 : ids.indexOf(highlightedId);
+    const next = at === -1
+      ? (delta === 1 ? 0 : ids.length - 1)
+      : Math.min(ids.length - 1, Math.max(0, at + delta));
+    setHighlightedId(ids[next]);
+  }, [ids, highlightedId]);
+  useKeyboardNav({
+    enabled: split,
+    onMove: moveHighlight,
+    onOpen: () => { if (highlightedId != null) select(highlightedId); },
+    onEscape: () => { select(null); setHighlightedId(null); },
+  });
+
+  const [bulkClearing, setBulkClearing] = React.useState<{ i: number; n: number } | null>(null);
+  const failedRows = rows.filter((r) => r.status === 'none' || r.status === 'failed');
+
   function handlePick(index: number) {
     if (!current) return;
-    resolve.mutate({ id: current.id, candidateIndex: index }, {
+    const id = current.id;
+    resolve.mutate({ id, candidateIndex: index }, {
       onSuccess: (res) => {
-        select(null);
+        select(nextPendingAfter(rowsRef.current, id));
         if (res?.duplicates?.length) {
           toast(`Linked — you may already have one in ${res.duplicates[0].containerName}`);
         } else {
@@ -210,6 +301,8 @@ export function MatchesPage() {
         // already invalidated the list, so clearing the selection here just
         // moves the panel back to empty in step with the row disappearing,
         // instead of leaving a still-clickable panel for a row that's gone.
+        // A 409 means the row went stale, not that work continues, so this
+        // stays select(null) rather than auto-advancing over a phantom index.
         if (err instanceof ApiError && err.status === 409) select(null);
         toast(err instanceof Error ? err.message : 'Could not resolve that match');
       },
@@ -218,13 +311,39 @@ export function MatchesPage() {
 
   function handleDismiss() {
     if (!current) return;
-    resolve.mutate({ id: current.id, dismiss: true }, {
-      onSuccess: () => { select(null); toast('Dismissed'); },
+    const id = current.id;
+    resolve.mutate({ id, dismiss: true }, {
+      onSuccess: () => { select(nextPendingAfter(rowsRef.current, id)); toast('Dismissed'); },
       onError: (err) => {
         if (err instanceof ApiError && err.status === 409) select(null);
         toast(err instanceof Error ? err.message : 'Could not dismiss that match');
       },
     });
+  }
+
+  // Sequential, not Promise.all — these share the same underlying dismiss
+  // endpoint the single-row flow uses, and firing them concurrently would
+  // just be N races against the same list invalidation. One outcome toast;
+  // a mid-loop failure stops rather than plowing through the rest blind.
+  async function handleBulkClear() {
+    const targets = failedRows;
+    const n = targets.length;
+    if (n === 0 || bulkClearing) return;
+    setBulkClearing({ i: 0, n });
+    let cleared = 0;
+    for (const row of targets) {
+      try {
+        await resolve.mutateAsync({ id: row.id, dismiss: true });
+        cleared += 1;
+        setBulkClearing({ i: cleared, n });
+      } catch {
+        setBulkClearing(null);
+        toast(`Cleared ${cleared} of ${n}`);
+        return;
+      }
+    }
+    setBulkClearing(null);
+    toast(`Cleared ${n}`);
   }
 
   const loading = isLoading || !propertyId;
@@ -237,7 +356,13 @@ export function MatchesPage() {
           key={m.id}
           className={cn(
             'rounded-[var(--radius-sm)]',
-            split && selectedId === m.id && 'bg-[var(--color-elevated)] ring-1 ring-[var(--color-text)]',
+            // A quiet, persistent marker for the row that's OPEN (its panel is
+            // on the right, resolve buttons live) — independent of the ring,
+            // so browsing away with j/k never makes the open row invisible.
+            split && selectedId === m.id && 'bg-[var(--color-elevated)]',
+            // The cursor itself — always shown, coincides with the marker
+            // above when the cursor sits on the selected row.
+            split && highlightedId === m.id && 'ring-1 ring-[var(--color-text)]',
           )}
         >
           <RuledRow
@@ -265,7 +390,14 @@ export function MatchesPage() {
 
   return (
     <div className="flex flex-col gap-4">
-      <h1><TitleBar>Matches</TitleBar></h1>
+      <div className="flex items-center justify-between gap-2">
+        <h1><TitleBar>Matches</TitleBar></h1>
+        {failedRows.length > 0 && (
+          <Button variant="outline" size="sm" onClick={handleBulkClear} disabled={!!bulkClearing}>
+            {bulkClearing ? `Clearing… ${bulkClearing.i} of ${bulkClearing.n}` : `Clear ${failedRows.length} failed`}
+          </Button>
+        )}
+      </div>
 
       {loading && (
         <div className="flex flex-col gap-2">

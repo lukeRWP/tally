@@ -29,6 +29,7 @@ import { usePrintQueueStore } from '@/store/print-queue-store';
 import { useCarryStore } from '@/store/carry-store';
 import { cn } from '@/lib/utils';
 import { useLayoutMode } from '@/hooks/use-layout-mode';
+import { useKeyboardNav } from '@/hooks/use-keyboard-nav';
 
 export function ContainerDetail() {
   // Above every early return — hooks must run on each render.
@@ -63,6 +64,47 @@ export function ContainerDetail() {
   const deleteContainer = useDeleteContainer();
   const pickUp = useCarryStore((s) => s.pickUp);
   const carried = useCarryStore((s) => s.carried);
+
+  /**
+   * The ring j/k walks: nested bins THEN item rows, exactly as rendered below.
+   * Deriving this straight from the same arrays the JSX maps over means it
+   * can never drift from what is actually on screen.
+   */
+  const visibleOrder = React.useMemo(() => [
+    ...(children ?? []).map((c) => ({ type: 'container' as const, id: c.id })),
+    ...(items ?? []).map((i) => ({ type: 'item' as const, id: i.id })),
+  ], [children, items]);
+
+  const [highlightIdx, setHighlightIdx] = useState(-1);
+
+  // Navigating bin -> bin keeps the component mounted (same as the select-mode
+  // reset above) — without this a row index from the PREVIOUS bin would still
+  // point at something here, just not the thing the user was looking at.
+  useEffect(() => { setHighlightIdx(-1); }, [id]);
+
+  const moveHighlight = React.useCallback((delta: 1 | -1) => {
+    if (visibleOrder.length === 0) return;
+    setHighlightIdx((at) => (at === -1
+      ? (delta === 1 ? 0 : visibleOrder.length - 1)
+      : Math.min(visibleOrder.length - 1, Math.max(0, at + delta))));
+  }, [visibleOrder.length]);
+
+  const highlighted = highlightIdx >= 0 && highlightIdx < visibleOrder.length
+    ? visibleOrder[highlightIdx]
+    : null;
+
+  useKeyboardNav({
+    // Off while the batch-select checkboxes are up — Enter jumping to a whole
+    // other page would fight the "pick several, then act" flow that mode is
+    // for, and off entirely on touch chrome, where there is no keyboard.
+    enabled: wide && !selecting,
+    onMove: moveHighlight,
+    onOpen: () => {
+      if (!highlighted) return;
+      navigate(highlighted.type === 'container' ? `/container/${highlighted.id}` : `/item/${highlighted.id}`);
+    },
+    onEscape: () => setHighlightIdx(-1),
+  });
 
   // A background refetch (30s staleTime + refetch-on-focus) can remove rows
   // out from under an open selection — prune ghosts so the "N selected"
@@ -401,13 +443,21 @@ export function ContainerDetail() {
             reason you opened the page — worth seeing more of at once. */}
         <div className={cn(wide && 'grid grid-cols-2 gap-x-6')}>
         {children?.map((child) => (
-          <ContainerCard
+          <div
             key={child.id}
-            container={child}
-            selectable={selecting}
-            selected={selected.has(`container:${child.id}`)}
-            onToggle={(shift) => toggleSelected(`container:${child.id}`, shift)}
-          />
+            className={cn(
+              'rounded-[var(--radius-sm)] border-b border-[var(--color-rule)] last:border-b-0',
+              highlighted?.type === 'container' && highlighted.id === child.id
+                && 'bg-[var(--color-elevated)] ring-1 ring-[var(--color-text)]',
+            )}
+          >
+            <ContainerCard
+              container={child}
+              selectable={selecting}
+              selected={selected.has(`container:${child.id}`)}
+              onToggle={(shift) => toggleSelected(`container:${child.id}`, shift)}
+            />
+          </div>
         ))}
         </div>
       </section>
@@ -426,13 +476,21 @@ export function ContainerDetail() {
 
         <div className={cn(wide && 'grid grid-cols-2 gap-x-6')}>
         {items?.map((item) => (
-          <ItemCard
+          <div
             key={item.id}
-            item={item}
-            selectable={selecting}
-            selected={selected.has(`item:${item.id}`)}
-            onToggle={(shift) => toggleSelected(`item:${item.id}`, shift)}
-          />
+            className={cn(
+              'rounded-[var(--radius-sm)] border-b border-[var(--color-rule)] last:border-b-0',
+              highlighted?.type === 'item' && highlighted.id === item.id
+                && 'bg-[var(--color-elevated)] ring-1 ring-[var(--color-text)]',
+            )}
+          >
+            <ItemCard
+              item={item}
+              selectable={selecting}
+              selected={selected.has(`item:${item.id}`)}
+              onToggle={(shift) => toggleSelected(`item:${item.id}`, shift)}
+            />
+          </div>
         ))}
         </div>
       </section>

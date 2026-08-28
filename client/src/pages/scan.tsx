@@ -10,6 +10,7 @@ import { toast } from '@/components/ui/toast';
 import { extractTlyCode } from '@/lib/tly';
 import { cn } from '@/lib/utils';
 import { useLayoutMode } from '@/hooks/use-layout-mode';
+import { useCoarsePointer } from '@/hooks/use-coarse-pointer';
 
 /**
  * Scan a tag.
@@ -29,11 +30,20 @@ import { useLayoutMode } from '@/hooks/use-layout-mode';
 
 export function Scan() {
   const atDesk = useLayoutMode() === 'sidebar';
+  const coarse = useCoarsePointer();
+  // Scanner where a rear camera plausibly exists: phones, and tablets in
+  // landscape (sidebar chrome + coarse pointer — see use-coarse-pointer.ts
+  // for why camera-presence is NOT the test). Fine-pointer desks keep the
+  // typed-first flow with an opt-in camera below.
+  const showScanner = !atDesk || coarse;
   const [cameraOpen, setCameraOpen] = React.useState(false);
   const codeRef = React.useRef<HTMLInputElement>(null);
-  // The field is the desk's primary control, so it is ready for a typed code
-  // or a USB reader the moment the page opens.
-  React.useEffect(() => { if (atDesk) codeRef.current?.focus(); }, [atDesk]);
+  // The field is the FINE-POINTER desk's primary control, so it is ready for
+  // a typed code or a USB reader the moment the page opens. A coarse desk has
+  // the scanner as its primary control instead (showScanner above), so it is
+  // never autofocused there — popping the on-screen keyboard on open, on top
+  // of a viewfinder, is not a landing anyone wants.
+  React.useEffect(() => { if (atDesk && !coarse) codeRef.current?.focus(); }, [atDesk, coarse]);
   const navigate = useNavigate();
   const [typed, setTyped] = useState('');
 
@@ -49,7 +59,7 @@ export function Scan() {
   }, [navigate]);
 
   /*
-   * At a desk the camera is the exception, not the default.
+   * At a FINE-POINTER desk the camera is the exception, not the default.
    *
    * Leading with the viewfinder there produced a 420px panel reading "Camera
    * access denied" in red with a Try Again button — an error presented as the
@@ -59,6 +69,11 @@ export function Scan() {
    * So the order inverts: type the code first, and the camera is available if
    * you actually have one to hold a label up to. A USB QR reader is a keyboard,
    * so it lands in the same field.
+   *
+   * A coarse-pointer desk (a landscape iPad) is a different device with a
+   * different answer — it plausibly has a rear camera, so it gets the same
+   * scanner-first flow as a phone (showScanner above), and this reasoning
+   * applies only to the mouse-and-keyboard desk left behind by that fork.
    */
   const codeForm = (
     <form
@@ -66,10 +81,10 @@ export function Scan() {
       onSubmit={(e) => { e.preventDefault(); if (typed.trim()) handleCode(typed); }}
     >
       <Input
-        ref={atDesk ? codeRef : undefined}
+        ref={atDesk && !coarse ? codeRef : undefined}
         value={typed}
         onChange={(e) => setTyped(e.target.value)}
-        placeholder={atDesk ? 'Type or scan a code (TLY-…)' : 'Or type the code (TLY-…)'}
+        placeholder={showScanner ? 'Or type the code (TLY-…)' : 'Type or scan a code (TLY-…)'}
         autoCapitalize="characters"
         spellCheck={false}
       />
@@ -84,7 +99,7 @@ export function Scan() {
     <div className={cn('flex flex-col gap-3 mx-auto h-full', atDesk ? 'w-full max-w-[640px]' : 'max-w-lg')}>
       <TitleBar className="w-fit shrink-0">Scan a tag</TitleBar>
 
-      {atDesk ? (
+      {!showScanner ? (
         <>
           {codeForm}
           <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-[var(--color-text-muted)] shrink-0">
@@ -102,7 +117,18 @@ export function Scan() {
         </>
       ) : (
         <>
-          <TagScanner onTag={handleCode} onClose={() => navigate(-1)} />
+          {/* html5-qrcode sizes its video by width only, so on a wide
+              landscape tablet the stream would otherwise take over the page —
+              the cap is tablet-only; the phone wrapper is unstyled. The base
+              classes (flex flex-col flex-1 min-h-0) are NOT decoration — this
+              wrapper is a flex item of the page column above, which needs
+              them at every level for TagScanner's own flex-1 to actually grow
+              (a classless-on-phone wrapper collapses it — see put-down.tsx /
+              capture.tsx for the ~200px regression this idiom exists to
+              avoid). The clamp binds on tablets only. */}
+          <div className={cn('flex flex-col flex-1 min-h-0', atDesk && coarse && 'max-h-[clamp(230px,36vh,280px)] overflow-hidden')}>
+            <TagScanner onTag={handleCode} onClose={() => navigate(-1)} />
+          </div>
 
           <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-[var(--color-text-muted)] text-center shrink-0">
             Takes you to whatever the label is on
