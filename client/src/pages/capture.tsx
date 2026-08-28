@@ -2,6 +2,7 @@ import * as React from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Camera, Check, X, Printer, Plus, MapPin, SkipForward, List, AlertTriangle, Search, ImagePlus, Sparkles, Keyboard, Loader2, Undo2 } from 'lucide-react';
 import { ProductScanner } from '@/components/scanner/product-scanner';
+import { PhotoCamera } from '@/components/scanner/photo-camera';
 import { TagScanner } from '@/components/scanner/tag-scanner';
 import { ProductSearch } from '@/components/scanner/product-search';
 import { UrlExtractor } from '@/components/scanner/url-extractor';
@@ -283,6 +284,14 @@ export function Capture() {
    */
   const [destConfirmed, setDestConfirmed] = React.useState(false);
   const [phase, setPhase] = React.useState<Phase>('photo');
+  /**
+   * #226: step 1's embedded camera has bowed out — getUserMedia is missing,
+   * it rejected, or the user tapped "Use system camera" under a bad preview —
+   * so the photo phase renders the OS-input button instead. Per MOUNT, never
+   * reset: within one visit the answer won't change (and flip-flopping the
+   * camera would), while a fresh visit retries the embedded preview.
+   */
+  const [photoFallback, setPhotoFallback] = React.useState(false);
   const [picking, setPicking] = React.useState(false);
   // Step 2 without a usable barcode: search the catalogue or paste a link.
   const [identifying, setIdentifying] = React.useState(false);
@@ -1200,6 +1209,23 @@ export function Capture() {
       {/* ── step 1: the picture ─────────────────────────────────────────── */}
       {phase === 'photo' && (
         <div className="flex flex-col gap-2">
+          {/*
+            #226: the embedded live camera replaces the OS-input round trip —
+            an app-switch plus a per-shot confirm screen, hundreds of times a
+            session — with an in-page shutter feeding the SAME acceptPhotoFile
+            entry point the input uses. The OS button below survives as the
+            fallback fork: no getUserMedia, a rejected acquire, or an explicit
+            "Use system camera" all land there via photoFallback. The !showForm
+            arm is structurally dead (this whole block renders only when
+            showForm is false) but kept parallel with every other showForm
+            predicate in the block — audited, not an oversight.
+          */}
+          {!showForm && !photoFallback ? (
+            <PhotoCamera
+              onCapture={(f) => void acceptPhotoFile(f)}
+              onFallback={() => setPhotoFallback(true)}
+            />
+          ) : (
           <button
             type="button"
             onClick={() => photoInput.current?.click()}
@@ -1235,6 +1261,7 @@ export function Capture() {
               </span>
             )}
           </button>
+          )}
           {/*
             When the form is showing, skipping is the ORDINARY path, not the
             escape hatch — most forms are reached with no camera and no photo to
