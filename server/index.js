@@ -1,5 +1,7 @@
 require('dotenv').config({ path: require('path').resolve(__dirname, '../.env') });
-require('express-async-errors');
+// Express 5 forwards rejected promises from middleware/handlers to the error
+// handler natively (v4→v5 migration guide, "Rejected promises"), so the
+// express-async-errors monkey-patch is gone.
 
 const config = require('./src/config');
 const express = require('express');
@@ -33,6 +35,16 @@ app.use(compression());
 
 app.use(express.json({ limit: '2mb' }));
 app.use(express.urlencoded({ extended: true, limit: '2mb' }));
+
+// Express 5 leaves req.body undefined when no parser matched (v4→v5 migration
+// guide, "req.body"), where v4 guaranteed {}. Routes and Joi validators here
+// were written against the {} contract (destructures like `const { url } =
+// req.body`), so a content-type-less POST would 500 on a TypeError instead of
+// 400 on validation. Restore the v4 contract in one place.
+app.use((req, res, next) => {
+  if (req.body === undefined) req.body = {};
+  next();
+});
 
 app.use(cookieParser(config.auth.cookieSecret));
 app.use(require('./src/middleware/csrf')());
@@ -146,7 +158,13 @@ app.use(errorHandler);
 
 // ── Start Server ────────────────────────────────────────────────────────────
 
-const server = app.listen(config.port, () => {
+// Express 5 passes listen errors (e.g. EADDRINUSE) to the callback instead of
+// throwing them (v4→v5 migration guide, "app.listen").
+const server = app.listen(config.port, (err) => {
+  if (err) {
+    logger.error(`Failed to start server on port ${config.port}`, { error: err.message });
+    process.exit(1);
+  }
   logger.info(`Tally server started on port ${config.port} [${config.nodeEnv}]`);
 });
 
