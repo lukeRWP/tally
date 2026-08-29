@@ -173,8 +173,18 @@ export function Home() {
     data: searchResults,
     isLoading: searchLoading,
     isError: searchError,
+    isPlaceholderData: searchIsPlaceholder,
     refetch: refetchSearch,
   } = useSearchItems(searchQuery, filters);
+  // #238: `useSearchItems` keeps the previous result set mounted (marked
+  // placeholder) while a new query settles, so the list's height — and the
+  // shared scroll container's position — never collapses out from under the
+  // user. That means `searchResults` can briefly be the OLD query's rows (or
+  // its empty list) while `searchQuery` already reads the NEW one — the
+  // empty-state message below names `searchQuery` directly, so showing it
+  // off placeholder data would tell the user "no items for X" about a query
+  // that hasn't actually been searched yet. Gated below on `!searchIsPlaceholder`.
+  const showSkeleton = searchLoading || (searchIsPlaceholder && (searchResults?.length ?? 0) === 0);
 
   // Debounce search
   React.useEffect(() => {
@@ -431,7 +441,7 @@ export function Home() {
             Results{searchResults ? ` · ${searchResults.length}` : ''}
           </ColHead>
 
-          {searchLoading && (
+          {showSkeleton && (
             <div className="flex flex-col gap-2 mt-2">
               {[1, 2, 3].map((i) => (
                 <Skeleton key={i} className="h-14 w-full" />
@@ -446,7 +456,7 @@ export function Home() {
             <ErrorState message="Couldn't run that search." onRetry={() => refetchSearch()} />
           )}
 
-          {!searchLoading && searchResults && searchResults.length === 0 && (
+          {!showSkeleton && !searchIsPlaceholder && searchResults && searchResults.length === 0 && (
             <div className="flex flex-col items-center gap-3 py-10 text-center">
               <p className="font-mono text-[11px] uppercase tracking-[0.1em] text-[var(--color-text-muted)]">
                 Nothing matched

@@ -199,6 +199,11 @@ export function RecycleBinList() {
   }
 
   function toggleSelected(batchId: number) {
+    // Inert while the restore loop runs (#239) — mirrors container-detail's
+    // toggleSelected: a mid-loop click would mutate `selected` only to have
+    // the loop's own end-of-run `setSelected(new Set(failed))` silently
+    // overwrite it moments later.
+    if (bulkRunning) return;
     setSelected((prev) => {
       const next = new Set(prev);
       if (next.has(batchId)) next.delete(batchId);
@@ -237,6 +242,14 @@ export function RecycleBinList() {
   }
 
   const bulkRunning = !!restoreProgress;
+
+  // Same gate as toggleSelected (#239) — the "All" button is already
+  // disabled while bulkRunning, but this keeps the function itself honest
+  // independent of that, matching container-detail.tsx's shape.
+  function handleSelectAll() {
+    if (bulkRunning) return;
+    setSelected(new Set(list.map((b) => b.id)));
+  }
 
   return (
     <div className="flex flex-col gap-3">
@@ -380,7 +393,7 @@ export function RecycleBinList() {
           <p className="font-mono text-xs uppercase tracking-[0.06em] text-[var(--color-text)] flex-1 min-w-0 truncate tabular-nums">
             {selected.size} selected
           </p>
-          <Button variant="ghost" size="sm" onClick={() => setSelected(new Set(list.map((b) => b.id)))} disabled={bulkRunning}>
+          <Button variant="ghost" size="sm" onClick={handleSelectAll} disabled={bulkRunning}>
             All
           </Button>
           <Button variant="outline" size="sm" onClick={exitSelectMode} disabled={bulkRunning}>

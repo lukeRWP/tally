@@ -186,6 +186,13 @@ export function ContainerDetail() {
   const anchor = React.useRef<string | null>(null);
 
   function toggleSelected(key: string, shift = false) {
+    // Inert while a bulk loop runs (#239): the checkboxes stay clickable (the
+    // cards below carry no disabled prop), but a click here would mutate
+    // `selected` mid-loop — a change the loop's own end-of-run
+    // `setSelected(new Set(failed))` then silently overwrites, so the click
+    // visibly "worked" for a moment and then vanished for no reason the user
+    // could see.
+    if (bulkRunning) return;
     setSelected((prev) => {
       const next = new Set(prev);
 
@@ -395,6 +402,10 @@ export function ContainerDetail() {
   }
 
   function handleSelectAll() {
+    // Same gate as toggleSelected (#239) — the "All" button is already
+    // disabled while bulkRunning, but this keeps the function itself honest
+    // independent of that, matching recycle-bin-list.tsx's shape.
+    if (bulkRunning) return;
     setSelected(
       new Set([
         ...(children ?? []).map((c) => `container:${c.id}`),

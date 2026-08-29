@@ -216,6 +216,78 @@ test('Move, Queue, Tag and Delete are all disabled with a progress label while t
   await waitFor(() => expect(toastMock).toHaveBeenCalledWith('Deleted 3'));
 });
 
+test('#239: row checkboxes are inert while the delete loop runs, so a mid-loop click cannot be stomped by the end-of-loop selection', async () => {
+  let resolveItem20: (v?: unknown) => void = () => {};
+  deleteItemMock.mockImplementation((id: number) => {
+    if (id === 20) return new Promise((res) => { resolveItem20 = res; });
+    return Promise.resolve({});
+  });
+
+  renderPage();
+  // Select only the two items, leaving the bin (Nested A) unselected and
+  // free to click mid-loop.
+  fireEvent.click(screen.getByRole('button', { name: 'Select' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Select Item A' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Select Item B' }));
+  expect(selected('Select Nested A')).toBe(false);
+
+  fireEvent.click(within(selectBar()).getByRole('button', { name: 'Delete' }));
+  const dialog = screen.getByRole('dialog');
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Delete' }));
+
+  // Item A (20) is stuck in flight — the loop is parked mid-run.
+  await screen.findByText('Deleting… 1 of 2');
+  expect(within(selectBar()).getByText('2 selected')).toBeTruthy();
+
+  // Pre-fix, this click would toggle Nested A into `selected` right away
+  // (checkbox mid-loop was never gated) — only to have the loop's own
+  // `setSelected(new Set(failed))` silently erase that click's effect the
+  // moment the loop finished. Post-fix, the click must be a no-op from the
+  // very first frame: it never mutates `selected` at all.
+  fireEvent.click(screen.getByRole('button', { name: 'Select Nested A' }));
+  expect(selected('Select Nested A')).toBe(false);
+  expect(within(selectBar()).getByText('2 selected')).toBeTruthy();
+
+  await act(async () => { resolveItem20(); });
+  await waitFor(() => expect(toastMock).toHaveBeenCalledWith('Deleted 2'));
+
+  // Both items succeeded (no failures) and the bin was never touched by the
+  // mid-loop click — final selection is empty, not { container:10 }.
+  expect(deleteContainerMock).not.toHaveBeenCalled();
+  expect(selected('Select Nested A')).toBe(false);
+  expect(selected('Select Item A')).toBe(false);
+  expect(selected('Select Item B')).toBe(false);
+});
+
+test('#239: "All" stays a no-op while the delete loop runs', async () => {
+  let resolveItem20: (v?: unknown) => void = () => {};
+  deleteItemMock.mockImplementation((id: number) => {
+    if (id === 20) return new Promise((res) => { resolveItem20 = res; });
+    return Promise.resolve({});
+  });
+
+  renderPage();
+  fireEvent.click(screen.getByRole('button', { name: 'Select' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Select Item A' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Select Item B' }));
+
+  fireEvent.click(within(selectBar()).getByRole('button', { name: 'Delete' }));
+  const dialog = screen.getByRole('dialog');
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Delete' }));
+  await screen.findByText('Deleting… 1 of 2');
+
+  // The button carries `disabled`, so a real click is already inert in the
+  // browser — this drives the handler directly to pin the invariant even if
+  // that prop were ever dropped.
+  const allBtn = within(selectBar()).getByRole('button', { name: 'All' }) as HTMLButtonElement;
+  expect(allBtn.disabled).toBe(true);
+  fireEvent.click(allBtn);
+  expect(within(selectBar()).getByText('2 selected')).toBeTruthy();
+
+  await act(async () => { resolveItem20(); });
+  await waitFor(() => expect(toastMock).toHaveBeenCalledWith('Deleted 2'));
+});
+
 test('Tag opens the picker in batch mode, applies additively to every selected item, and skips bins with a note', async () => {
   renderPage();
   enterSelectModeAndSelectAll(); // 1 bin + 2 items

@@ -87,7 +87,18 @@ export function SearchPage() {
    */
   const typedCode = extractTlyCode(query);
 
-  const { data: results, isLoading, isError, refetch } = useSearchItems(debounced, { status });
+  const { data: results, isLoading, isError, isPlaceholderData, refetch } = useSearchItems(debounced, { status });
+  // #238 — `useSearchItems` keeps the previous result set mounted (marked
+  // placeholder) while a new query/filter settles, so the list's height (and
+  // the shared scroll container's position, see use-scroll-restoration.ts)
+  // never collapses out from under the user. `results` can therefore briefly
+  // be the OLD query's rows — or its empty list — while `debounced`/`status`
+  // already read the NEW ones; the "Nothing matches" message below names
+  // `debounced` directly, so it must not fire off placeholder data. When the
+  // previous result set was itself empty there is nothing to preserve the
+  // height of, so that specific gap shows the loading skeleton instead of a
+  // blank pane.
+  const showSkeleton = isLoading || (isPlaceholderData && (results?.length ?? 0) === 0);
 
   /**
    * The chosen result, in the URL beside the query.
@@ -204,7 +215,7 @@ export function SearchPage() {
           <p className="text-sm text-[var(--color-text-muted)] text-center pt-10">
             Type a name — results show where each thing lives.
           </p>
-        ) : isLoading ? (
+        ) : showSkeleton ? (
           <div className="flex flex-col gap-2">
             <Skeleton className="h-14" />
             <Skeleton className="h-14" />
@@ -251,12 +262,18 @@ export function SearchPage() {
               ))}
             </>
           )
-        ) : (
+        ) : !isPlaceholderData ? (
+          // Reached with an empty (or absent) result set that is not loading
+          // and not an error. Structurally this can only happen once
+          // `isPlaceholderData` is false — the placeholder+empty case above
+          // is caught by `showSkeleton` — but the check is kept explicit so
+          // this message can never fire off stale data naming the wrong
+          // query (#238).
           <p className="text-sm text-[var(--color-text-muted)] text-center pt-10">
             Nothing matches “{debounced}”
             {status ? ' with that status — try All.' : '.'}
           </p>
-        )}
+        ) : null}
       </div>
     </div>
   );
