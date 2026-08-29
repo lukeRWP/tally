@@ -193,6 +193,8 @@ test('runNow writes ready with candidates on success', async () => {
   const final = writes[writes.length - 1];
   assert.match(final.sql, /STATUS = 'ready'/);
   assert.match(final.params[0], /DCD771C2/, 'candidates are stored as JSON');
+  assert.match(final.sql, /LAST_ERROR = NULL/,
+    "#210 round 2: a fresh completed run clears any stale LAST_ERROR (e.g. an old cap refusal)");
 });
 
 test('runNow writes none when the search finds nothing', async () => {
@@ -209,6 +211,8 @@ test('runNow writes none when the search finds nothing', async () => {
 
   await Matches.runNow(5);
   assert.match(writes[writes.length - 1].sql, /STATUS = 'none'/);
+  assert.match(writes[writes.length - 1].sql, /LAST_ERROR = NULL/,
+    "#210 round 2: a fresh completed run clears any stale LAST_ERROR (e.g. an old cap refusal)");
 });
 
 test('runNow never throws when the search does, and records the error', async () => {
@@ -323,6 +327,40 @@ test('runNow refuses to search once the daily cap is reached, and leaves the row
   assert.match(writes[0].sql, /LAST_ERROR = \?/, 'the cap message is still recorded for the worklist');
   assert.ok(writes[0].params.some((p) => /daily/i.test(String(p))),
     'LAST_ERROR names the cap so the worklist shows why, per IMPORTANT 4');
+});
+
+test('a row cap-refused once and then run successfully has its stale LAST_ERROR cleared (#210 round 2)', async () => {
+  // Reproduces the exact sequence the fix targets: a row gets cap-refused
+  // (LAST_ERROR records why), the cap window rolls over, and the SAME row
+  // later runs to completion. Without clearing LAST_ERROR on a fresh
+  // completed run, the worklist would keep showing "Daily product-match
+  // limit reached" on a row that just searched fine.
+  const writes = [];
+  let capped = true;
+  Matches.init({
+    db: fakeDb((sql, params) => {
+      if (/SELECT ID, SEARCH_QUERY/i.test(sql)) {
+        return [{ ID: 5, SEARCH_QUERY: '{"name":"X"}', CREATED_BY: 42 }];
+      }
+      if (/SUM\(SEARCH_COUNT\)/.test(sql)) return [{ N: capped ? 100 : 0 }];
+      writes.push({ sql, params });
+      return { affectedRows: 1 };
+    }),
+    logger, config,
+    searcher: async () => ({ candidates: [] }),
+  });
+
+  await Matches.runNow(5);   // capped: refusal write records LAST_ERROR
+  const refusal = writes[writes.length - 1];
+  assert.match(refusal.sql, /LAST_ERROR = \?/);
+  assert.ok(refusal.params.some((p) => /daily/i.test(String(p))));
+
+  capped = false;
+  await Matches.runNow(5);   // cap rolled over: this run completes fresh
+  const completion = writes[writes.length - 1];
+  assert.match(completion.sql, /STATUS = 'none'/);
+  assert.match(completion.sql, /LAST_ERROR = NULL/,
+    'the stale cap-refusal LAST_ERROR must not survive a later successful run');
 });
 
 test('runNow under the cap proceeds to search normally', async () => {
@@ -595,6 +633,42 @@ test('list() does not query the cap at all when there is no queued row to dispat
 
   await Matches.list(1, 42);
   assert.equal(countTodayCalled, false, 'nothing to dispatch means no reason to spend a cap query');
+});
+
+test('list() keys the cap check on each row\'s CREATED_BY, not the polling caller (#210 round 2)', async () => {
+  // Two members share this property's worklist. Creator 1 is at the daily
+  // cap; creator 2 is not. The polling caller (userId 42, neither creator)
+  // must not smear one creator's cap state onto the other's rows: only
+  // creator 2's row may be dispatched, and creator 1's row must stay queued
+  // with zero runNow calls against it.
+  Matches.init({
+    db: fakeDb((s, p) => {
+      if (/SUM\(SEARCH_COUNT\)/.test(s)) {
+        const creatorId = p[0];
+        return [{ N: creatorId === 1 ? 100 : 0 }];
+      }
+      if (/UPDATE/i.test(s)) return { affectedRows: 0 };            // the sweep
+      return [
+        { ID: 21, ITEM_ID: 1, STATUS: 'queued', CANDIDATES: null, LAST_ERROR: null,
+          ATTEMPTS: 0, CREATED_AT: new Date(), ITEM_NAME: 'A', CONTAINER_NAME: 'S', CREATED_BY: 1 },
+        { ID: 22, ITEM_ID: 2, STATUS: 'queued', CANDIDATES: null, LAST_ERROR: null,
+          ATTEMPTS: 0, CREATED_AT: new Date(), ITEM_NAME: 'B', CONTAINER_NAME: 'S', CREATED_BY: 2 },
+      ];
+    }),
+    logger, config,
+  });
+
+  const ran = [];
+  const original = Matches.runNow;
+  Matches.runNow = async (id) => { ran.push(id); };
+  try {
+    const result = await Matches.list(1, 42);
+    assert.deepEqual(ran, [22], 'only the uncapped creator (2) is dispatched');
+    assert.equal(result.find((r) => r.id === 21).status, 'queued',
+      "the capped creator's (1) row stays queued, never dispatched");
+  } finally {
+    Matches.runNow = original;
+  }
 });
 
 // Distinguishes the two products.BARCODE lookups resolve itself issues

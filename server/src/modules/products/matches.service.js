@@ -195,14 +195,19 @@ const MatchesService = {
       const { candidates } = await _search(input);
 
       if (candidates.length === 0) {
+        // LAST_ERROR is cleared here too (#210 round 2): a row that was once
+        // cap-refused carries that message in LAST_ERROR, and this is a
+        // FRESH completed run — leaving the old text in place would show
+        // "Daily product-match limit reached" on a row that just searched
+        // fine and simply found nothing.
         await _db.query(
-          `UPDATE TALLY.product_matches SET STATUS = 'none', CANDIDATES = NULL WHERE ID = ?`,
+          `UPDATE TALLY.product_matches SET STATUS = 'none', CANDIDATES = NULL, LAST_ERROR = NULL WHERE ID = ?`,
           [matchId]
         );
         return;
       }
       await _db.query(
-        `UPDATE TALLY.product_matches SET STATUS = 'ready', CANDIDATES = ? WHERE ID = ?`,
+        `UPDATE TALLY.product_matches SET STATUS = 'ready', CANDIDATES = ?, LAST_ERROR = NULL WHERE ID = ?`,
         [JSON.stringify(candidates), matchId]
       );
     } catch (err) {
@@ -281,7 +286,7 @@ const MatchesService = {
     await MatchesService.sweepStale(propertyId);
     const rows = await _db.query(
       `SELECT m.ID, m.ITEM_ID, m.STATUS, m.CANDIDATES, m.LAST_ERROR, m.ATTEMPTS, m.CREATED_AT,
-              i.NAME AS ITEM_NAME, c.NAME AS CONTAINER_NAME
+              m.CREATED_BY, i.NAME AS ITEM_NAME, c.NAME AS CONTAINER_NAME
          FROM TALLY.product_matches m
          JOIN TALLY.items i ON m.ITEM_ID = i.ID
          JOIN TALLY.containers c ON i.CONTAINER_ID = c.ID
@@ -306,32 +311,56 @@ const MatchesService = {
     // only one privacy-scoped query to keep correct.
     const candidates = rows.filter(
       (r) => r.STATUS === 'queued' && r.ATTEMPTS < _config.match.maxAttempts
-    );
+    ).slice(0, 5);
 
-    // #210: the daily cap is checked ONCE here, before dispatching the batch
-    // at all, rather than left for each individual runNow() call to hit and
-    // fail on. The bug this replaces: every poll of this worklist re-selected
-    // the same up-to-5 queued rows and fired runNow() on each, and runNow()
-    // marked a capped run 'failed' — terminal, no manual re-run in v1. Twenty
-    // queued rows behind an exhausted cap turned into five new 'failed' rows
-    // every 5s poll, and once a row was 'failed' it never got to search again
-    // even after the cap rolled over. Skipping the whole batch here instead
-    // leaves every row 'queued' — exactly where a temporary budget condition
-    // should leave them — so list()'s own trigger picks them back up the
-    // moment countToday() reports room again. This check is not transactional
-    // with the dispatch below (or with another list() call racing it), which
-    // is why runNow() still re-checks the cap itself immediately before
-    // spending a search — see the comment there for why that backstop can't
-    // be removed.
-    if (candidates.length > 0
-        && await MatchesService.countToday(userId) >= _config.match.dailyPerUser) {
-      _logger?.info('daily match cap reached, pausing queued batch', {
-        propertyId, userId, queuedCount: candidates.length,
-      });
-    } else {
-      candidates
-        .slice(0, 5)
-        .forEach((r) => { void MatchesService.runNow(r.ID); });
+    // #210: the daily cap is checked before dispatching the batch at all,
+    // rather than left for each individual runNow() call to hit and fail on.
+    // The bug this replaces: every poll of this worklist re-selected the same
+    // up-to-5 queued rows and fired runNow() on each, and runNow() marked a
+    // capped run 'failed' — terminal, no manual re-run in v1. Twenty queued
+    // rows behind an exhausted cap turned into five new 'failed' rows every
+    // 5s poll, and once a row was 'failed' it never got to search again even
+    // after the cap rolled over.
+    //
+    // #210 round 2: keyed by each row's CREATOR (r.CREATED_BY), matching
+    // countToday's own CREATED_BY-scoped count and runNow()'s per-row check —
+    // NOT by the polling caller (userId). product_matches rows on one
+    // property's worklist can belong to any member of that property, not
+    // just whoever is polling right now: keying on the caller alone either
+    // wrongly starves an uncapped co-member's rows because the caller happens
+    // to be capped, or — the sharper version — dispatches a capped creator's
+    // rows on every 5s poll because the polling caller still has budget,
+    // burning 3 DB queries per row per poll on refusals runNow() was always
+    // going to make until that creator's window rolls over.
+    //
+    // countToday() is memoized per distinct creator in the batch, so the
+    // common case (one property, one active user, every row's CREATED_BY ===
+    // userId) still costs exactly the single query this replaced. Skipping a
+    // capped creator's rows here leaves them 'queued' — exactly where a
+    // temporary budget condition should leave them — so list()'s own trigger
+    // picks them back up the moment countToday() reports room again. This
+    // check is not transactional with the dispatch below (or with another
+    // list() call racing it), which is why runNow() still re-checks the cap
+    // itself immediately before spending a search — see the comment there
+    // for why that backstop can't be removed.
+    const capByCreator = new Map();
+    const loggedCapped = new Set();
+    for (const r of candidates) {
+      const creatorId = r.CREATED_BY;
+      if (!capByCreator.has(creatorId)) {
+        capByCreator.set(creatorId,
+          (await MatchesService.countToday(creatorId)) >= _config.match.dailyPerUser);
+      }
+      if (capByCreator.get(creatorId)) {
+        if (!loggedCapped.has(creatorId)) {
+          loggedCapped.add(creatorId);
+          _logger?.info('daily match cap reached, pausing queued rows for creator', {
+            propertyId, creatorId,
+          });
+        }
+        continue; // stays 'queued' — not dispatched
+      }
+      void MatchesService.runNow(r.ID);
     }
 
     return rows.map((r) => ({
