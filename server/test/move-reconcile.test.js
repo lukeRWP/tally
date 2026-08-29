@@ -23,21 +23,24 @@ function fakeTx(routes) {
 test('movingSet for an item is just that item', async () => {
   const tx = fakeTx([]);
   const set = await Reconcile.movingSet(tx, 'item', 7);
-  assert.deepEqual(set, { containerIds: [], itemIds: [7] });
+  assert.deepEqual(set, { containerIds: [], itemIds: [7], deletedItemIds: [] });
   assert.equal(tx.calls.length, 0, 'no queries needed for a single item');
 });
 
-test('movingSet for a container walks the closure table and collects items', async () => {
+test('movingSet for a container walks the closure table and collects items, partitioning recycled travellers out of the live set', async () => {
   const tx = fakeTx([
     [/container_paths/, [{ DESCENDANT_ID: 3 }, { DESCENDANT_ID: 9 }, { DESCENDANT_ID: 12 }]],
-    [/FROM TALLY\.items/, [{ ID: 101 }, { ID: 102 }]],
+    [/FROM TALLY\.items/, [{ ID: 101 }, { ID: 102 }, { ID: 103, DELETED_AT: '2026-08-01 00:00:00' }]],
   ]);
   const set = await Reconcile.movingSet(tx, 'container', 3);
   assert.deepEqual(set.containerIds, [3, 9, 12], 'root included via closure DEPTH 0 row');
-  assert.deepEqual(set.itemIds, [101, 102]);
+  assert.deepEqual(set.itemIds, [101, 102], 'the LIVE set — counts/consequences/link-breakage read only this');
+  assert.deepEqual(set.deletedItemIds, [103],
+    'recycled items travel with the subtree, but only as deletedItemIds — never in the live set');
   const itemsQ = tx.calls.find((c) => /FROM TALLY\.items/.test(c.sql));
   assert.match(itemsQ.sql, /CONTAINER_ID IN/, 'items looked up across the whole subtree');
-  assert.match(itemsQ.sql, /DELETED_AT IS NULL/, 'recycled items do not travel');
+  assert.ok(!/DELETED_AT IS NULL/.test(itemsQ.sql),
+    'the lookup no longer drops recycled rows in SQL — they are partitioned, not ignored (#214)');
 });
 
 test('carrying tags matches by name case-insensitively and creates the rest', async () => {
@@ -169,6 +172,96 @@ test('two moving items linked to the same outside item report it ONCE, not twice
     'one row for the outside item, not one per link that broke');
 });
 
+// ── #214: soft-deleted travellers reconcile tags with the live treatment ────
+// A recycled item physically rides the moved subtree. Its entity_tags rows
+// must be remapped exactly like a live item's (find-or-create in the
+// destination, repoint the attachment) or a later restore resurrects an item
+// in property B wearing property-A tags — the state the tags routes forbid at
+// attach time. The REPORTED counts stay live-only: recycled items appear in
+// no consequence surface, so their carry (even a created tag) is silent.
+
+test('#214: a recycled traveller\'s tags are remapped like a live item\'s, but stay out of the reported counts', async () => {
+  const inserts = [];
+  const updates = [];
+  let attachedParams = null;
+  let nextTagId = 41;
+  const tx = fakeTx([
+    [/FROM TALLY\.tags t[\s\S]*entity_tags/, (sql, params) => {
+      attachedParams = params;
+      return [
+        { TAG_ID: 1, NAME: 'Fragile', ENTITY_TYPE: 'item', ENTITY_ID: 101 }, // live traveller
+        { TAG_ID: 7, NAME: 'Xmas',    ENTITY_TYPE: 'item', ENTITY_ID: 103 }, // RECYCLED traveller
+      ];
+    }],
+    [/FROM TALLY\.tags WHERE PROPERTY_ID/, []], // destination has neither tag
+    [/INSERT INTO TALLY\.tags/, (sql, params) => { inserts.push(params); return { insertId: nextTagId++ }; }],
+    [/UPDATE TALLY\.entity_tags/, (sql, params) => { updates.push(params); return { affectedRows: 1 }; }],
+    [/item_accessories/, []],
+  ]);
+
+  const out = await Reconcile.reconcile(tx,
+    { containerIds: [3], itemIds: [101], deletedItemIds: [103] },
+    { srcPropertyId: 1, destPropertyId: 2, userId: 42, rootType: 'container', rootId: 3, moveChanges: {} });
+
+  assert.ok(attachedParams.includes(103),
+    'the attachment read covers the recycled traveller — its rows are part of the remap');
+
+  assert.equal(inserts.length, 2, 'both missing names are created in the destination');
+  assert.ok(inserts.every((p) => p.includes(2)), 'created in the DESTINATION property');
+  const xmasDestId = 41 + inserts.findIndex((p) => p.includes('Xmas'));
+  const repointed = updates.find((p) => p[3] === 103);
+  assert.deepEqual(repointed, [xmasDestId, 7, 'item', 103],
+    'the recycled traveller\'s attachment row is repointed to the destination tag — the live treatment');
+
+  assert.equal(out.tagsCarried, 1, 'reported carry counts the LIVE attachment only (Fragile)');
+  assert.equal(out.tagsCreated, 1,
+    'Xmas (recycled-only) was created for the remap but reconciles silently — the visible number matches the preview');
+});
+
+// ── #214 sibling (cosmetic): recycled items never render in the sheet ───────
+// The link to a recycled staying-end still BREAKS — leaving it would strand a
+// cross-property accessory link for a later restore to reactivate — but its
+// name never renders as a consequence, and a move whose only breakage points
+// at recycled items no longer demands a confirm.
+
+test('#214: a recycled staying-end is out of the consequence sheet, but its half-out link still breaks', async () => {
+  const deletes = [];
+  const routes = [
+    [/FROM TALLY\.tags t[\s\S]*entity_tags/, []],
+    [/SELECT.*FROM TALLY\.item_accessories/, [
+      { ID: 901, ITEM_ID: 101, ACCESSORY_ID: 555 },   // 555 stays and is RECYCLED
+      { ID: 902, ITEM_ID: 102, ACCESSORY_ID: 777 },   // 777 stays and is live
+    ]],
+    [/FROM TALLY\.items WHERE ID IN/, [
+      { ID: 555, NAME: 'Binned charger', DELETED_AT: '2026-08-01 00:00:00' },
+      { ID: 777, NAME: 'Charger' },
+    ]],
+    [/DELETE FROM TALLY\.item_accessories/, (sql, params) => { deletes.push(params); return { affectedRows: 2 }; }],
+  ];
+
+  // No deletedItemIds field at all — older stub/caller shapes must keep working.
+  const out = await Reconcile.reconcile(fakeTx(routes),
+    { containerIds: [], itemIds: [101, 102] },
+    { srcPropertyId: 1, destPropertyId: 2, userId: 42, rootType: 'item', rootId: 101, moveChanges: {} });
+
+  assert.deepEqual(out.unlinked, [{ itemId: 777, name: 'Charger' }],
+    'only the LIVE staying-end renders — the recycled one never appears in the sheet');
+  assert.deepEqual(deletes[0].sort(), [901, 902],
+    'BOTH half-out links still break — the filter is cosmetic, not a change to breakage');
+
+  // And the preview agrees, so a recycled-only breakage no longer trips the 409 gate.
+  const preview = await Reconcile.previewConsequences(
+    fakeTx([
+      [/FROM TALLY\.tags t[\s\S]*entity_tags/, []],
+      [/SELECT.*FROM TALLY\.item_accessories/, [{ ID: 901, ITEM_ID: 101, ACCESSORY_ID: 555 }]],
+      [/FROM TALLY\.items WHERE ID IN/, [{ ID: 555, NAME: 'Binned charger', DELETED_AT: '2026-08-01 00:00:00' }]],
+    ]),
+    { containerIds: [], itemIds: [101, 102] }, 2);
+  assert.deepEqual(preview.unlinked, []);
+  assert.equal(Reconcile.needsConfirm(preview, false), false,
+    'no confirm demanded when the only broken links point at recycled items');
+});
+
 // ── Fix round 2: movingSet guards the items IN () query on an empty subtree ─
 
 test('movingSet returns an empty item set without querying IN () when the closure walk finds no containers', async () => {
@@ -179,7 +272,7 @@ test('movingSet returns an empty item set without querying IN () when the closur
     [/FROM TALLY\.items/, () => { throw new Error('items IN () must not be queried for an empty container set'); }],
   ]);
   const set = await Reconcile.movingSet(tx, 'container', 3);
-  assert.deepEqual(set, { containerIds: [], itemIds: [] });
+  assert.deepEqual(set, { containerIds: [], itemIds: [], deletedItemIds: [] });
 });
 
 // ── reconcile() is data-only — no audit rides the transaction ──────────────

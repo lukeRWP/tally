@@ -1,4 +1,5 @@
 const mysql = require('mysql2/promise');
+const logger = require('../utils/logger');
 
 const QUERY_TIMEOUT_MS = 30_000;
 const LONG_QUERY_TIMEOUT_MS = 5 * 60 * 1000;
@@ -6,10 +7,13 @@ const CONNECTION_CHECK_TIMEOUT_MS = 5_000;
 const POOL_SIZE = 20;
 const QUEUE_LIMIT = 100;
 
+// Transient errors where the statement may or may not have executed on the
+// server (connection torn down mid-flight). Retrying these is only safe for
+// reads — a retried INSERT/UPDATE can apply twice (#97).
 const TRANSIENT_ERRORS = new Set([
   'PROTOCOL_CONNECTION_LOST',
   'ECONNRESET',
-  'ER_LOCK_DEADLOCK',
+  'ETIMEDOUT',
 ]);
 
 function buildPoolConfig() {
@@ -59,6 +63,37 @@ function buildPoolConfig() {
 
 const pool = mysql.createPool(buildPoolConfig());
 
+// Session defaults, once per PHYSICAL connection instead of once per query
+// (#98). The core pool emits 'connection' exactly once, when a new physical
+// connection is established, synchronously before handing it to the waiting
+// caller — and the connection's command queue serialises, so this SET always
+// runs before the caller's first statement. The handler receives the core
+// (callback-style) connection.
+//
+// The default is the SHORT timeout. Anything that needs longer must raise it
+// for its own statement and put the short value back before the connection
+// returns to the pool (see executeQueryLong).
+pool.on('connection', (connection) => {
+  connection.query(`SET SESSION MAX_EXECUTION_TIME=${QUERY_TIMEOUT_MS}`, (err) => {
+    if (err) {
+      // An ordinary error response to the SET only reaches this per-command
+      // callback — it never surfaces as a connection-level 'error', so the
+      // pool would keep serving this connection with NO timeout at all.
+      // Destroy it instead (PoolConnection.destroy removes it from the pool);
+      // a persistent SET failure then shows up as connection churn + warns
+      // rather than a silently uncapped pool.
+      logger.warn(`[db] failed to set session timeout on new connection — destroying it: ${err.code || err.message}`);
+      connection.destroy();
+    }
+  });
+});
+
+function isDeadlockError(err) {
+  // MySQL guarantees the deadlocked statement's transaction was rolled back,
+  // so a single retry is always safe — even for writes (#97).
+  return err.code === 'ER_LOCK_DEADLOCK' || err.errno === 1213;
+}
+
 function isTransientError(err) {
   return (
     TRANSIENT_ERRORS.has(err.code) ||
@@ -66,12 +101,28 @@ function isTransientError(err) {
   );
 }
 
-async function executeQuery(sql, params, timeoutMs) {
+// Leading whitespace and SQL comments (/* */, -- , #) before the first keyword.
+const LEADING_SQL_NOISE = /^(?:\s+|\/\*[\s\S]*?\*\/|--[^\n]*(?:\n|$)|#[^\n]*(?:\n|$))+/;
+
+/**
+ * Mechanical read classification: the statement begins with SELECT after
+ * trimming whitespace/comments. Deliberately no per-call idempotency flags —
+ * anything not provably a read is treated as a write and never retried on a
+ * transient error.
+ */
+function isReadStatement(sql) {
+  const text = typeof sql === 'string' ? sql : (sql && sql.sql) || '';
+  return /^select\b/i.test(text.replace(LEADING_SQL_NOISE, ''));
+}
+
+function shouldRetry(err, sql) {
+  if (isDeadlockError(err)) return true;
+  return isTransientError(err) && isReadStatement(sql);
+}
+
+async function executeQuery(sql, params) {
   const conn = await pool.getConnection();
   try {
-    if (timeoutMs) {
-      await conn.query(`SET SESSION MAX_EXECUTION_TIME=${timeoutMs}`);
-    }
     const [rows] = await conn.query(sql, params);
     return rows;
   } finally {
@@ -79,27 +130,62 @@ async function executeQuery(sql, params, timeoutMs) {
   }
 }
 
-async function query(sql, params) {
+/**
+ * Long-timeout variant. Raises MAX_EXECUTION_TIME for this statement only and
+ * restores the pool-wide short default before releasing. If the restore cannot
+ * be confirmed (connection died, SET failed) the connection is DESTROYED, not
+ * released — a pooled connection must never carry the long timeout into an
+ * unrelated caller's query.
+ *
+ * (Chosen over the per-statement optimizer hint form because the hint must be
+ * spliced immediately after the top-level SELECT keyword of arbitrary SQL —
+ * fragile — while SET+restore-or-destroy is statement-shape-agnostic and
+ * structurally cannot leak.)
+ */
+async function executeQueryLong(sql, params) {
+  const conn = await pool.getConnection();
   try {
-    return await executeQuery(sql, params, QUERY_TIMEOUT_MS);
-  } catch (err) {
-    if (isTransientError(err)) {
-      // Single automatic retry for transient errors
-      return executeQuery(sql, params, QUERY_TIMEOUT_MS);
+    await conn.query(`SET SESSION MAX_EXECUTION_TIME=${LONG_QUERY_TIMEOUT_MS}`);
+    const [rows] = await conn.query(sql, params);
+    return rows;
+  } finally {
+    try {
+      await conn.query(`SET SESSION MAX_EXECUTION_TIME=${QUERY_TIMEOUT_MS}`);
+      conn.release();
+    } catch {
+      conn.destroy();
     }
-    throw err;
   }
 }
 
-async function queryLong(sql, params) {
+/**
+ * Single automatic retry (#97), narrowed:
+ *  - deadlock (ER_LOCK_DEADLOCK): always — MySQL rolled the statement back;
+ *  - other transient errors (connection lost/reset, ETIMEDOUT): reads only.
+ * A write hitting a transient error surfaces to the caller, whose error
+ * handling decides — the statement may already have applied.
+ *
+ * Applies ONLY to these pool-level helpers. `withTransaction` never retries.
+ */
+async function runWithRetry(exec, sql, params) {
   try {
-    return await executeQuery(sql, params, LONG_QUERY_TIMEOUT_MS);
+    return await exec(sql, params);
   } catch (err) {
-    if (isTransientError(err)) {
-      return executeQuery(sql, params, LONG_QUERY_TIMEOUT_MS);
-    }
-    throw err;
+    if (!shouldRetry(err, sql)) throw err;
+    const text = typeof sql === 'string' ? sql : (sql && sql.sql) || '';
+    logger.warn(
+      `[db] ${isDeadlockError(err) ? 'deadlock' : 'transient error'} (${err.code || err.errno}) — retrying once: ${text.slice(0, 80)}`
+    );
+    return exec(sql, params);
   }
+}
+
+async function query(sql, params) {
+  return runWithRetry(executeQuery, sql, params);
+}
+
+async function queryLong(sql, params) {
+  return runWithRetry(executeQueryLong, sql, params);
 }
 
 async function getConnection() {
@@ -115,10 +201,15 @@ async function getConnection() {
  * in the transaction. The transaction commits if `fn` resolves and rolls back
  * if it throws; the connection is always released.
  *
- * Note: transient-error auto-retry is intentionally NOT applied inside a
- * transaction — re-running a single statement against an aborted transaction
- * would be incorrect. Side effects that aren't transactional (e.g. MinIO
- * object removal) should be performed by the caller AFTER this resolves.
+ * Note: automatic retry is intentionally NOT applied inside a transaction —
+ * not even the deadlock retry, because ER_LOCK_DEADLOCK rolls back the WHOLE
+ * transaction, so re-running one statement of it would be incorrect. The
+ * error surfaces and the caller decides whether to re-run `fn` entirely.
+ * Side effects that aren't transactional (e.g. MinIO object removal) should
+ * be performed by the caller AFTER this resolves.
+ *
+ * The session timeout is the pool-wide per-connection default (#98) — no
+ * per-transaction SET round trip.
  *
  * @param {(tx: {query: Function, queryLong: Function}) => Promise<any>} fn
  * @returns {Promise<any>} whatever `fn` returns
@@ -131,7 +222,6 @@ async function withTransaction(fn) {
   };
   const tx = { query: run, queryLong: run };
   try {
-    await conn.query(`SET SESSION MAX_EXECUTION_TIME=${QUERY_TIMEOUT_MS}`);
     await conn.beginTransaction();
     const result = await fn(tx);
     await conn.commit();

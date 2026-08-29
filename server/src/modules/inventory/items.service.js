@@ -508,6 +508,25 @@ const ItemsService = {
       params.push(`%${query.trim()}%`);
       where.push(`et.TAG_ID IN (?)`);
       params.push(tagIds);
+      // ALL-of, not any-of: a filter chip set narrows results, it doesn't
+      // widen them (CLAUDE.md's tags section is explicit: "filter results to
+      // items that have all specified tags"). The join above stays scoped to
+      // the tag-name-search feature (`t.NAME LIKE ?`) and still explodes one
+      // row per tag, so it can't itself prove an item carries every requested
+      // tag — a self-contained correlated subquery does, the same derived-
+      // table-with-its-own-GROUP-BY shape reports.service.js uses for
+      // "latest condition snapshot", rather than a GROUP BY on this query's
+      // own SELECT (which pulls in columns from four other joined tables that
+      // aren't all provably functionally dependent on items.ID under
+      // ONLY_FULL_GROUP_BY).
+      where.push(`
+        i.ID IN (
+          SELECT et2.ENTITY_ID FROM TALLY.entity_tags et2
+          WHERE et2.ENTITY_TYPE = 'item' AND et2.TAG_ID IN (?)
+          GROUP BY et2.ENTITY_ID
+          HAVING COUNT(DISTINCT et2.TAG_ID) = ?
+        )`);
+      params.push(tagIds, tagIds.length);
     }
 
     if (condition) {

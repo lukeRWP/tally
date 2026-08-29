@@ -93,10 +93,45 @@ test('requireAgent looks the agent up BY HASH, never by plaintext', async () => 
   let nexted = false;
   await requireAgent({ db })(req, res, () => { nexted = true; });
 
-  assert.ok(nexted, 'a valid token calls next()');
+  assert.ok(nexted, 'a valid (owner-minted) token calls next()');
   assert.equal(boundParam, hashToken(token), 'the query binds the HASH');
   assert.notEqual(boundParam, token, 'the plaintext token is never sent to the db');
   assert.deepEqual(req.agent, { id: 7, propertyId: 3, loadedMedia: 'large', name: 'Garage Pi' });
+});
+
+test('requireAgent tethers the token to the minting user\'s LIVE owner membership (#122)', async () => {
+  // Hash-only validation let a token OUTLIVE its minter: revoke the member,
+  // and every agent they registered kept claiming jobs and pulling manifest
+  // PDFs. Pin the join that closes that.
+  let sql = '';
+  const db = { query: async (s) => {
+    sql = s;
+    return [{ ID: 7, PROPERTY_ID: 3, LOADED_MEDIA: 'large', NAME: 'Garage Pi' }];
+  } };
+  const res = fakeRes();
+  await requireAgent({ db })({ headers: { authorization: `Bearer ${generateToken()}` } }, res, () => {});
+
+  assert.match(sql, /JOIN TALLY\.property_members pm/i,
+    'validation must join the minting user\'s membership, not trust the hash alone');
+  assert.match(sql, /pm\.USER_ID = a\.CREATED_BY/i,
+    'the join keys on the agent\'s CREATED_BY — the user who minted the token');
+  assert.match(sql, /pm\.PROPERTY_ID = a\.PROPERTY_ID/i,
+    'the membership checked is for the agent\'s OWN property');
+  assert.match(sql, /pm\.ROLE = 'owner'/i,
+    'the minter must still hold the minting role — a demotion (or a pre-gate ' +
+    'grandfathered token from a non-owner) kills the token');
+});
+
+test('requireAgent 401s a token whose minter lost their membership', async () => {
+  // The minting user was removed from the property: the membership join finds
+  // no row, so the (still-hash-valid) token must be refused outright.
+  const db = { query: async () => [] };
+  const res = fakeRes();
+  let nexted = false;
+  await requireAgent({ db })(
+    { headers: { authorization: `Bearer ${generateToken()}` } }, res, () => { nexted = true; });
+  assert.equal(nexted, false, 'a revoked member\'s token must not authenticate');
+  assert.equal(res.statusCode, 401);
 });
 
 test('requireAgent rejects a missing, malformed, or unknown token with 401', async () => {
@@ -518,6 +553,20 @@ test('createAgent stores only a hash and returns the plaintext token once', asyn
   assert.ok(!insertParams.includes(out.token), 'the plaintext must never be stored');
 });
 
+test('createAgent records the minting user so the token is tethered to their membership (#122)', async () => {
+  let insertSql = '', insertParams = null;
+  PrintService.init({ db: fakeDb((sql, params) => {
+    if (/FROM TALLY\.property_members/i.test(sql)) return [{ PROPERTY_ID: 3 }];
+    if (/INSERT INTO TALLY\.printer_agents/i.test(sql)) { insertSql = sql; insertParams = params; return { insertId: 7 }; }
+    return [];
+  }), logger, config });
+
+  await PrintService.createAgent({ propertyId: 3, name: 'Garage Pi', userId: 42 });
+  assert.match(insertSql, /CREATED_BY/i, 'the insert must record who minted the token');
+  assert.ok(insertParams.includes(42),
+    'the minting userId is stored — requireAgent joins it to a live membership');
+});
+
 test('createAgent refuses a property the caller is not a member of', async () => {
   let inserted = false;
   PrintService.init({ db: fakeDb((sql) => {
@@ -773,6 +822,14 @@ test('requirePrintRole resolves the property per route shape and gates on role',
   // agent management is owner-only, resolved from the agent row
   assert.equal((await run('agent', {}, ['owner'], [{ ROLE: 'viewer' }])).status, 403, 'viewer cannot manage the printer');
   assert.equal((await run('agent', {}, ['owner'], [{ ROLE: 'owner' }])).nexted, true, 'owner can');
+
+  // minting an agent token (POST /agents) is owner-only, resolved from the body
+  assert.equal((await run('body', { body: { propertyId: 3 } }, ['owner'], [{ ROLE: 'viewer' }])).status, 403,
+    'a viewer must not mint an agent bearer token');
+  assert.equal((await run('body', { body: { propertyId: 3 } }, ['owner'], [{ ROLE: 'editor' }])).status, 403,
+    'nor may an editor — device management is owner-only');
+  assert.equal((await run('body', { body: { propertyId: 3 } }, ['owner'], [{ ROLE: 'owner' }])).nexted, true,
+    'the owner may register a printer');
 
   // job routes resolve the property from the job row
   assert.equal((await run('job', {}, ['owner', 'editor'], [{ ROLE: 'viewer' }])).status, 403);
