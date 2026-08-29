@@ -137,6 +137,31 @@ function selected(name: string): boolean {
   return screen.getByRole('button', { name, hidden: true }).getAttribute('aria-pressed') === 'true';
 }
 
+/**
+ * Reads the exact `onClick` React attached to a DOM node and calls it
+ * directly — the only way to reach a handler on a `<button disabled>`
+ * bypassing the *disabled attribute*, as any non-native activation path
+ * would (a keyboard AT, a different pointer device, a future control that
+ * isn't a plain `<button>`).
+ *
+ * `fireEvent.click`/`el.click()` cannot be used for this: React's own
+ * SimpleEventPlugin (`shouldPreventMouseEvent`) swallows onClick/onMouseDown/
+ * etc. whenever the ELEMENT'S OWN LAST-RENDERED `disabled` PROP was true —
+ * it reads that from the fiber, not the live DOM attribute, so even
+ * `button.removeAttribute('disabled')` right before dispatch changes
+ * nothing (verified: the click still never reaches the handler). Reading
+ * the prop straight off React's internal `__reactProps$*` key on the node
+ * is what actually reaches `handleSelectAll` unconditionally, so this can
+ * only pass when the handler's OWN `bulkRunning` guard is what stops it.
+ */
+function reactOnClick(el: HTMLElement): () => void {
+  const key = Object.keys(el).find((k) => k.startsWith('__reactProps$'));
+  if (!key) throw new Error('no React props found on element — is this really an RTL-rendered node?');
+  const onClick = (el as unknown as Record<string, { onClick?: () => void }>)[key].onClick;
+  if (!onClick) throw new Error('element has no onClick prop');
+  return onClick;
+}
+
 beforeEach(() => {
   vi.mocked(useLayoutMode).mockReturnValue('sidebar');
   navigateSpy.mockClear();
@@ -259,7 +284,7 @@ test('#239: row checkboxes are inert while the delete loop runs, so a mid-loop c
   expect(selected('Select Item B')).toBe(false);
 });
 
-test('#239: "All" stays a no-op while the delete loop runs', async () => {
+test('#239: "All" is inert at the handler level while the delete loop runs, not just via the disabled attribute', async () => {
   let resolveItem20: (v?: unknown) => void = () => {};
   deleteItemMock.mockImplementation((id: number) => {
     if (id === 20) return new Promise((res) => { resolveItem20 = res; });
@@ -276,13 +301,21 @@ test('#239: "All" stays a no-op while the delete loop runs', async () => {
   fireEvent.click(within(dialog).getByRole('button', { name: 'Delete' }));
   await screen.findByText('Deleting… 1 of 2');
 
-  // The button carries `disabled`, so a real click is already inert in the
-  // browser — this drives the handler directly to pin the invariant even if
-  // that prop were ever dropped.
   const allBtn = within(selectBar()).getByRole('button', { name: 'All' }) as HTMLButtonElement;
   expect(allBtn.disabled).toBe(true);
-  fireEvent.click(allBtn);
+
+  // A real click is already blocked by the disabled attribute alone — that
+  // would only pin React's own built-in disabled-swallow (it reads the
+  // fiber's last-rendered `disabled` prop, not the live DOM node — even
+  // `removeAttribute('disabled')` right before dispatch changes nothing),
+  // not this component's own guard. Calling the captured onClick directly
+  // reaches `handleSelectAll` exactly as a keyboard/programmatic activation
+  // path would, so this can only pass if the gate lives in the handler
+  // itself. Pre-fix, this call selected all three rows, including the bin
+  // (Nested A) that was never part of the running batch.
+  act(() => { reactOnClick(allBtn)(); });
   expect(within(selectBar()).getByText('2 selected')).toBeTruthy();
+  expect(selected('Select Nested A')).toBe(false);
 
   await act(async () => { resolveItem20(); });
   await waitFor(() => expect(toastMock).toHaveBeenCalledWith('Deleted 2'));
