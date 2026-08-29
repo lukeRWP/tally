@@ -27,6 +27,18 @@ class ClosureTableService {
   // Move a subtree: delete old ancestor paths, insert new ones.
   // Reads and writes all run through `executor` so a transactional caller
   // sees its own uncommitted changes.
+  //
+  // CONCURRENCY PRECONDITION (#252): Step 3 replays the IN-lists Steps 1/2
+  // materialized as a DELETE against CURRENT state, so this is only safe
+  // while both lists are frozen — the caller must hold FOR UPDATE locks on
+  // the mover's ENTIRE subtree (which pins the descendant list AND, because
+  // any move that could change this node's ancestors carries this node in
+  // its own locked subtree, the ancestor list too) for the duration of the
+  // transaction. containers.service.move() is the only caller and takes
+  // exactly that lock set in its statement-0 ascending-ID lock, re-verified
+  // post-lock. Without it, two overlapping-subtree moves with disjoint lock
+  // sets could each replay stale lists and Step 3 would delete closure rows
+  // the partner had just inserted — a silently lost ancestry edge.
   async moveNode(containerId, newParentContainerId, executor = this.db) {
     // Step 1: Get all descendants of the node being moved (including self)
     const descendants = await executor.query(
