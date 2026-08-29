@@ -267,6 +267,30 @@ test('L6: resolving the last actionable row never leaves a ghost ring — lands 
   expect(ringOn('Item 2')).toBe(true);
 });
 
+// ── #235: the cursor stays on screen ─────────────────────────────────────
+
+test('#235: a highlight move scrolls the row into view (block nearest) via its data-nav-id', () => {
+  // jsdom has no scrollIntoView — mock it onto the prototype so the shared
+  // useNavScrollIntoView mechanism has something to hit.
+  const scrollSpy = vi.fn();
+  Element.prototype.scrollIntoView = scrollSpy;
+  try {
+    renderMatches();
+
+    fireEvent.keyDown(window, { key: 'j' });
+    expect(scrollSpy).toHaveBeenCalledTimes(1);
+    expect(scrollSpy).toHaveBeenCalledWith({ block: 'nearest' });
+    // The element scrolled is the highlighted row's own wrapper.
+    expect(scrollSpy.mock.contexts[0]).toBe(rowWrapper('Item 1'));
+
+    fireEvent.keyDown(window, { key: 'j' });
+    expect(scrollSpy).toHaveBeenCalledTimes(2);
+    expect(scrollSpy.mock.contexts[1]).toBe(rowWrapper('Item 2'));
+  } finally {
+    delete (Element.prototype as unknown as { scrollIntoView?: unknown }).scrollIntoView;
+  }
+});
+
 test('L6 (no rows left): the cursor ends up null, not pointing at nothing', async () => {
   currentRows = [makeRow(1, 'ready')];
   const { rerender } = renderMatches(['/matches?sel=1']);

@@ -55,14 +55,17 @@ const items: Item[] = [
 
 // Mutable so the reconciliation test below can simulate a bulk delete (#231)
 // shrinking the list mid-visit — same pattern as matches.keyboard-nav.test.tsx.
+// currentChildren mirrors it so the #235 grid-order test can render enough
+// bins to fill more than one grid row.
 let currentItems: Item[] = items;
+let currentChildren: Container[] = children;
 
 vi.mock('@/hooks/use-inventory', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/hooks/use-inventory')>();
   return {
     ...actual,
     useContainer: () => ({ data: container, isLoading: false, isError: false, refetch: vi.fn() }),
-    useContainerChildren: () => ({ data: children, isLoading: false }),
+    useContainerChildren: () => ({ data: currentChildren, isLoading: false }),
     useItems: () => ({ data: currentItems, isLoading: false }),
     useCreateContainer: () => ({ mutateAsync: vi.fn(), isPending: false }),
     useCreateItem: () => ({ mutateAsync: vi.fn(), isPending: false }),
@@ -99,6 +102,7 @@ beforeEach(() => {
   vi.mocked(useLayoutMode).mockReturnValue('sidebar');
   navigateSpy.mockClear();
   currentItems = items;
+  currentChildren = children;
 });
 
 afterEach(() => {
@@ -178,6 +182,33 @@ test('the ring is off entirely on touch chrome', () => {
 
   fireEvent.keyDown(window, { key: 'j' });
   expect(ringOn('Nested A')).toBe(false);
+});
+
+// ── #235 item 4: grid linearity in the wide 2-col layout ─────────────────
+
+test('#235: j walks the wide grid in reading order — row-major, which is DOM order under default grid auto-flow', () => {
+  // Four bins fill two grid rows (grid-cols-2): rendered as A B / C D.
+  currentChildren = ['A', 'B', 'C', 'D'].map((letter, i) =>
+    makeContainer({ id: 10 + i, name: `Nested ${letter}` }));
+  renderPage();
+
+  // Reading order of a row-flow 2-col grid is exactly the DOM order the ring
+  // walks: left, right, next row — like text. The visual left-right "zigzag"
+  // IS that reading order; h/l column movement is deliberately out of scope.
+  for (const name of ['Nested A', 'Nested B', 'Nested C', 'Nested D', 'Item A', 'Item B']) {
+    fireEvent.keyDown(window, { key: 'j' });
+    expect(ringOn(name)).toBe(true);
+  }
+
+  // The equivalence only holds under the grid's DEFAULT auto-flow (row).
+  // jsdom does no layout, so pin the CSS fact directly: neither section may
+  // opt into column flow, which would stride the DOM-ordered ring across
+  // rows while the cards visually read down columns.
+  for (const rowText of ['Nested A', 'Item A']) {
+    const grid = screen.getByText(rowText).closest('button')!.parentElement!.parentElement!;
+    expect(grid.className).toContain('grid-cols-2');
+    expect(grid.className).not.toContain('grid-flow-col');
+  }
 });
 
 // ── Fix round 1 (#231 review, LOW) ──────────────────────────────────────

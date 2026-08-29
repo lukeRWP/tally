@@ -13,7 +13,7 @@ import { toast } from '@/components/ui/toast';
 import { ApiError } from '@/lib/api';
 import { useProperties } from '@/hooks/use-inventory';
 import { useLayoutMode } from '@/hooks/use-layout-mode';
-import { useKeyboardNav } from '@/hooks/use-keyboard-nav';
+import { useKeyboardNav, useNavScrollIntoView } from '@/hooks/use-keyboard-nav';
 import { cn, safeExternalUrl } from '@/lib/utils';
 import {
   useMatches, useResolveMatch,
@@ -277,9 +277,17 @@ export function MatchesPage() {
   useKeyboardNav({
     enabled: split,
     onMove: moveHighlight,
-    onOpen: () => { if (highlightedId != null) select(highlightedId); },
+    onOpen: () => {
+      if (highlightedId == null) return false;
+      select(highlightedId);
+      return true;
+    },
     onEscape: () => { select(null); setHighlightedId(null); },
   });
+  // Keeps the cursor on screen while browsing a long backlog (#235) — rows
+  // below carry the matching data-nav-id. A click-driven hand-off (sync #1)
+  // is a no-op here: block 'nearest' moves nothing already visible.
+  useNavScrollIntoView(highlightedId);
 
   const [bulkClearing, setBulkClearing] = React.useState<{ i: number; n: number } | null>(null);
   const failedRows = rows.filter((r) => r.status === 'none' || r.status === 'failed');
@@ -354,6 +362,7 @@ export function MatchesPage() {
       {rows.map((m) => (
         <div
           key={m.id}
+          data-nav-id={m.id}
           className={cn(
             'rounded-[var(--radius-sm)]',
             // A quiet, persistent marker for the row that's OPEN (its panel is

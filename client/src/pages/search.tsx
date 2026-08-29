@@ -10,7 +10,7 @@ import { useSearchItems } from '@/hooks/use-inventory';
 import { extractTlyCode } from '@/lib/tly';
 import { cn } from '@/lib/utils';
 import { useLayoutMode } from '@/hooks/use-layout-mode';
-import { useKeyboardNav } from '@/hooks/use-keyboard-nav';
+import { useKeyboardNav, useNavScrollIntoView } from '@/hooks/use-keyboard-nav';
 import { SplitView } from '@/components/layout/split-view';
 import { ItemPreview } from '@/components/inventory/item-preview';
 
@@ -117,11 +117,18 @@ export function SearchPage() {
       select(ids[next]);
     },
     onEscape: () => select(null),
-    onOpen: () => { if (selectedId != null) navigate(`/item/${selectedId}`); },
+    onOpen: () => {
+      if (selectedId == null) return false;
+      navigate(`/item/${selectedId}`);
+      return true;
+    },
     // '/' already lives in this page's own input, so refocusing it is the
     // useful thing rather than navigating to the page you are on.
     onSearch: () => inputRef.current?.focus(),
   });
+  // Keeps the cursor on screen past one screenful of results (#235) — rows
+  // below carry the matching data-nav-id.
+  useNavScrollIntoView(selectedId);
 
   return (
     <div className="flex flex-col min-h-full">
@@ -223,6 +230,7 @@ export function SearchPage() {
                   {results.map((item) => (
                     <div
                       key={item.id}
+                      data-nav-id={item.id}
                       className={cn(
                         'rounded-[var(--radius-sm)]',
                         selectedId === item.id && 'bg-[var(--color-elevated)] ring-1 ring-[var(--color-text)]',

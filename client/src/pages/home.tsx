@@ -5,7 +5,7 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { ColHead } from '@/components/ui/col-head';
 import { useLayoutMode } from '@/hooks/use-layout-mode';
-import { useKeyboardNav } from '@/hooks/use-keyboard-nav';
+import { useKeyboardNav, useNavScrollIntoView } from '@/hooks/use-keyboard-nav';
 import type { Property } from '@/types/inventory';
 import { ErrorState } from '@/components/ui/error-state';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -205,9 +205,18 @@ export function Home() {
     enabled: wide,
     onSearch: () => searchInputRef.current?.focus(),
     onMove: searching ? moveHighlight : undefined,
-    onOpen: searching ? () => { if (highlightedId != null) navigate(`/item/${highlightedId}`); } : undefined,
+    onOpen: searching
+      ? () => {
+        if (highlightedId == null) return false;
+        navigate(`/item/${highlightedId}`);
+        return true;
+      }
+      : undefined,
     onEscape: searching ? () => setHighlightedId(null) : undefined,
   });
+  // Keeps the cursor on screen past one screenful of results (#235) — the
+  // result rows below carry the matching data-nav-id.
+  useNavScrollIntoView(highlightedId);
 
   // Mirror the settled query and filters into the URL so Back restores this
   // screen's search instead of dumping the user on recents. `replace` keeps
@@ -455,6 +464,7 @@ export function Home() {
           {searchResults?.map((item) => (
             <div
               key={item.id}
+              data-nav-id={item.id}
               className={cn(
                 'rounded-[var(--radius-sm)] border-b border-[var(--color-rule)] last:border-b-0',
                 highlightedId === item.id && 'bg-[var(--color-elevated)] ring-1 ring-[var(--color-text)]',
