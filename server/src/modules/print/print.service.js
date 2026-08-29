@@ -294,11 +294,14 @@ const PrintService = {
     );
     if (member.length === 0) return { error: 'not_found' };
 
-    // Plaintext is handed back exactly once and never persisted.
+    // Plaintext is handed back exactly once and never persisted. CREATED_BY is
+    // the tether requireAgent validates against (#122): the token dies with
+    // this user's membership (or an ownership demotion), not with the heat
+    // death of the universe.
     const token = generateToken();
     const result = await _db.query(
-      'INSERT INTO TALLY.printer_agents (PROPERTY_ID, NAME, TOKEN_HASH) VALUES (?, ?, ?)',
-      [propertyId, name, hashToken(token)]
+      'INSERT INTO TALLY.printer_agents (PROPERTY_ID, NAME, TOKEN_HASH, CREATED_BY) VALUES (?, ?, ?, ?)',
+      [propertyId, name, hashToken(token), userId]
     );
     return { id: result.insertId, name, token };
   },

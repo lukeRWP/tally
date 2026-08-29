@@ -30,10 +30,23 @@ function requireAgent({ db }) {
     // A unique index on TOKEN_HASH makes this an equality seek. Comparing the
     // hash (not the token) in SQL is itself the constant-time-safe path: the
     // hash is a fixed-length digest and reveals nothing about the plaintext.
+    //
+    // The join tethers the token to the LIVE membership of the user who minted
+    // it (#122). Hash-only validation meant a token outlived its minter:
+    // revoking the member left every agent they registered fully working. Now
+    // the minting user must still be a member of the agent's property AND
+    // still hold the role agent registration requires (owner — the routes'
+    // OWNER gate). That second condition also retires tokens grandfathered in
+    // from before the role gates existed, when any member could mint one. The
+    // real Pi's token was owner-minted, so it passes this join untouched.
     const rows = await db.query(
-      `SELECT ID, PROPERTY_ID, LOADED_MEDIA, NAME
-         FROM TALLY.printer_agents
-        WHERE TOKEN_HASH = ?`,
+      `SELECT a.ID, a.PROPERTY_ID, a.LOADED_MEDIA, a.NAME
+         FROM TALLY.printer_agents a
+         JOIN TALLY.property_members pm
+           ON pm.PROPERTY_ID = a.PROPERTY_ID
+          AND pm.USER_ID = a.CREATED_BY
+        WHERE a.TOKEN_HASH = ?
+          AND pm.ROLE = 'owner'`,
       [hashToken(match[1])]
     );
     if (rows.length === 0) return error(res, 'Invalid agent token', 401);
