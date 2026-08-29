@@ -25,7 +25,7 @@ export function PropertyDetail() {
   const [createOpen, setCreateOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const { data: property, isLoading: propertyLoading, isError: propertyError, refetch: refetchProperty } = useProperty(id);
-  const { data: areas, isLoading: areasLoading } = useAreas(id);
+  const { data: areas, isLoading: areasLoading, isError: areasError, refetch: refetchAreas } = useAreas(id);
   const createArea = useCreateArea();
   const deleteProperty = useDeleteProperty();
 
@@ -112,7 +112,11 @@ export function PropertyDetail() {
 
         {areasLoading && <Skeleton className="h-14 w-full mt-2" />}
 
-        {areas && areas.length === 0 && (
+        {areasError && (
+          <ErrorState message="Couldn't load areas." onRetry={() => refetchAreas()} />
+        )}
+
+        {!areasLoading && !areasError && areas && areas.length === 0 && (
           <div className="flex flex-col items-center gap-3 py-8">
             <p className="font-mono text-[11px] uppercase tracking-[0.06em] text-[var(--color-text-muted)] text-center">
               No areas yet
