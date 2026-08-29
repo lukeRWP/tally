@@ -48,7 +48,8 @@ function notificationIcon(type: string) {
   }
 }
 
-function entityPath(entityType: string, entityId: number): string {
+function entityPath(notification: Notification): string {
+  const { entityType, entityId, itemId } = notification;
   switch (entityType) {
     case 'item':
       return `/item/${entityId}`;
@@ -58,6 +59,12 @@ function entityPath(entityType: string, entityId: number): string {
       return `/area/${entityId}`;
     case 'property':
       return `/property/${entityId}`;
+    case 'item_date':
+    case 'item_lending':
+      // entityId is the source date/lending row (kept for server dedup); the
+      // server projects the owning item as itemId at read time. Absent
+      // (deleted source row, old API) → fall back to Home like unknown types.
+      return itemId ? `/item/${itemId}` : '/';
     default:
       return '/';
   }
@@ -77,7 +84,7 @@ function NotificationRow({ notification }: { notification: Notification }) {
       // {state:{from:'alerts'}} is read by the shared Breadcrumbs component
       // on whichever detail page this lands on, so acting there renders a
       // way back to this list instead of stranding the user.
-      navigate(entityPath(notification.entityType, notification.entityId), { state: { from: 'alerts' } });
+      navigate(entityPath(notification), { state: { from: 'alerts' } });
     }
   }
 
