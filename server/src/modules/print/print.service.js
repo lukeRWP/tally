@@ -195,6 +195,17 @@ const PrintService = {
 
     await PrintService.sweepStaleClaims(agent.propertyId);
 
+    // The agent is asking "anything for me?" while its own telemetry says the
+    // printer cannot print (#125). Dealing it a job anyway just burns one of
+    // the job's 3 attempts per poll for nothing — the honest answer is nothing.
+    // Jobs stay 'queued' (the telemetry banner explains why they wait) and are
+    // dealt on the first claim after the printer recovers. Only an EXPLICIT
+    // 'stopped' withholds: the schema coerces junk telemetry to 'unknown',
+    // which — like idle/printing — claims normally, so telemetry still can
+    // never break a claim. The sweep above still runs so a claim abandoned by
+    // a dead agent process is not stranded while the printer is down.
+    if (telemetry.printerState === 'stopped') return null;
+
     // PROPERTY_ID and PRESET come from the agent row — never from the request,
     // so an agent cannot reach another property or pull a roll it hasn't loaded.
     const claimId = crypto.randomUUID();
@@ -247,24 +258,27 @@ const PrintService = {
 
   // claimId fences the ack to the specific claim it belongs to. A retried or
   // delayed ack could otherwise land on a LATER claim of the same job (same
-  // agent, also 'claimed') and wrongly mark an in-flight print done.
+  // agent, also 'claimed') and wrongly mark an in-flight print done. The fence
+  // is MANDATORY (#104): when it was optional, an ack that simply omitted
+  // claimId skipped the fence entirely and reopened exactly that hole. The
+  // schema already requires it on the route; refusing here as well keeps a
+  // direct caller from acking unfenced.
   async ackJob(jobId, agentId, ok, errorText, claimId) {
-    const fence = claimId ? ' AND CLAIM_ID = ?' : '';
-    const fenceParam = claimId ? [claimId] : [];
+    if (!claimId) return null;
     if (ok) {
       const result = await _db.query(
         `UPDATE TALLY.print_jobs
             SET STATUS = 'done', PRINTED_AT = NOW(), LAST_ERROR = NULL
-          WHERE ID = ? AND CLAIMED_BY = ? AND STATUS = 'claimed'${fence}`,
-        [jobId, agentId, ...fenceParam]
+          WHERE ID = ? AND CLAIMED_BY = ? AND STATUS = 'claimed' AND CLAIM_ID = ?`,
+        [jobId, agentId, claimId]
       );
       return result.affectedRows > 0 ? 'done' : null;
     }
 
     const rows = await _db.query(
       `SELECT ATTEMPTS FROM TALLY.print_jobs
-        WHERE ID = ? AND CLAIMED_BY = ? AND STATUS = 'claimed'${fence}`,
-      [jobId, agentId, ...fenceParam]
+        WHERE ID = ? AND CLAIMED_BY = ? AND STATUS = 'claimed' AND CLAIM_ID = ?`,
+      [jobId, agentId, claimId]
     );
     if (rows.length === 0) return null;
 
@@ -279,8 +293,8 @@ const PrintService = {
       `UPDATE TALLY.print_jobs
           SET STATUS = ?, ATTEMPTS = ?, LAST_ERROR = ?,
               CLAIM_ID = NULL, CLAIMED_BY = NULL, CLAIMED_AT = NULL
-        WHERE ID = ? AND CLAIMED_BY = ? AND STATUS = 'claimed'${fence}`,
-      [nextStatus, nextAttempts, errorText || null, jobId, agentId, ...fenceParam]
+        WHERE ID = ? AND CLAIMED_BY = ? AND STATUS = 'claimed' AND CLAIM_ID = ?`,
+      [nextStatus, nextAttempts, errorText || null, jobId, agentId, claimId]
     );
     return written.affectedRows > 0 ? nextStatus : null;
   },

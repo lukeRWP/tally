@@ -1,5 +1,6 @@
 const PDFDocument = require('pdfkit');
 const { createObjectCsvStringifier } = require('csv-writer');
+const { collectPdf } = require('../../utils/pdf');
 const storage = require('../../infrastructure/storage');
 
 let _db = null;
@@ -103,7 +104,7 @@ function _titleBar(doc, title) {
   doc.save().rect(M, y, W, h).fill(INK).restore();
   doc.fillColor('#FFFFFF').font('Helvetica-Bold').fontSize(13)
     .text(String(title).toUpperCase(), M + 8, y + 7,
-      { width: W - 16, characterSpacing: 1.1, lineBreak: false, ellipsis: true });
+      { width: W - 16, height: doc.currentLineHeight(), characterSpacing: 1.1, lineBreak: false, ellipsis: true });
   doc.fillColor(INK);
   doc.y = y + h;
 }
@@ -112,8 +113,8 @@ function _titleBar(doc, title) {
 function _metaLine(doc, left, right) {
   const y = doc.y + 5;
   doc.font('Courier').fontSize(7).fillColor(MUTED)
-    .text(String(left || '').toUpperCase(), M, y, { width: W * 0.66, lineBreak: false, ellipsis: true })
-    .text(String(right || '').toUpperCase(), M, y, { width: W, align: 'right', lineBreak: false });
+    .text(String(left || '').toUpperCase(), M, y, { width: W * 0.66, height: doc.currentLineHeight(), lineBreak: false, ellipsis: true })
+    .text(String(right || '').toUpperCase(), M, y, { width: W, height: doc.currentLineHeight(), align: 'right', lineBreak: false });
   const ruleY = y + 10;
   doc.save().moveTo(M, ruleY).lineTo(RIGHT, ruleY).lineWidth(1.5).strokeColor(INK).stroke().restore();
   doc.fillColor(INK);
@@ -135,9 +136,9 @@ function _band(doc, entries) {
     const x = M + i * cell + 7, w = cell - 11;
     doc.font('Courier').fontSize(5.6).fillColor('#B9BCC2')
       .text(String(e.k).toUpperCase(), x, y + 6,
-        { width: w, characterSpacing: 0.7, lineBreak: false, ellipsis: true });
+        { width: w, height: doc.currentLineHeight(), characterSpacing: 0.7, lineBreak: false, ellipsis: true });
     doc.font('Courier-Bold').fontSize(10.5).fillColor('#FFFFFF')
-      .text(String(e.v), x, y + 15, { width: w, lineBreak: false, ellipsis: true });
+      .text(String(e.v), x, y + 15, { width: w, height: doc.currentLineHeight(), lineBreak: false, ellipsis: true });
   });
   doc.fillColor(INK);
   doc.y = y + h;
@@ -149,7 +150,7 @@ function _colHeads(doc, cols) {
   doc.font('Courier').fontSize(5.8).fillColor(MUTED);
   for (const c of cols) {
     doc.text(String(c.label).toUpperCase(), c.x, y,
-      { width: c.w, align: c.align || 'left', characterSpacing: 0.7, lineBreak: false });
+      { width: c.w, height: doc.currentLineHeight(), align: c.align || 'left', characterSpacing: 0.7, lineBreak: false });
   }
   const ruleY = y + 8;
   doc.save().moveTo(M, ruleY).lineTo(RIGHT, ruleY).lineWidth(0.7).strokeColor(HAIR).stroke().restore();
@@ -195,7 +196,7 @@ function _pill(doc, text, x, y, { solid = false, size = 5.6 } = {}) {
   if (solid) doc.fill(INK); else doc.strokeColor(INK).stroke();
   doc.restore();
   doc.fillColor(solid ? '#FFFFFF' : INK)
-    .text(label, x + padX, y + 2.6, { width: w - padX * 2, lineBreak: false });
+    .text(label, x + padX, y + 2.6, { width: w - padX * 2, height: doc.currentLineHeight(), lineBreak: false });
   doc.fillColor(INK);
   return w;
 }
@@ -209,7 +210,7 @@ function _pill(doc, text, x, y, { solid = false, size = 5.6 } = {}) {
 function _num(doc, text, col, y, { bold = false, muted = false, size = 7 } = {}) {
   doc.font(bold ? 'Courier-Bold' : 'Courier').fontSize(size)
     .fillColor(muted ? MUTED : INK)
-    .text(String(text), col.x, y, { width: col.w, align: 'right', lineBreak: false });
+    .text(String(text), col.x, y, { width: col.w, height: doc.currentLineHeight(), align: 'right', lineBreak: false });
   doc.fillColor(INK);
 }
 
@@ -251,8 +252,8 @@ function _stampFooters(doc, note) {
     doc.save().moveTo(M, FOOTER_Y - 5).lineTo(RIGHT, FOOTER_Y - 5)
       .lineWidth(1).strokeColor(INK).stroke().restore();
     doc.font('Courier').fontSize(6).fillColor(MUTED)
-      .text(String(note || ''), M, FOOTER_Y, { width: W * 0.7, lineBreak: false, ellipsis: true })
-      .text(`PAGE ${i + 1} OF ${range.count}`, M, FOOTER_Y, { width: W, align: 'right', lineBreak: false });
+      .text(String(note || ''), M, FOOTER_Y, { width: W * 0.7, height: doc.currentLineHeight(), lineBreak: false, ellipsis: true })
+      .text(`PAGE ${i + 1} OF ${range.count}`, M, FOOTER_Y, { width: W, height: doc.currentLineHeight(), align: 'right', lineBreak: false });
   }
   doc.fillColor(INK);
 }
@@ -787,46 +788,36 @@ const ReportsService = {
   // four, which is the last place anyone looks.
 
   async generatePdf(reportType, data, context = {}) {
-    return new Promise((resolve, reject) => {
-      try {
-        // bufferPages so the footer can say "page 3 of 9" — the count is not
-        // known until the last row is drawn, and a report that silently runs
-        // to nine pages is one a reader cannot tell they have half of.
-        const doc = new PDFDocument({ size: 'LETTER', margin: M, bufferPages: true });
-        const buffers = [];
-        doc.on('data', buf => buffers.push(buf));
-        doc.on('end', () => resolve(Buffer.concat(buffers)));
-        doc.on('error', reject);
+    // bufferPages so the footer can say "page 3 of 9" — the count is not
+    // known until the last row is drawn, and a report that silently runs
+    // to nine pages is one a reader cannot tell they have half of.
+    const doc = new PDFDocument({ size: 'LETTER', margin: M, bufferPages: true });
+    return collectPdf(doc, () => {
+      const renderers = {
+        insurance: ReportsService._renderInsurancePdf,
+        total_value: ReportsService._renderTotalValuePdf,
+        items_by_location: ReportsService._renderLocationPdf,
+        lending: ReportsService._renderLendingPdf,
+        activity_log: ReportsService._renderActivityPdf,
+        tag: ReportsService._renderTagPdf,
+      };
 
-        const renderers = {
-          insurance: ReportsService._renderInsurancePdf,
-          total_value: ReportsService._renderTotalValuePdf,
-          items_by_location: ReportsService._renderLocationPdf,
-          lending: ReportsService._renderLendingPdf,
-          activity_log: ReportsService._renderActivityPdf,
-          tag: ReportsService._renderTagPdf,
-        };
+      _titleBar(doc, REPORT_NAMES[reportType] || 'Report');
+      _metaLine(
+        doc,
+        [context.propertyName, context.scope].filter(Boolean).join(' · ') || 'Tally',
+        _fmtDate(new Date()),
+      );
 
-        _titleBar(doc, REPORT_NAMES[reportType] || 'Report');
-        _metaLine(
-          doc,
-          [context.propertyName, context.scope].filter(Boolean).join(' · ') || 'Tally',
-          _fmtDate(new Date()),
-        );
-
-        const render = renderers[reportType];
-        let note = '';
-        if (render) {
-          note = render.call(ReportsService, doc, data) || '';
-        } else {
-          doc.font('Helvetica').fontSize(10).text('Unknown report type.', M, doc.y + 10);
-        }
-
-        _stampFooters(doc, note);
-        doc.end();
-      } catch (err) {
-        reject(err);
+      const render = renderers[reportType];
+      let note = '';
+      if (render) {
+        note = render.call(ReportsService, doc, data) || '';
+      } else {
+        doc.font('Helvetica').fontSize(10).text('Unknown report type.', M, doc.y + 10);
       }
+
+      _stampFooters(doc, note);
     });
   },
 
@@ -869,9 +860,9 @@ const ReportsService = {
       _ensureRoom(doc, H, heads);
       const y = _rowTop(doc, H, i % 2 === 1);
       doc.font('Helvetica').fontSize(7).fillColor(INK)
-        .text(item.itemName || '-', cols[0].x, y + 2.5, { width: cols[0].w, lineBreak: false, ellipsis: true });
+        .text(item.itemName || '-', cols[0].x, y + 2.5, { width: cols[0].w, height: doc.currentLineHeight(), lineBreak: false, ellipsis: true });
       doc.fillColor(MUTED)
-        .text(item.brand || '—', cols[1].x, y + 2.5, { width: cols[1].w, lineBreak: false, ellipsis: true });
+        .text(item.brand || '—', cols[1].x, y + 2.5, { width: cols[1].w, height: doc.currentLineHeight(), lineBreak: false, ellipsis: true });
       _num(doc, _fmtCurrency(item.purchasePrice), cols[2], y + 2.5, { muted: true });
 
       // A box or a bag of spares still PRINTS — you want to know the box is in
@@ -879,14 +870,14 @@ const ReportsService = {
       // thing were there.
       if (_isPartial(item)) {
         doc.font('Helvetica-Oblique').fontSize(6.2).fillColor(MUTED)
-          .text(PARTIAL_LABEL[item.completeness], cols[3].x, y + 3, { width: cols[3].w, align: 'right', lineBreak: false });
+          .text(PARTIAL_LABEL[item.completeness], cols[3].x, y + 3, { width: cols[3].w, height: doc.currentLineHeight(), align: 'right', lineBreak: false });
       } else {
         _num(doc, _fmtCurrency(item.currentValue) + (BASIS_MARK[item.valueBasis] || ''), cols[3], y + 2.5, { bold: true });
       }
 
       doc.font('Helvetica').fontSize(6.5).fillColor(MUTED)
-        .text(item.condition || '—', cols[4].x, y + 3, { width: cols[4].w, align: 'center', lineBreak: false })
-        .text([item.areaName, item.containerName].filter(Boolean).join(' › '), cols[5].x, y + 3, { width: cols[5].w, lineBreak: false, ellipsis: true });
+        .text(item.condition || '—', cols[4].x, y + 3, { width: cols[4].w, height: doc.currentLineHeight(), align: 'center', lineBreak: false })
+        .text([item.areaName, item.containerName].filter(Boolean).join(' › '), cols[5].x, y + 3, { width: cols[5].w, height: doc.currentLineHeight(), lineBreak: false, ellipsis: true });
       doc.fillColor(INK);
       _rowEnd(doc, y, H);
     });
@@ -962,7 +953,7 @@ const ReportsService = {
       _ensureRoom(doc, H, heads);
       const y = _rowTop(doc, H, i % 2 === 1);
       doc.font('Helvetica-Bold').fontSize(8).fillColor(INK)
-        .text(g.group || '-', cols[0].x, y + 2.5, { width: cols[0].w, lineBreak: false, ellipsis: true });
+        .text(g.group || '-', cols[0].x, y + 2.5, { width: cols[0].w, height: doc.currentLineHeight(), lineBreak: false, ellipsis: true });
       _num(doc, String(g.itemCount ?? 0), cols[1], y + 3);
       _num(doc, _fmtCurrency(g.purchaseTotal), cols[2], y + 3, { muted: true });
       _num(doc, _fmtCurrency(g.currentTotal), cols[3], y + 3, { bold: true });
@@ -1020,9 +1011,9 @@ const ReportsService = {
       doc.save().rect(M, y, W, 15).fill(INK).restore();
       doc.font('Helvetica-Bold').fontSize(8.5).fillColor('#FFFFFF')
         .text(String(area.areaName || '—').toUpperCase(), M + 6, y + 4,
-          { width: W - 120, characterSpacing: 0.8, lineBreak: false, ellipsis: true });
+          { width: W - 120, height: doc.currentLineHeight(), characterSpacing: 0.8, lineBreak: false, ellipsis: true });
       doc.font('Courier').fontSize(6.5)
-        .text(_plural(_countItems(area.containers), 'ITEM'), M, y + 4.5, { width: W - 6, align: 'right', lineBreak: false });
+        .text(_plural(_countItems(area.containers), 'ITEM'), M, y + 4.5, { width: W - 6, height: doc.currentLineHeight(), align: 'right', lineBreak: false });
       doc.fillColor(INK);
       doc.y = y + 15;
 
@@ -1049,9 +1040,9 @@ const ReportsService = {
     const hy = doc.y;
     doc.font('Helvetica-Bold').fontSize(7.5).fillColor(INK)
       .text(`${depth ? '» ' : ''}${container.containerName || '—'}`, indent, hy,
-        { width: W - (indent - M) - 60, lineBreak: false, ellipsis: true });
+        { width: W - (indent - M) - 60, height: doc.currentLineHeight(), lineBreak: false, ellipsis: true });
     doc.font('Courier').fontSize(6).fillColor(MUTED)
-      .text(_plural((container.items || []).length, 'ITEM'), M, hy + 0.5, { width: W, align: 'right', lineBreak: false });
+      .text(_plural((container.items || []).length, 'ITEM'), M, hy + 0.5, { width: W, height: doc.currentLineHeight(), align: 'right', lineBreak: false });
     const ruleY = hy + 9;
     doc.save().moveTo(indent, ruleY).lineTo(RIGHT, ruleY).lineWidth(0.8).strokeColor(INK).stroke().restore();
     doc.fillColor(INK);
@@ -1062,7 +1053,7 @@ const ReportsService = {
       _ensureRoom(doc, H);
       const y = _rowTop(doc, H, i % 2 === 1);
       doc.font('Helvetica').fontSize(7).fillColor(INK)
-        .text(item.itemName || '-', indent + 8, y + 2, { width: W - (indent - M) - 150, lineBreak: false, ellipsis: true });
+        .text(item.itemName || '-', indent + 8, y + 2, { width: W - (indent - M) - 150, height: doc.currentLineHeight(), lineBreak: false, ellipsis: true });
       _num(doc, _fmtCurrency(item.purchasePrice), { x: RIGHT - 150, w: 60 }, y + 2, { muted: true });
       // A lent or missing item carries a pill rather than a bare word — on a
       // moving-day checklist "it is not in the box" is the fact that matters.
@@ -1070,7 +1061,7 @@ const ReportsService = {
         _pill(doc, item.status, RIGHT - 78, y + 1.5, { solid: true });
       } else {
         doc.font('Helvetica').fontSize(6.5).fillColor(MUTED)
-          .text(item.condition || '—', RIGHT - 78, y + 2.5, { width: 78, lineBreak: false });
+          .text(item.condition || '—', RIGHT - 78, y + 2.5, { width: 78, height: doc.currentLineHeight(), lineBreak: false });
       }
       doc.fillColor(INK);
       _rowEnd(doc, y, H);
@@ -1123,16 +1114,16 @@ const ReportsService = {
       if (loan.overdue) doc.save().rect(M, y, 3, H - 2).fill(INK).restore();
 
       doc.font(loan.overdue ? 'Helvetica-Bold' : 'Helvetica').fontSize(7).fillColor(INK)
-        .text(loan.itemName || '-', cols[0].x, y + 3, { width: cols[0].w - (loan.overdue ? 42 : 0), lineBreak: false, ellipsis: true });
+        .text(loan.itemName || '-', cols[0].x, y + 3, { width: cols[0].w - (loan.overdue ? 42 : 0), height: doc.currentLineHeight(), lineBreak: false, ellipsis: true });
       if (loan.overdue) {
         _pill(doc, 'overdue', cols[0].x + cols[0].w - 40, y + 2);
       }
       doc.font('Helvetica').fontSize(7).fillColor(MUTED)
-        .text(loan.lentTo || '-', cols[1].x, y + 3, { width: cols[1].w, lineBreak: false, ellipsis: true });
+        .text(loan.lentTo || '-', cols[1].x, y + 3, { width: cols[1].w, height: doc.currentLineHeight(), lineBreak: false, ellipsis: true });
       _num(doc, loan.lentAt ? _fmtDate(loan.lentAt) : '—', cols[2], y + 3, { muted: true, size: 6.5 });
       _num(doc, loan.dueAt ? _fmtDate(loan.dueAt) : '—', cols[3], y + 3, { bold: !!loan.overdue, size: 6.5 });
       doc.font('Helvetica').fontSize(6.5).fillColor(MUTED)
-        .text([loan.areaName, loan.containerName].filter(Boolean).join(' › '), cols[4].x, y + 3.5, { width: cols[4].w, lineBreak: false, ellipsis: true });
+        .text([loan.areaName, loan.containerName].filter(Boolean).join(' › '), cols[4].x, y + 3.5, { width: cols[4].w, height: doc.currentLineHeight(), lineBreak: false, ellipsis: true });
       doc.fillColor(INK);
       _rowEnd(doc, y, H);
     });
@@ -1166,9 +1157,9 @@ const ReportsService = {
       _ensureRoom(doc, H, heads);
       const y = _rowTop(doc, H, i % 2 === 1);
       doc.font('Courier').fontSize(6.5).fillColor(MUTED)
-        .text(entry.createdAt ? _fmtDate(entry.createdAt) : '—', cols[0].x, y + 3, { width: cols[0].w, lineBreak: false });
+        .text(entry.createdAt ? _fmtDate(entry.createdAt) : '—', cols[0].x, y + 3, { width: cols[0].w, height: doc.currentLineHeight(), lineBreak: false });
       doc.font('Helvetica').fontSize(7).fillColor(INK)
-        .text(entry.displayName || '—', cols[1].x, y + 2.5, { width: cols[1].w, lineBreak: false, ellipsis: true });
+        .text(entry.displayName || '—', cols[1].x, y + 2.5, { width: cols[1].w, height: doc.currentLineHeight(), lineBreak: false, ellipsis: true });
       // The action is what you scan a column for, so it is the anchor. Deleted
       // is solid because it is the one you go looking for.
       if (entry.action) {
@@ -1179,7 +1170,7 @@ const ReportsService = {
       doc.font('Helvetica').fontSize(7).fillColor(MUTED)
         .text(
           [entry.entityType, entry.entityId != null ? `#${entry.entityId}` : null].filter(Boolean).join(' '),
-          cols[3].x, y + 2.5, { width: cols[3].w, lineBreak: false, ellipsis: true },
+          cols[3].x, y + 2.5, { width: cols[3].w, height: doc.currentLineHeight(), lineBreak: false, ellipsis: true },
         );
       doc.fillColor(INK);
       _rowEnd(doc, y, H);
@@ -1215,7 +1206,7 @@ const ReportsService = {
       const subtotal = (group.items || []).reduce((s, i) => s + (i.purchasePrice || 0), 0);
       doc.font('Courier').fontSize(6.5).fillColor(MUTED)
         .text(`${_plural((group.items || []).length, 'ITEM')} · ${_fmtCurrency(subtotal)}`,
-          M, hy + 3, { width: W, align: 'right', lineBreak: false });
+          M, hy + 3, { width: W, height: doc.currentLineHeight(), align: 'right', lineBreak: false });
       const ruleY = hy + 14;
       doc.save().moveTo(M, ruleY).lineTo(RIGHT, ruleY).lineWidth(1.2).strokeColor(INK).stroke().restore();
       doc.fillColor(INK);
@@ -1226,11 +1217,11 @@ const ReportsService = {
         _ensureRoom(doc, H);
         const y = _rowTop(doc, H, i % 2 === 1);
         doc.font('Helvetica').fontSize(7).fillColor(INK)
-          .text(item.itemName || '-', M + 6, y + 2, { width: 230, lineBreak: false, ellipsis: true });
+          .text(item.itemName || '-', M + 6, y + 2, { width: 230, height: doc.currentLineHeight(), lineBreak: false, ellipsis: true });
         _num(doc, _fmtCurrency(item.purchasePrice), { x: M + 242, w: 60 }, y + 2, { muted: true });
         doc.font('Helvetica').fontSize(6.5).fillColor(MUTED)
           .text([item.areaName, item.containerName].filter(Boolean).join(' › '),
-            M + 310, y + 2.5, { width: W - 310, lineBreak: false, ellipsis: true });
+            M + 310, y + 2.5, { width: W - 310, height: doc.currentLineHeight(), lineBreak: false, ellipsis: true });
         doc.fillColor(INK);
         _rowEnd(doc, y, H);
       });
