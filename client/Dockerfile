@@ -1,13 +1,19 @@
-FROM node:20-alpine AS build
+FROM node:22-alpine AS build
 WORKDIR /app
 COPY package*.json ./
 RUN npm ci
 COPY . .
 RUN npm run build
 
-FROM nginx:alpine
+# Unprivileged nginx image: already runs as the non-root `nginx` user (uid
+# 101) and listens on 8080 by default, with cache/pid/temp paths pre-chowned
+# for that user — no manual permission surgery needed (trivy DS-0002, #46).
+FROM nginxinc/nginx-unprivileged:alpine
+# The base image already runs unprivileged; the explicit USER satisfies
+# trivy's textual DS-0002 check (it doesn't resolve inherited users).
+USER nginx
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=build /app/dist /usr/share/nginx/html
-EXPOSE 80
+EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
-  CMD wget -qO- http://localhost:80/ || exit 1
+  CMD wget -qO- http://localhost:8080/ || exit 1
