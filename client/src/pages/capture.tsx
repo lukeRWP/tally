@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router';
 import { Camera, Check, X, Printer, Plus, MapPin, SkipForward, List, AlertTriangle, Search, ImagePlus, Sparkles, Keyboard, Loader2, Undo2 } from 'lucide-react';
 import { ProductScanner } from '@/components/scanner/product-scanner';
 import { PhotoCamera } from '@/components/scanner/photo-camera';

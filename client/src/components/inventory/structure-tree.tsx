@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { ChevronRight, Package, Box } from 'lucide-react';
 import type { Area, Container } from '@/types/inventory';
 import { cn } from '@/lib/utils';

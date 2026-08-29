@@ -1,4 +1,4 @@
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { Badge } from '@/components/ui/badge';
 import { RuledRow } from '@/components/ui/ruled-row';
 import { getItemIcon } from '@/lib/item-icons';

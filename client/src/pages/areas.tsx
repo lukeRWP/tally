@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router';
 import { Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ColHead } from '@/components/ui/col-head';

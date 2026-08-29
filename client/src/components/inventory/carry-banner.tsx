@@ -1,4 +1,4 @@
-import { useNavigate, useLocation } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router';
 import { X, ScanLine, Undo2 } from 'lucide-react';
 import { useCarryStore, type CarriedItem } from '@/store/carry-store';
 import { useMoveItem, useMoveContainer } from '@/hooks/use-inventory';

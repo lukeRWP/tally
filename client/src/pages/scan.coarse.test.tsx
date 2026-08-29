@@ -18,7 +18,7 @@
  * its autofocus; a phone is unchanged.
  */
 import { render, screen, waitFor } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter } from 'react-router';
 import { test, expect, vi, beforeEach } from 'vitest';
 import { useLayoutMode } from '@/hooks/use-layout-mode';
 import { useCoarsePointer } from '@/hooks/use-coarse-pointer';

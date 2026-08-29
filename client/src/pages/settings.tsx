@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { LogOut, Sun, Moon, Monitor, Trash2, Copy } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { Button } from '@/components/ui/button';
 import { TitleBar } from '@/components/ui/title-bar';
 import { ColHead } from '@/components/ui/col-head';

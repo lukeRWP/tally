@@ -12,7 +12,8 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "noEmit": true,
-    "baseUrl": ".",
+    // No baseUrl: TS 6 deprecates it (gone in 7). Bare `paths` resolves
+    // relative to this file, which is what baseUrl:"." meant anyway.
     "paths": {
       "@/*": ["./src/*"]
     }

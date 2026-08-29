@@ -11,14 +11,14 @@
  *    button + progress label while running (mark-all-read is untouched).
  */
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter } from 'react-router';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import type { Notification } from '@/hooks/use-notifications';
 import { NotificationList } from './notification-list';
 
 const navigateSpy = vi.fn();
-vi.mock('react-router-dom', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('react-router-dom')>();
+vi.mock('react-router', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('react-router')>();
   return { ...actual, useNavigate: () => navigateSpy };
 });
 

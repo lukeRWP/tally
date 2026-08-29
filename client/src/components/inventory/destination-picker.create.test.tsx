@@ -26,7 +26,7 @@ import { DestinationPicker, type PickedBin } from './destination-picker';
 import { useProperties, useAreas, useContainers, useCreateContainer } from '@/hooks/use-inventory';
 
 const navigateMock = vi.fn();
-vi.mock('react-router-dom', () => ({
+vi.mock('react-router', () => ({
   useNavigate: () => navigateMock,
 }));
 

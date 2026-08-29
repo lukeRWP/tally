@@ -20,7 +20,7 @@
  */
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { MemoryRouter, Route, Routes, useLocation, useNavigationType } from 'react-router-dom';
+import { MemoryRouter, Route, Routes, useLocation, useNavigationType } from 'react-router';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { Home } from './home';
 

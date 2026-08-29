@@ -25,7 +25,7 @@
  */
 import * as React from 'react';
 import { render, fireEvent, act } from '@testing-library/react';
-import { MemoryRouter, Route, Routes, useNavigate } from 'react-router-dom';
+import { MemoryRouter, Route, Routes, useNavigate } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { useScrollRestoration as UseScrollRestoration } from './use-scroll-restoration';
 

@@ -20,7 +20,7 @@
  * disappear from the list.
  */
 import { act, fireEvent, render, screen } from '@testing-library/react';
-import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import type { ProductMatch } from '@/hooks/use-matches';
 import { useLayoutMode } from '@/hooks/use-layout-mode';

@@ -21,7 +21,7 @@
  */
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter } from 'react-router';
 import { test, expect, vi, beforeEach, afterEach } from 'vitest';
 import { toast } from '@/components/ui/toast';
 import { useCarryStore } from '@/store/carry-store';
@@ -41,8 +41,8 @@ vi.mock('@/components/ui/toast', () => {
 // useNavigate is the direct way to prove Done did (or, for the busy-guard
 // tests below, did NOT) fire — every other react-router export stays real.
 const navigateSpy = vi.fn();
-vi.mock('react-router-dom', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('react-router-dom')>();
+vi.mock('react-router', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('react-router')>();
   return { ...actual, useNavigate: () => navigateSpy };
 });
 

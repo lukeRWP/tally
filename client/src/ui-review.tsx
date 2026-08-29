@@ -3,7 +3,7 @@
    Route comes from ?route=/container/1 ; theme from ?theme=dark  */
 import ReactDOM from 'react-dom/client';
 import { QueryClientProvider, QueryClient } from '@tanstack/react-query';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter } from 'react-router';
 import './globals.css';
 
 const P = new URLSearchParams(location.search);

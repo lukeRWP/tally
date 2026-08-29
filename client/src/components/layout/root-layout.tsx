@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { Outlet, Navigate, useLocation, useNavigate } from 'react-router-dom';
+import { Outlet, Navigate, useLocation, useNavigate } from 'react-router';
 import { Home, Search, Bell, Settings, Printer, DoorOpen, BarChart2, Plus, ScanLine, Package, Box } from 'lucide-react';
 import { useAuth } from '@/hooks/use-auth';
 import { useAuthStore } from '@/store/auth-store';

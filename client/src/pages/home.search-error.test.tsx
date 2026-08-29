@@ -12,7 +12,7 @@
  */
 import { fireEvent, render, screen } from '@testing-library/react';
 import { QueryClientProvider, QueryClient } from '@tanstack/react-query';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { MemoryRouter, Route, Routes } from 'react-router';
 import { beforeEach, expect, test, vi } from 'vitest';
 import { Home } from './home';
 
