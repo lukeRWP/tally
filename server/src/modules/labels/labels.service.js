@@ -1,6 +1,7 @@
 const QRCode = require('qrcode');
 const PDFDocument = require('pdfkit');
 const { parseCode } = require('../../utils/qr');
+const { collectPdf } = require('../../utils/pdf');
 const code128 = require('./code128');
 
 // Geometry for the thermal single-label + manifest presets. 72 pt = 1 inch.
@@ -14,7 +15,10 @@ const PRESETS = {
   // the top pad downward, so anything taller punches through the header rule
   // and collides with the CONTENTS row — it did, at 72pt. 60 leaves 12pt of
   // clearance while still printing larger than the original 54pt.
-  large:  { widthPt: 288, heightPt: 432, qrPt: 60,  banner: 36, bannerFont: 21, bannerTrack: 7, title: 13, code: 8, row: 11, rowGap: 3 },
+  // qtyW is the manifest QTY column width. Courier digits at the row size are
+  // 0.6em wide (6.6pt at row:11), so 44pt seats a 6-digit quantity with room
+  // to spare — at the old 30pt anything past ~4 digits ellipsised.
+  large:  { widthPt: 288, heightPt: 432, qrPt: 60,  banner: 36, bannerFont: 21, bannerTrack: 7, title: 13, code: 8, row: 11, rowGap: 3, qtyW: 44 },
 };
 
 let _db = null;
@@ -253,17 +257,12 @@ const LabelsService = {
   async renderLabelPdf(entities, presetKey) {
     const P = PRESETS[presetKey];
     const qrImages = await Promise.all(entities.map(e => LabelsService.generateQrImage(e.qrCode, P.qrPt)));
-    return new Promise((resolve, reject) => {
-      const doc = new PDFDocument({ size: [P.widthPt, P.heightPt], margin: 0 });
-      const bufs = [];
-      doc.on('data', b => bufs.push(b));
-      doc.on('end', () => resolve(Buffer.concat(bufs)));
-      doc.on('error', reject);
+    const doc = new PDFDocument({ size: [P.widthPt, P.heightPt], margin: 0 });
+    return collectPdf(doc, () => {
       entities.forEach((e, i) => {
         if (i > 0) doc.addPage({ size: [P.widthPt, P.heightPt], margin: 0 });
         LabelsService._drawTag(doc, e, qrImages[i], P, presetKey);
       });
-      doc.end();
     });
   },
 
@@ -298,7 +297,7 @@ const LabelsService = {
     const listTop = pad + headerH + colHdrH;
     const listBottom = P.heightPt - pad - footerH - barcodeH;
     const rowsPerPage = Math.max(1, Math.floor((listBottom - listTop) / rowH));
-    return { pad, headerH, colHdrH, footerH, barcodeH, rowH, listTop, rowsPerPage };
+    return { pad, headerH, colHdrH, footerH, barcodeH, rowH, listTop, rowsPerPage, qtyW: P.qtyW };
   },
 
   manifestPageCount(rowCount, presetKey) {
@@ -374,7 +373,7 @@ const LabelsService = {
       // Column header.
       doc.fontSize(8).font('Courier-Bold').fillColor('#000000')
         .text('CONTENTS', cx + L.pad, L.pad + L.headerH + 3, { width: 120, height: doc.currentLineHeight(), lineBreak: false });
-      doc.text('QTY', W - L.pad - 34, L.pad + L.headerH + 3, { width: 34, align: 'right' });
+      doc.text('QTY', W - L.pad - L.qtyW, L.pad + L.headerH + 3, { width: L.qtyW, align: 'right' });
 
       // Rows for this page.
       const start = pg * L.rowsPerPage, end = Math.min(start + L.rowsPerPage, rows.length);
@@ -389,9 +388,9 @@ const LabelsService = {
         // long name or a 5+ digit qty from spilling onto a second line and
         // overlapping the next row's shading.
         doc.fontSize(P.row).font('Helvetica').fillColor('#000000')
-          .text(rows[r].name, cx + L.pad + 2, ry, { width: W - cx - L.pad * 2 - 38, height: P.row, lineBreak: false, ellipsis: true });
+          .text(rows[r].name, cx + L.pad + 2, ry, { width: W - cx - L.pad * 2 - (L.qtyW + 8), height: P.row, lineBreak: false, ellipsis: true });
         doc.font('Courier').fillColor('#000000')
-          .text(String(rows[r].qty), W - L.pad - 34, ry, { width: 30, height: P.row, align: 'right', lineBreak: false, ellipsis: true });
+          .text(String(rows[r].qty), W - L.pad - L.qtyW, ry, { width: L.qtyW, height: P.row, align: 'right', lineBreak: false, ellipsis: true });
         ry += L.rowH;
       }
 
@@ -419,18 +418,11 @@ const LabelsService = {
   // implicit first page is reused.
   async renderManifestBundle(manifests, presetKey) {
     const P = PRESETS[presetKey];
-    return new Promise((resolve, reject) => {
-      const doc = new PDFDocument({ size: [P.widthPt, P.heightPt], margin: 0 });
-      const bufs = [];
-      doc.on('data', b => bufs.push(b));
-      doc.on('end', () => resolve(Buffer.concat(bufs)));
-      doc.on('error', reject);
-      let first = true;
-      const startNewPage = () => { if (!first) doc.addPage({ size: [P.widthPt, P.heightPt], margin: 0 }); first = false; };
-      (async () => {
-        for (const m of manifests) await LabelsService._drawManifest(doc, m, presetKey, startNewPage);
-        doc.end();
-      })().catch(reject);
+    const doc = new PDFDocument({ size: [P.widthPt, P.heightPt], margin: 0 });
+    let first = true;
+    const startNewPage = () => { if (!first) doc.addPage({ size: [P.widthPt, P.heightPt], margin: 0 }); first = false; };
+    return collectPdf(doc, async () => {
+      for (const m of manifests) await LabelsService._drawManifest(doc, m, presetKey, startNewPage);
     });
   },
 
@@ -618,13 +610,8 @@ const LabelsService = {
       entities.map(e => LabelsService.generateQrBuffer(e.qrCode, qrSize * 2))
     );
 
-    return new Promise((resolve, reject) => {
-      const doc = new PDFDocument({ size: 'LETTER', margin: 0 });
-      const buffers = [];
-      doc.on('data', buf => buffers.push(buf));
-      doc.on('end', () => resolve(Buffer.concat(buffers)));
-      doc.on('error', reject);
-
+    const doc = new PDFDocument({ size: 'LETTER', margin: 0 });
+    return collectPdf(doc, () => {
       for (let i = 0; i < entities.length; i++) {
         const entity = entities[i];
         const pageIndex = Math.floor(i / labelsPerPage);
@@ -726,8 +713,6 @@ const LabelsService = {
 
         doc.fillColor('#000000');
       }
-
-      doc.end();
     });
   },
 };
