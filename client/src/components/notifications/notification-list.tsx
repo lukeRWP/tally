@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import {
   Clock,
   HandCoins,
@@ -70,7 +70,19 @@ function entityPath(notification: Notification): string {
   }
 }
 
-function NotificationRow({ notification }: { notification: Notification }) {
+function NotificationRow({
+  notification,
+  dismissRunning,
+}: {
+  notification: Notification;
+  /** True while runDismissAll's loop is in flight (#239) — the per-row X
+   * uses the same single-dismiss endpoint the loop drives sequentially, so
+   * racing it against an in-flight bulk dismiss would double-count the
+   * outcome: a click here can "succeed" on a row the loop is about to reach
+   * anyway, or land a 404 on one it already dismissed, either way inflating
+   * the loop's own failed count for no real reason. */
+  dismissRunning?: boolean;
+}) {
   const navigate = useNavigate();
   const markRead = useMarkRead();
   const dismiss = useDismissNotification();
@@ -134,9 +146,11 @@ function NotificationRow({ notification }: { notification: Notification }) {
         type="button"
         onClick={(e) => {
           e.stopPropagation();
+          if (dismissRunning) return;
           dismiss.mutate(notification.id);
         }}
-        className="flex-shrink-0 p-1 rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-elevated)] transition-colors"
+        disabled={dismissRunning}
+        className="flex-shrink-0 p-1 rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-elevated)] transition-colors disabled:opacity-40 disabled:pointer-events-none"
         aria-label="Dismiss notification"
       >
         <X className="w-3.5 h-3.5" />
@@ -230,7 +244,7 @@ export function NotificationList() {
       {!isLoading && items.length > 0 && (
         <div className="flex flex-col gap-2">
           {items.map((n) => (
-            <NotificationRow key={n.id} notification={n} />
+            <NotificationRow key={n.id} notification={n} dismissRunning={dismissRunning} />
           ))}
         </div>
       )}

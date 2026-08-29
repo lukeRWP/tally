@@ -1,4 +1,4 @@
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router';
 import { Home, Plus, Bell, Settings, Printer, DoorOpen, BarChart2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useUnreadCount } from '@/hooks/use-notifications';

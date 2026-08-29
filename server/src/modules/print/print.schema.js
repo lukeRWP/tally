@@ -50,8 +50,11 @@ const agentClaim = Joi.object({
 
 const agentAck = Joi.object({
   ok: Joi.boolean().required(),
-  // Optional: fences the ack to the claim it belongs to (see PrintService.ackJob).
-  claimId: Joi.string().max(36).optional(),
+  // Required: fences the ack to the claim it belongs to (see PrintService.ackJob).
+  // Every claim response carries a claimId and the agent has echoed it back
+  // since its first release, so an ack without one is either a bug or a replay
+  // — and an unfenced ack is exactly the ambiguous write the fence prevents.
+  claimId: Joi.string().max(36).required(),
   error: Joi.string().max(500).allow('').optional(),
 });
 

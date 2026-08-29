@@ -1,5 +1,5 @@
 import { CornerDownLeft } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { Button } from '@/components/ui/button';
 import { ColHead } from '@/components/ui/col-head';
 import { RuledRow } from '@/components/ui/ruled-row';

@@ -67,6 +67,71 @@ test('carrying tags matches by name case-insensitively and creates the rest', as
   assert.ok(created.params.includes(2), 'created in the DESTINATION property');
 });
 
+// ── #244: destination tag find-or-create converges on ER_DUP_ENTRY ─────────
+// Two concurrent moves carrying the same new tag name race
+// uq_tags_name_property; the loser's bare INSERT used to 500 the whole move.
+// It must instead adopt the winner's row — via a LOCKING re-select, because
+// under REPEATABLE READ a plain SELECT inside this tx would replay the
+// pre-collision snapshot and still see no row.
+
+test('a tag INSERT losing the unique-key race re-selects the winner and the move completes', async () => {
+  const dup = () => { const e = new Error('Duplicate entry'); e.code = 'ER_DUP_ENTRY'; throw e; };
+  const repoints = [];
+  const tx = fakeTx([
+    [/FROM TALLY\.tags t[\s\S]*entity_tags/, [
+      { TAG_ID: 2, NAME: 'Tools', ENTITY_TYPE: 'item', ENTITY_ID: 101 },
+    ]],
+    [/FROM TALLY\.tags WHERE PROPERTY_ID/, []],           // dest had no tags at plan time
+    [/INSERT INTO TALLY\.tags/, dup],                     // ...but a concurrent move won the INSERT
+    [/SELECT ID FROM TALLY\.tags WHERE NAME/, [{ ID: 77 }]],
+    [/UPDATE TALLY\.entity_tags/, (sql, params) => { repoints.push(params); return { affectedRows: 1 }; }],
+    [/item_accessories/, []],
+  ]);
+  const out = await Reconcile.reconcile(tx,
+    { containerIds: [], itemIds: [101] },
+    { srcPropertyId: 1, destPropertyId: 2, userId: 42, rootType: 'item', rootId: 101, moveChanges: {} });
+
+  const reselect = tx.calls.find((c) => /SELECT ID FROM TALLY\.tags WHERE NAME/.test(c.sql));
+  assert.ok(reselect, 'the loser re-selects the winner instead of throwing');
+  assert.match(reselect.sql, /FOR SHARE/,
+    'the re-select is a locking read — a snapshot read cannot see the winner under REPEATABLE READ');
+  assert.deepEqual(reselect.params, ['Tools', 2], 'looked up by name in the DESTINATION property');
+  assert.equal(repoints[0][0], 77, 'the attachment is repointed to the WINNER\'S tag id');
+  assert.deepEqual(out, { unlinked: [], tagsCarried: 1, tagsCreated: 1 }, 'the move completes — no throw');
+});
+
+test('a non-duplicate tag INSERT failure still fails the move', async () => {
+  const tx = fakeTx([
+    [/FROM TALLY\.tags t[\s\S]*entity_tags/, [
+      { TAG_ID: 2, NAME: 'Tools', ENTITY_TYPE: 'item', ENTITY_ID: 101 },
+    ]],
+    [/FROM TALLY\.tags WHERE PROPERTY_ID/, []],
+    [/INSERT INTO TALLY\.tags/, () => { const e = new Error('deadlock'); e.code = 'ER_LOCK_DEADLOCK'; throw e; }],
+    [/SELECT ID FROM TALLY\.tags WHERE NAME/, () => { throw new Error('must not re-select on a non-duplicate error'); }],
+  ]);
+  await assert.rejects(
+    () => Reconcile.reconcile(tx, { containerIds: [], itemIds: [101] },
+      { srcPropertyId: 1, destPropertyId: 2, userId: 42, rootType: 'item', rootId: 101, moveChanges: {} }),
+    (e) => e.code === 'ER_LOCK_DEADLOCK'
+  );
+});
+
+test('ER_DUP_ENTRY with no row on re-select surfaces the original error', async () => {
+  const tx = fakeTx([
+    [/FROM TALLY\.tags t[\s\S]*entity_tags/, [
+      { TAG_ID: 2, NAME: 'Tools', ENTITY_TYPE: 'item', ENTITY_ID: 101 },
+    ]],
+    [/FROM TALLY\.tags WHERE PROPERTY_ID/, []],
+    [/INSERT INTO TALLY\.tags/, () => { const e = new Error('Duplicate entry'); e.code = 'ER_DUP_ENTRY'; throw e; }],
+    [/SELECT ID FROM TALLY\.tags WHERE NAME/, []], // collided yet absent — should be impossible
+  ]);
+  await assert.rejects(
+    () => Reconcile.reconcile(tx, { containerIds: [], itemIds: [101] },
+      { srcPropertyId: 1, destPropertyId: 2, userId: 42, rootType: 'item', rootId: 101, moveChanges: {} }),
+    (e) => e.code === 'ER_DUP_ENTRY'
+  );
+});
+
 test('accessory links survive intra-set and break half-out, reported by name', async () => {
   const writes = [];
   const tx = fakeTx([

@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router';
 import { Camera, Check, X, Printer, Plus, MapPin, SkipForward, List, AlertTriangle, Search, ImagePlus, Sparkles, Keyboard, Loader2, Undo2 } from 'lucide-react';
 import { ProductScanner } from '@/components/scanner/product-scanner';
 import { PhotoCamera } from '@/components/scanner/photo-camera';
@@ -348,6 +348,23 @@ export function Capture() {
    * callback needs the CURRENT answer, not the value captured when it started.
    */
   const catalogueHit = React.useRef(false);
+  /**
+   * #233: which draft an in-flight identifyPhoto call still belongs to.
+   *
+   * The commit is optimistic, so a slow vision response for item A can
+   * resolve after A was committed and the flow is already photographing item
+   * B. The commit-time direction is snapshot-protected (see CommitSnapshot);
+   * this ref closes the draft-application direction, which had no guard — A's
+   * confidently-applied name and suggestions landed in B's draft. Each
+   * identify call claims a fresh generation when it starts (so a retaken
+   * photo obsoletes the previous shot's in-flight call too), resetDraft()
+   * bumps it when the draft's item finishes, and the response handler applies
+   * ONLY while its generation is still current — the same patch-by-key spirit
+   * as the receipts. A ref, not state: it is compared inside an async
+   * continuation, which must see the value as of NOW, not as of the render
+   * that started the request.
+   */
+  const identifyGen = React.useRef(0);
   // A failed identify used to be indistinguishable from a disabled feature and
   // from an honest 'cannot tell'. All three showed nothing.
   const [visionFailed, setVisionFailed] = React.useState(false);
@@ -400,6 +417,10 @@ export function Capture() {
     setVisionFailed(false);
     setVisionEmpty(false);
     catalogueHit.current = false;
+    // #233: an identify call still in flight belongs to the item just
+    // finished (or abandoned) — obsolete it, so its late answer cannot land
+    // in the next item's draft.
+    identifyGen.current++;
     // Mirrored into stateRef SYNCHRONOUSLY, not left to the effect: with the
     // commit optimistic, the scanner stays live between items, and a second
     // scan callback can fire before React has re-rendered. Reading the dead
@@ -971,6 +992,14 @@ export function Capture() {
     // it. Switched off means no request, no upload, no spend — not a request
     // whose answer is discarded.
     if (!useVisionPref.getState().enabled) return;
+    // #233: claim a generation for this call — see identifyGen. The guard
+    // lives HERE, in the one shared entry point (acceptPhotoFile funnels both
+    // the camera flow and ManualCreate's dropped photo through this), so no
+    // caller can forget it. Every per-photo state write below applies only
+    // while `gen` is still current; the deliberate exception is
+    // setMatchAvailable, a server capability flag that is true or false
+    // regardless of which photo's response carried it.
+    const gen = ++identifyGen.current;
     setVisionPending(true);
     setVisionFailed(false);
     setVisionEmpty(false);
@@ -989,7 +1018,7 @@ export function Capture() {
       });
       if (!res.ok) {
         console.warn('[vision] identify failed', res.status, blob.type, sendable.type);
-        setVisionFailed(true);
+        if (gen === identifyGen.current) setVisionFailed(true);
         return;
       }
       const data = await parseEnvelope<{
@@ -998,7 +1027,13 @@ export function Capture() {
       // Set regardless of whether a suggestion arrived: this is a capability
       // flag (does the SERVER have MATCH_ENABLED on), not a fact about this
       // one photo, and canMatch needs it even on a call that finds nothing.
+      // Deliberately NOT generation-guarded for the same reason — a stale
+      // call's answer to "is matching on?" is as true as a fresh one's.
       setMatchAvailable(!!data?.matchAvailable);
+      // #233: past here everything is about THIS photo. If the draft it was
+      // taken for is gone — committed, discarded, or re-photographed — the
+      // answer must not touch the draft that replaced it.
+      if (gen !== identifyGen.current) return;
       if (!data?.suggestion) {
         // Two very different things used to look the same here, and telling
         // them apart from the outside cost hours: the feature being switched
@@ -1031,9 +1066,11 @@ export function Capture() {
       }
     } catch (err) {
       console.warn('[vision] identify threw', err);
-      setVisionFailed(true);
+      if (gen === identifyGen.current) setVisionFailed(true);
     } finally {
-      setVisionPending(false);
+      // Guarded too: a stale call settling late must not clear the pending
+      // indicator of the NEWER call still in flight for the current draft.
+      if (gen === identifyGen.current) setVisionPending(false);
     }
   }
 
@@ -1318,12 +1355,16 @@ export function Capture() {
             session — with an in-page shutter feeding the SAME acceptPhotoFile
             entry point the input uses. The OS button below survives as the
             fallback fork: no getUserMedia, a rejected acquire, or an explicit
-            "Use system camera" all land there via photoFallback. The !showForm
-            arm is structurally dead (this whole block renders only when
-            showForm is false) but kept parallel with every other showForm
-            predicate in the block — audited, not an oversight.
+            "Use system camera" all land there via photoFallback.
+
+            #217: this whole subtree renders only when showForm is false — the
+            desk form is ManualCreate, on the other side of the fork — so the
+            form-side ternary arms that used to sit here (drop-zone drag
+            handlers and styling, the ImagePlus icon, the form copy, the
+            outline Skip variant) were unreachable and have been collapsed to
+            their live sides. The desk drop-zone lives in ManualCreate.
           */}
-          {!showForm && !photoFallback ? (
+          {!photoFallback ? (
             <PhotoCamera
               onCapture={(f) => void acceptPhotoFile(f)}
               onFallback={() => setPhotoFallback(true)}
@@ -1332,52 +1373,23 @@ export function Capture() {
           <button
             type="button"
             onClick={() => photoInput.current?.click()}
-            // Dropping a file IS the desktop gesture for this. Ignored on
-            // touch, where there is nothing to drag from. This whole block only
-            // renders when showForm is false, so on a tablet in the camera flow
-            // these all resolve exactly as they do on a phone — see the audit
-            // note below.
-            onDragOver={showForm ? (e) => { e.preventDefault(); setDragging(true); } : undefined}
-            onDragLeave={showForm ? () => setDragging(false) : undefined}
-            onDrop={showForm ? (e) => {
-              e.preventDefault();
-              setDragging(false);
-              const file = e.dataTransfer.files?.[0];
-              if (file) void acceptPhotoFile(file);
-            } : undefined}
             className={cn(
-              'flex flex-col items-center justify-center gap-2 border-2 rounded-[var(--radius-sm)]',
-              showForm ? 'py-16 border-dashed' : 'py-10',
+              'flex flex-col items-center justify-center gap-2 border-2 rounded-[var(--radius-sm)] py-10',
               dragging ? 'border-[var(--color-primary)] bg-[var(--color-primary-bg)]' : 'border-[var(--color-text)]',
               // Viewport cap, tablet only — the phone side of this block is
               // already sized by its py-10 padding alone.
               tablet && 'max-h-[clamp(260px,50vh,420px)] overflow-hidden',
             )}
           >
-            {showForm ? <ImagePlus className="w-8 h-8" /> : <Camera className="w-8 h-8" />}
+            <Camera className="w-8 h-8" />
             <span className="font-mono text-xs uppercase tracking-[0.1em] font-bold">
-              {showForm ? 'Drop a photo here, or choose a file' : 'Take a photo of the item'}
+              Take a photo of the item
             </span>
-            {showForm && (
-              <span className="font-mono text-[10px] uppercase tracking-[0.08em] text-[var(--color-text-muted)]">
-                or skip straight to naming it
-              </span>
-            )}
           </button>
           )}
-          {/*
-            When the form is showing, skipping is the ORDINARY path, not the
-            escape hatch — most forms are reached with no camera and no photo to
-            hand — so it stops being a ghost link and becomes a real choice of
-            equal weight. This block only renders when showForm is false (see
-            above), so in practice this is always the phone-styled ghost button
-            — kept as a showForm check, not simplified away, to stay parallel
-            with every other predicate in this block (audited, not dead by
-            oversight).
-          */}
-          <Button variant={showForm ? 'outline' : 'ghost'} size="sm" onClick={() => setPhase('identify')}>
+          <Button variant="ghost" size="sm" onClick={() => setPhase('identify')}>
             <SkipForward className="w-3.5 h-3.5" />
-            {showForm ? 'Skip to details' : 'Skip photo'}
+            Skip photo
           </Button>
         </div>
       )}

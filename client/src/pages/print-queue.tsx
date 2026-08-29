@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Link } from 'react-router-dom';
+import { Link } from 'react-router';
 import { Printer as PrinterIcon, Trash2, RotateCw, Send, X, Inbox } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -25,6 +25,21 @@ const PROBLEM_TEXT: Record<string, string> = {
   'media-jam': 'Jammed',
   offline: 'Offline',
 };
+
+// Same idiom as recent-activity / notification-list. The <60s branch never
+// shows here — inside 60s the printer still counts as online.
+function relativeTime(dateStr: string): string {
+  const diff = Math.floor((Date.now() - new Date(dateStr).getTime()) / 1000);
+  if (diff < 60) return 'just now';
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+  return `${Math.floor(diff / 86400)}d ago`;
+}
+
+// "Offline" alone hides how long the agent has been gone (#204).
+function offlineLabel(lastSeenAt: string | null): string {
+  return lastSeenAt ? `Offline · last seen ${relativeTime(lastSeenAt)}` : 'Offline';
+}
 
 // Terminal jobs are history; the rest are the queue you're watching.
 const LIVE = ['queued', 'held', 'claimed'];
@@ -185,7 +200,7 @@ export function PrintQueuePage() {
               <PrinterIcon className="w-4 h-4" />
               <span className="text-sm font-semibold">{printer.name}</span>
               <Badge variant={problem ? 'danger' : online ? 'success' : 'default'}>
-                {problem ?? (online ? 'Online' : 'Offline')}
+                {problem ?? (online ? 'Online' : offlineLabel(printer.lastSeenAt))}
               </Badge>
             </div>
             <div>

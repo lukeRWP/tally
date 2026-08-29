@@ -20,7 +20,7 @@
  * instead of `toBeInTheDocument`/`toBeDisabled`/`toHaveAttribute`.
  */
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { MemoryRouter, Route, Routes } from 'react-router';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import type { Container, Item } from '@/types/inventory';
 import { useLayoutMode } from '@/hooks/use-layout-mode';
@@ -32,8 +32,8 @@ vi.mock('@/components/inventory/entity-form', () => ({ EntityForm: () => null })
 vi.mock('@/hooks/use-layout-mode', () => ({ useLayoutMode: vi.fn() }));
 
 const navigateSpy = vi.fn();
-vi.mock('react-router-dom', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('react-router-dom')>();
+vi.mock('react-router', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('react-router')>();
   return { ...actual, useNavigate: () => navigateSpy };
 });
 
@@ -137,6 +137,31 @@ function selected(name: string): boolean {
   return screen.getByRole('button', { name, hidden: true }).getAttribute('aria-pressed') === 'true';
 }
 
+/**
+ * Reads the exact `onClick` React attached to a DOM node and calls it
+ * directly — the only way to reach a handler on a `<button disabled>`
+ * bypassing the *disabled attribute*, as any non-native activation path
+ * would (a keyboard AT, a different pointer device, a future control that
+ * isn't a plain `<button>`).
+ *
+ * `fireEvent.click`/`el.click()` cannot be used for this: React's own
+ * SimpleEventPlugin (`shouldPreventMouseEvent`) swallows onClick/onMouseDown/
+ * etc. whenever the ELEMENT'S OWN LAST-RENDERED `disabled` PROP was true —
+ * it reads that from the fiber, not the live DOM attribute, so even
+ * `button.removeAttribute('disabled')` right before dispatch changes
+ * nothing (verified: the click still never reaches the handler). Reading
+ * the prop straight off React's internal `__reactProps$*` key on the node
+ * is what actually reaches `handleSelectAll` unconditionally, so this can
+ * only pass when the handler's OWN `bulkRunning` guard is what stops it.
+ */
+function reactOnClick(el: HTMLElement): () => void {
+  const key = Object.keys(el).find((k) => k.startsWith('__reactProps$'));
+  if (!key) throw new Error('no React props found on element — is this really an RTL-rendered node?');
+  const onClick = (el as unknown as Record<string, { onClick?: () => void }>)[key].onClick;
+  if (!onClick) throw new Error('element has no onClick prop');
+  return onClick;
+}
+
 beforeEach(() => {
   vi.mocked(useLayoutMode).mockReturnValue('sidebar');
   navigateSpy.mockClear();
@@ -214,6 +239,86 @@ test('Move, Queue, Tag and Delete are all disabled with a progress label while t
 
   await act(async () => { resolveItem20(); });
   await waitFor(() => expect(toastMock).toHaveBeenCalledWith('Deleted 3'));
+});
+
+test('#239: row checkboxes are inert while the delete loop runs, so a mid-loop click cannot be stomped by the end-of-loop selection', async () => {
+  let resolveItem20: (v?: unknown) => void = () => {};
+  deleteItemMock.mockImplementation((id: number) => {
+    if (id === 20) return new Promise((res) => { resolveItem20 = res; });
+    return Promise.resolve({});
+  });
+
+  renderPage();
+  // Select only the two items, leaving the bin (Nested A) unselected and
+  // free to click mid-loop.
+  fireEvent.click(screen.getByRole('button', { name: 'Select' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Select Item A' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Select Item B' }));
+  expect(selected('Select Nested A')).toBe(false);
+
+  fireEvent.click(within(selectBar()).getByRole('button', { name: 'Delete' }));
+  const dialog = screen.getByRole('dialog');
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Delete' }));
+
+  // Item A (20) is stuck in flight — the loop is parked mid-run.
+  await screen.findByText('Deleting… 1 of 2');
+  expect(within(selectBar()).getByText('2 selected')).toBeTruthy();
+
+  // Pre-fix, this click would toggle Nested A into `selected` right away
+  // (checkbox mid-loop was never gated) — only to have the loop's own
+  // `setSelected(new Set(failed))` silently erase that click's effect the
+  // moment the loop finished. Post-fix, the click must be a no-op from the
+  // very first frame: it never mutates `selected` at all.
+  fireEvent.click(screen.getByRole('button', { name: 'Select Nested A' }));
+  expect(selected('Select Nested A')).toBe(false);
+  expect(within(selectBar()).getByText('2 selected')).toBeTruthy();
+
+  await act(async () => { resolveItem20(); });
+  await waitFor(() => expect(toastMock).toHaveBeenCalledWith('Deleted 2'));
+
+  // Both items succeeded (no failures) and the bin was never touched by the
+  // mid-loop click — final selection is empty, not { container:10 }.
+  expect(deleteContainerMock).not.toHaveBeenCalled();
+  expect(selected('Select Nested A')).toBe(false);
+  expect(selected('Select Item A')).toBe(false);
+  expect(selected('Select Item B')).toBe(false);
+});
+
+test('#239: "All" is inert at the handler level while the delete loop runs, not just via the disabled attribute', async () => {
+  let resolveItem20: (v?: unknown) => void = () => {};
+  deleteItemMock.mockImplementation((id: number) => {
+    if (id === 20) return new Promise((res) => { resolveItem20 = res; });
+    return Promise.resolve({});
+  });
+
+  renderPage();
+  fireEvent.click(screen.getByRole('button', { name: 'Select' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Select Item A' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Select Item B' }));
+
+  fireEvent.click(within(selectBar()).getByRole('button', { name: 'Delete' }));
+  const dialog = screen.getByRole('dialog');
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Delete' }));
+  await screen.findByText('Deleting… 1 of 2');
+
+  const allBtn = within(selectBar()).getByRole('button', { name: 'All' }) as HTMLButtonElement;
+  expect(allBtn.disabled).toBe(true);
+
+  // A real click is already blocked by the disabled attribute alone — that
+  // would only pin React's own built-in disabled-swallow (it reads the
+  // fiber's last-rendered `disabled` prop, not the live DOM node — even
+  // `removeAttribute('disabled')` right before dispatch changes nothing),
+  // not this component's own guard. Calling the captured onClick directly
+  // reaches `handleSelectAll` exactly as a keyboard/programmatic activation
+  // path would, so this can only pass if the gate lives in the handler
+  // itself. Pre-fix, this call selected all three rows, including the bin
+  // (Nested A) that was never part of the running batch.
+  act(() => { reactOnClick(allBtn)(); });
+  expect(within(selectBar()).getByText('2 selected')).toBeTruthy();
+  expect(selected('Select Nested A')).toBe(false);
+
+  await act(async () => { resolveItem20(); });
+  await waitFor(() => expect(toastMock).toHaveBeenCalledWith('Deleted 2'));
 });
 
 test('Tag opens the picker in batch mode, applies additively to every selected item, and skips bins with a note', async () => {

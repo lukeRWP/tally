@@ -66,6 +66,41 @@ const ItemsService = {
     };
   },
 
+  /**
+   * Lock the container row a write is about to trust, and verify it is live.
+   *
+   * Closes the check-then-write TOCTOU (#88): the routes validate the target
+   * container via ContainersService.getActiveAreaId, but that read is
+   * unlocked and runs outside any transaction, so a container soft-deleted
+   * between that check and our INSERT/UPDATE would leave an active item under
+   * a deleted parent — "phantom" inventory, invisible in navigation yet still
+   * counted in reports/search. Re-checking with SELECT ... FOR UPDATE inside
+   * the SAME transaction as the write closes the window: every soft-delete
+   * that could orphan the item stamps the container row itself (the container
+   * cascade and the area cascade both UPDATE TALLY.containers), so an X lock
+   * on that one row serializes this write against them — whichever commits
+   * first, the other sees it.
+   *
+   * FOR UPDATE OF c keeps the lock scope minimal: one point lock on the
+   * container's PK, never a range, and the joined area row stays unlocked
+   * (the container row is the synchronization point — see above). The join
+   * and DELETED_AT predicates mirror getActiveAreaId exactly.
+   */
+  async _lockLiveContainer(tx, containerId, { statusCode = 404, message = 'Container not found' } = {}) {
+    const rows = await tx.query(
+      `SELECT c.ID FROM TALLY.containers c
+       JOIN TALLY.areas a ON c.AREA_ID = a.ID
+       WHERE c.ID = ? AND c.DELETED_AT IS NULL AND a.DELETED_AT IS NULL
+       FOR UPDATE OF c`,
+      [containerId]
+    );
+    if (!rows.length) {
+      const err = new Error(message);
+      err.statusCode = statusCode;
+      throw err;
+    }
+  },
+
   // ── Queries ────────────────────────────────────────────────────────────────
 
   async getByContainer(containerId) {
@@ -226,7 +261,7 @@ const ItemsService = {
     // Duplicating a column list is how that happens, so there is now only one
     // to keep in step. Adding CURRENT_VALUE_IS_ESTIMATE to a divergent pair
     // would have reproduced the same bug with the provenance flag.
-    const insert = (qrCode) => _db.query(
+    const insert = (tx, qrCode) => tx.query(
       `INSERT INTO TALLY.items
          (CONTAINER_ID, PRODUCT_ID, NAME, DESCRIPTION, QUANTITY, QR_CODE, PURCHASE_PRICE, CURRENT_VALUE, CURRENT_VALUE_IS_ESTIMATE, \`CONDITION\`, COMPLETENESS, STATUS)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')`,
@@ -248,16 +283,24 @@ const ItemsService = {
     );
 
     let result;
-    try {
-      result = await insert(generateCode('item'));
-    } catch (err) {
-      // Duplicate QR code — retry once with a new code
-      if (err.code === 'ER_DUP_ENTRY' && err.message.includes('qr_code')) {
-        result = await insert(generateCode('item'));
-      } else {
-        throw err;
+    await _db.withTransaction(async (tx) => {
+      // The route's liveness check on the target container is unlocked and
+      // pre-transactional; this locked re-check, in the same transaction as
+      // the INSERT, is the one that holds (#88) — see _lockLiveContainer.
+      await ItemsService._lockLiveContainer(tx, data.containerId);
+      try {
+        result = await insert(tx, generateCode('item'));
+      } catch (err) {
+        // Duplicate QR code — retry once with a new code. ER_DUP_ENTRY aborts
+        // only the statement, not the transaction, so the retry (and the
+        // container lock above) stay live inside it.
+        if (err.code === 'ER_DUP_ENTRY' && err.message.includes('qr_code')) {
+          result = await insert(tx, generateCode('item'));
+        } else {
+          throw err;
+        }
       }
-    }
+    });
 
     const propertyId = await ItemsService.getPropertyIdForItem(result.insertId);
     AuditService.logChange(userId, 'item', result.insertId, 'created', data, propertyId);
@@ -304,11 +347,18 @@ const ItemsService = {
   async move(id, newContainerId, userId, opts = {}) {
     const cross = opts.crossProperty;
     if (!cross) {
-      // The same-property path is UNTOUCHED — same statement, same audit.
-      await _db.query(
-        'UPDATE TALLY.items SET CONTAINER_ID = ? WHERE ID = ?',
-        [newContainerId, id]
-      );
+      // Same statement, same single 'moved' audit — but the check and the
+      // write now share one transaction (#88): the route's liveness check on
+      // the destination is unlocked, so without the locked re-check here a
+      // container recycled in between would swallow the item — see
+      // _lockLiveContainer.
+      await _db.withTransaction(async (tx) => {
+        await ItemsService._lockLiveContainer(tx, newContainerId, { message: 'Destination container not found' });
+        await tx.query(
+          'UPDATE TALLY.items SET CONTAINER_ID = ? WHERE ID = ?',
+          [newContainerId, id]
+        );
+      });
       const propertyId = await ItemsService.getPropertyIdForItem(id);
       AuditService.logChange(userId, 'item', id, 'moved', { containerId: newContainerId }, propertyId);
       return { item: await ItemsService.getById(id), consequences: null };
@@ -327,6 +377,9 @@ const ItemsService = {
       moveChanges: { containerId: newContainerId },
     };
     await _db.withTransaction(async (tx) => {
+      // Authoritative destination-liveness check (#88) — the route's was
+      // unlocked and pre-transactional. See _lockLiveContainer.
+      await ItemsService._lockLiveContainer(tx, newContainerId, { message: 'Destination container not found' });
       await tx.query(
         'UPDATE TALLY.items SET CONTAINER_ID = ? WHERE ID = ?',
         [newContainerId, id]
@@ -377,8 +430,20 @@ const ItemsService = {
 
   async restore(id, userId) {
     await _db.withTransaction(async (tx) => {
-      const rows = await tx.query('SELECT DELETE_BATCH_ID FROM TALLY.items WHERE ID = ?', [id]);
+      const rows = await tx.query('SELECT DELETE_BATCH_ID, CONTAINER_ID FROM TALLY.items WHERE ID = ?', [id]);
       const batchId = rows[0]?.DELETE_BATCH_ID || null;
+      const containerId = rows[0]?.CONTAINER_ID;
+      // The route already refused restoring into a recycled container, but
+      // with an unlocked pre-transactional read; this locked re-check in the
+      // restoring transaction is the one that holds (#88) — a container
+      // recycled between the route's check and this UPDATE would otherwise
+      // turn the restored item into phantom inventory. See _lockLiveContainer.
+      if (containerId != null) {
+        await ItemsService._lockLiveContainer(tx, containerId, {
+          statusCode: 409,
+          message: 'Restore the container this item was in before restoring the item',
+        });
+      }
       await tx.query(
         "UPDATE TALLY.items SET DELETED_AT = NULL, STATUS = 'active', DELETE_BATCH_ID = NULL WHERE ID = ?",
         [id]

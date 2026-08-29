@@ -25,7 +25,7 @@
  */
 import * as React from 'react';
 import { render, fireEvent, act } from '@testing-library/react';
-import { MemoryRouter, Route, Routes, useNavigate } from 'react-router-dom';
+import { MemoryRouter, Route, Routes, useNavigate } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { useScrollRestoration as UseScrollRestoration } from './use-scroll-restoration';
 
@@ -251,6 +251,26 @@ describe('useScrollRestoration', () => {
     fireEvent.click(getByText('back')); // POP back restores
     raf.flush();
     expect(el.scrollTop).toBe(480);
+  });
+
+  it('(g) unmounting while a POP-restore rAF is still pending cancels it (#239)', async () => {
+    // Pre-fix, the restore rAF scheduled on POP was never stored anywhere,
+    // so cleanup had nothing to cancel — cancelAnimationFrame was never
+    // called and a stale callback could still land after unmount.
+    installRafMock();
+    const cancelSpy = vi.spyOn(window, 'cancelAnimationFrame');
+    const useHook = await freshHook();
+
+    // Seed the cache directly so mounting on '/list' is a POP with a cached
+    // offset to restore — the exact path that schedules the rAF under test.
+    sessionStorage.setItem(STORAGE_KEY, JSON.stringify({ '/list': 480 }));
+
+    const { unmount } = renderHarness(useHook, ['/list']);
+
+    // Unmount BEFORE flushing the rAF queue — the restore is still pending.
+    unmount();
+
+    expect(cancelSpy).toHaveBeenCalled();
   });
 
   it('(e) a same-pathname REPLACE (Home\'s debounced search, #224) is a full no-op', async () => {

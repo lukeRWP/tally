@@ -13,7 +13,16 @@ function validate(schema, source = 'body') {
       }));
       return error(res, 'Validation failed', 400, errors);
     }
-    req[source] = value;
+    // Express 5 makes req.query a prototype getter with no setter (v4→v5
+    // migration guide, "req.query"), so `req.query = value` would be a silent
+    // sloppy-mode no-op and the coerced/defaulted Joi value would never land.
+    // Defining an own property shadows the getter; plain assignment keeps
+    // working for body/params.
+    if (source === 'query') {
+      Object.defineProperty(req, 'query', { value, writable: true, configurable: true, enumerable: true });
+    } else {
+      req[source] = value;
+    }
     next();
   };
 }

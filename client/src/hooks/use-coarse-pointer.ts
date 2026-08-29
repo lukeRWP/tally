@@ -30,6 +30,10 @@ export function useCoarsePointer(): boolean {
   const [coarse, setCoarse] = useState<boolean>(currentlyCoarse);
 
   useEffect(() => {
+    // Same guard as currentlyCoarse: jsdom builds no matchMedia, and suites
+    // that mount a consumer bare (the destination picker's) shouldn't have to
+    // stub it just to mean "a desk". Absent matchMedia = fine pointer.
+    if (!window.matchMedia) return;
     const mq = window.matchMedia(COARSE_QUERY);
     const onChange = () => setCoarse(mq.matches);
     // Re-read on mount: a dock/undock between the initial render and this

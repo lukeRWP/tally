@@ -336,6 +336,28 @@ test('manifest rows stay on one line — a long name / big qty cannot overlap th
   assert.ok(baselines[0] - baselines[2] === 14, 'consecutive rows are exactly one rowH apart');
 });
 
+// REGRESSION GUARD (#102): the QTY cell was 30pt — about 4.5 Courier chars at
+// the 11pt row size — so a 6-digit quantity ellipsised to "123…". The column
+// width now lives in PRESETS.large.qtyW and must seat 6 digits whole.
+test('a 6-digit manifest quantity prints unclipped', async () => {
+  Labels.init({ db: fakeDb(() => []), logger, config });
+  const buf = await Labels.renderManifestPdf({
+    header: { name: 'Camping Gear', qrCode: 'TLY-C-1', parentZone: 'Garage', breadcrumb: 'Home' },
+    rows: [{ name: 'Resistor 10k (bulk)', qty: 123456 }],
+  }, 'large');
+  assert.equal(pdfTextCount(buf, '123456'), 1, 'the full 6-digit quantity renders');
+  assert.equal(pdfTextRuns(buf).filter(r => /^123(?!456)/.test(r.text)).length, 0,
+    'no truncated remnant of it renders');
+
+  // And the geometry itself: 6 Courier digits at the row size fit the column.
+  const PDFDocument = require('pdfkit');
+  const doc = new PDFDocument({ size: [288, 432], margin: 0 });
+  doc.fontSize(11).font('Courier');
+  assert.ok(doc.widthOfString('123456') <= 44,
+    `6 digits (${doc.widthOfString('123456').toFixed(1)}pt) must fit the 44pt QTY column`);
+  doc.end();
+});
+
 test('renderManifestBundle concatenates several manifests into one PDF', async () => {
   Labels.init({ db: fakeDb(() => []), logger, config });
   const mk = (n, count) => ({ header: { name: n, qrCode: 'TLY-C-1', parentZone: 'Garage', breadcrumb: 'Home' },
@@ -401,21 +423,29 @@ test('single-line fields clamp instead of wrapping (pdfkit ignores lineBreak:fal
 });
 
 test('every width-constrained single-line field carries a height clamp', () => {
-  // Guardrail for the whole renderer: any .text() that sets `width` and asks
-  // for lineBreak:false must also set `height`, or it silently wraps.
+  // Guardrail for every pdfkit renderer: any .text() that sets `width` and
+  // asks for lineBreak:false must also set `height`, or it silently wraps —
+  // pdfkit runs its line breaker whenever `width` is present. The reports
+  // renderers shipped with exactly this bug (#126), so they are scanned too.
   const fs = require('fs');
-  const src = fs.readFileSync(require.resolve('../src/modules/labels/labels.service'), 'utf8');
+  const services = [
+    '../src/modules/labels/labels.service',
+    '../src/modules/reports/reports.service',
+  ];
   const offenders = [];
-  for (const m of src.matchAll(/\.text\(/g)) {
-    let depth = 0, i = m.index + m[0].length - 1;
-    for (; i < src.length; i++) {
-      if (src[i] === '(') depth++;
-      else if (src[i] === ')' && --depth === 0) break;
-    }
-    const call = src.slice(m.index, i + 1);
-    if (call.includes('lineBreak: false') && call.includes('width:') && !/height:/.test(call)) {
-      offenders.push(src.slice(0, m.index).split('\n').length);
+  for (const service of services) {
+    const src = fs.readFileSync(require.resolve(service), 'utf8');
+    for (const m of src.matchAll(/\.text\(/g)) {
+      let depth = 0, i = m.index + m[0].length - 1;
+      for (; i < src.length; i++) {
+        if (src[i] === '(') depth++;
+        else if (src[i] === ')' && --depth === 0) break;
+      }
+      const call = src.slice(m.index, i + 1);
+      if (call.includes('lineBreak: false') && call.includes('width:') && !/height:/.test(call)) {
+        offenders.push(`${service}:${src.slice(0, m.index).split('\n').length}`);
+      }
     }
   }
-  assert.deepEqual(offenders, [], `these .text() calls can wrap; add a height clamp (lines: ${offenders})`);
+  assert.deepEqual(offenders, [], `these .text() calls can wrap; add a height clamp (${offenders})`);
 });

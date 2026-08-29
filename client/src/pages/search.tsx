@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router';
 import { ArrowLeft, Search as SearchIcon, ScanLine, ArrowRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ColHead } from '@/components/ui/col-head';
@@ -10,7 +10,7 @@ import { useSearchItems } from '@/hooks/use-inventory';
 import { extractTlyCode } from '@/lib/tly';
 import { cn } from '@/lib/utils';
 import { useLayoutMode } from '@/hooks/use-layout-mode';
-import { useKeyboardNav } from '@/hooks/use-keyboard-nav';
+import { useKeyboardNav, useNavScrollIntoView } from '@/hooks/use-keyboard-nav';
 import { SplitView } from '@/components/layout/split-view';
 import { ItemPreview } from '@/components/inventory/item-preview';
 
@@ -87,7 +87,18 @@ export function SearchPage() {
    */
   const typedCode = extractTlyCode(query);
 
-  const { data: results, isLoading, isError, refetch } = useSearchItems(debounced, { status });
+  const { data: results, isLoading, isError, isPlaceholderData, refetch } = useSearchItems(debounced, { status });
+  // #238 — `useSearchItems` keeps the previous result set mounted (marked
+  // placeholder) while a new query/filter settles, so the list's height (and
+  // the shared scroll container's position, see use-scroll-restoration.ts)
+  // never collapses out from under the user. `results` can therefore briefly
+  // be the OLD query's rows — or its empty list — while `debounced`/`status`
+  // already read the NEW ones; the "Nothing matches" message below names
+  // `debounced` directly, so it must not fire off placeholder data. When the
+  // previous result set was itself empty there is nothing to preserve the
+  // height of, so that specific gap shows the loading skeleton instead of a
+  // blank pane.
+  const showSkeleton = isLoading || (isPlaceholderData && (results?.length ?? 0) === 0);
 
   /**
    * The chosen result, in the URL beside the query.
@@ -117,11 +128,18 @@ export function SearchPage() {
       select(ids[next]);
     },
     onEscape: () => select(null),
-    onOpen: () => { if (selectedId != null) navigate(`/item/${selectedId}`); },
+    onOpen: () => {
+      if (selectedId == null) return false;
+      navigate(`/item/${selectedId}`);
+      return true;
+    },
     // '/' already lives in this page's own input, so refocusing it is the
     // useful thing rather than navigating to the page you are on.
     onSearch: () => inputRef.current?.focus(),
   });
+  // Keeps the cursor on screen past one screenful of results (#235) — rows
+  // below carry the matching data-nav-id.
+  useNavScrollIntoView(selectedId);
 
   return (
     <div className="flex flex-col min-h-full">
@@ -197,7 +215,7 @@ export function SearchPage() {
           <p className="text-sm text-[var(--color-text-muted)] text-center pt-10">
             Type a name — results show where each thing lives.
           </p>
-        ) : isLoading ? (
+        ) : showSkeleton ? (
           <div className="flex flex-col gap-2">
             <Skeleton className="h-14" />
             <Skeleton className="h-14" />
@@ -223,6 +241,7 @@ export function SearchPage() {
                   {results.map((item) => (
                     <div
                       key={item.id}
+                      data-nav-id={item.id}
                       className={cn(
                         'rounded-[var(--radius-sm)]',
                         selectedId === item.id && 'bg-[var(--color-elevated)] ring-1 ring-[var(--color-text)]',
@@ -243,12 +262,18 @@ export function SearchPage() {
               ))}
             </>
           )
-        ) : (
+        ) : !isPlaceholderData ? (
+          // Reached with an empty (or absent) result set that is not loading
+          // and not an error. Structurally this can only happen once
+          // `isPlaceholderData` is false — the placeholder+empty case above
+          // is caught by `showSkeleton` — but the check is kept explicit so
+          // this message can never fire off stale data naming the wrong
+          // query (#238).
           <p className="text-sm text-[var(--color-text-muted)] text-center pt-10">
             Nothing matches “{debounced}”
             {status ? ' with that status — try All.' : '.'}
           </p>
-        )}
+        ) : null}
       </div>
     </div>
   );

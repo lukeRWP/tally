@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type RefObject } from 'react';
-import { useLocation, useNavigationType } from 'react-router-dom';
+import { useLocation, useNavigationType } from 'react-router';
 
 /**
  * Root-layout's scroll container is not the window (main-container is
@@ -75,6 +75,12 @@ export function useScrollRestoration(ref: RefObject<HTMLElement | null>) {
     const pathnameChanged = prevPathnameRef.current !== pathname;
     prevPathnameRef.current = pathname;
 
+    // Holds the POP-restore rAF's id so an unmount (or an interrupting
+    // pathname change) before the frame fires can cancel it — otherwise a
+    // stale callback lands after cleanup and stomps `scrollTop` on whatever
+    // page (or dead ref) is there by the time the frame runs (#239).
+    let restoreRafId: number | null = null;
+
     if (pathnameChanged) {
       if (navigationType === 'POP') {
         const cached = getCache().get(pathname);
@@ -84,7 +90,8 @@ export function useScrollRestoration(ref: RefObject<HTMLElement | null>) {
           // give layout one paint to catch up before restoring. If the
           // content ends up shorter than `cached`, the browser clamps — no
           // retry/observer machinery per spec.
-          requestAnimationFrame(() => {
+          restoreRafId = requestAnimationFrame(() => {
+            restoreRafId = null;
             if (ref.current) ref.current.scrollTop = cached;
           });
         }
@@ -119,6 +126,7 @@ export function useScrollRestoration(ref: RefObject<HTMLElement | null>) {
       el.removeEventListener('scroll', onScroll);
       window.removeEventListener('pagehide', persistCache);
       if (rafId != null) cancelAnimationFrame(rafId);
+      if (restoreRafId != null) cancelAnimationFrame(restoreRafId);
       // Route-leave persistence — the in-memory Map is already accurate
       // (updated continuously by the scroll listener above); this just
       // flushes it to sessionStorage so a reload doesn't lose it.

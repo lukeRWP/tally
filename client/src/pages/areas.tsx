@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router';
 import { Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ColHead } from '@/components/ui/col-head';
@@ -14,7 +14,7 @@ import { StructureTree } from '@/components/inventory/structure-tree';
 import { PropertyChips } from '@/components/inventory/property-chips';
 import { ContainerPreview } from '@/components/inventory/container-preview';
 import { useLayoutMode } from '@/hooks/use-layout-mode';
-import { useKeyboardNav } from '@/hooks/use-keyboard-nav';
+import { useKeyboardNav, useNavScrollIntoView } from '@/hooks/use-keyboard-nav';
 
 /**
  * The top of the place hierarchy, and the screen you build the house on.
@@ -89,8 +89,15 @@ export function AreasPage() {
     onMove: moveSelection,
     onEscape: clearSelection,
     onSearch: () => navigate('/search'),
-    onOpen: () => { if (selectedBin != null) navigate(`/container/${selectedBin}`); },
+    onOpen: () => {
+      if (selectedBin == null) return false;
+      navigate(`/container/${selectedBin}`);
+      return true;
+    },
   });
+  // Keeps the cursor on screen in a tree taller than the viewport (#235) —
+  // StructureTree's bin rows carry the matching data-nav-id.
+  useNavScrollIntoView(selectedBin);
 
   const { data: properties, isLoading, isError, refetch } = useProperties();
   const createProperty = useCreateProperty();

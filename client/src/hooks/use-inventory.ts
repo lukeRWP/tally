@@ -1,4 +1,4 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { queryKeys } from '@/lib/query-client';
 import type { Property, Area, Container, Item, BreadcrumbItem } from '@/types/inventory';
@@ -342,6 +342,22 @@ export interface SearchFilters {
   status?: string;
 }
 
+/**
+ * #238 — a query change (retyping, flipping a filter) used to flash the
+ * loading skeleton and briefly shrink the result list to whatever the new
+ * page happened to be (often empty), which clamped the shared scroll
+ * container (root-layout's `<main>`, see use-scroll-restoration.ts) back to
+ * the top. `placeholderData: keepPreviousData` keeps the last successful
+ * result set mounted (marked `isPlaceholderData: true`) while the new
+ * request is in flight, so the list's height — and the page's scroll
+ * position — never collapses out from under the user.
+ *
+ * Shared by both Home (recents-vs-results) and search.tsx (the dedicated
+ * search page) — the same query key shape, the same fix applies identically
+ * to both; callers that care about staleness read `isPlaceholderData` off
+ * the returned query object (see home.tsx / search.tsx) rather than this
+ * hook growing a second surface-specific variant.
+ */
 export function useSearchItems(query: string, filters?: SearchFilters) {
   return useQuery({
     queryKey: queryKeys.items.search(query, filters),
@@ -356,5 +372,6 @@ export function useSearchItems(query: string, filters?: SearchFilters) {
     },
     select: (data) => data.items,
     enabled: query.length >= 1,
+    placeholderData: keepPreviousData,
   });
 }

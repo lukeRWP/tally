@@ -24,6 +24,22 @@ const PROBLEM_TEXT: Record<string, string> = {
   offline: 'Offline',
 };
 
+// Same idiom as recent-activity / notification-list. The <60s branch never
+// shows here — inside 60s the printer still counts as online.
+function relativeTime(dateStr: string): string {
+  const diff = Math.floor((Date.now() - new Date(dateStr).getTime()) / 1000);
+  if (diff < 60) return 'just now';
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+  return `${Math.floor(diff / 86400)}d ago`;
+}
+
+// "Offline" alone hides how long the agent has been gone (#204) — a Pi that
+// missed one poll and one that died last Tuesday read identically.
+function offlineLabel(lastSeenAt: string | null): string {
+  return lastSeenAt ? `Offline · last seen ${relativeTime(lastSeenAt)}` : 'Offline';
+}
+
 export function PrinterSettings({ propertyId }: { propertyId?: number }) {
   const { data: printers } = usePrinters(propertyId);
   const { data: jobs } = usePrintJobs(propertyId);
@@ -88,7 +104,7 @@ agent_token = ${issuedToken}`}
             <PrinterIcon className="w-4 h-4" />
             <span className="text-sm font-medium">{printer.name}</span>
             <Badge variant={problem ? 'danger' : online ? 'success' : 'default'}>
-              {problem ?? (online ? 'Online' : 'Offline')}
+              {problem ?? (online ? 'Online' : offlineLabel(printer.lastSeenAt))}
             </Badge>
             <Button variant="outline" size="sm" className="ml-auto"
                     disabled={revokePrinter.isPending}

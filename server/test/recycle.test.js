@@ -98,6 +98,56 @@ test('restore refuses a nested bin whose parent bin is still deleted', async () 
   assert.ok(!sqls.some((s) => /SET DELETED_AT = NULL/i.test(s)));
 });
 
+// ── #88: the ancestor-liveness check locks the rows it trusts ───────────────
+// _assertAncestorsLive runs inside the restore transaction, but a plain
+// SELECT there is still a check-then-write: a concurrent soft-delete of an
+// ancestor could commit between the read and the un-delete UPDATEs, bringing
+// the batch back under a freshly deleted parent. The check must be a locking
+// read (FOR UPDATE) so it serializes with the delete cascades that stamp the
+// same rows.
+
+test('restore reads ancestor liveness FOR UPDATE, before any un-delete', async () => {
+  const { sqls } = harness({
+    'FROM TALLY\\.delete_batches b': [
+      { ID: 7, PROPERTY_ID: 3, ROOT_TYPE: 'container', ROOT_ID: 55, ROOT_NAME: 'Bin A' },
+    ],
+    'FROM TALLY\\.containers c JOIN TALLY\\.areas a': [
+      { PARENT_CONTAINER_ID: null, AREA_DELETED: null, PROP_DELETED: null, PARENT_DELETED: null },
+    ],
+  });
+
+  await Recycle.restore(7, 42);
+
+  const ancestorIdx = sqls.findIndex((s) => /FROM TALLY\.containers c JOIN TALLY\.areas a/i.test(s));
+  const firstUndeleteIdx = sqls.findIndex((s) => /SET DELETED_AT = NULL/i.test(s));
+  assert.ok(ancestorIdx >= 0, 'the ancestor-liveness check ran');
+  assert.match(sqls[ancestorIdx], /FOR UPDATE/i,
+    'the ancestor rows the restore trusts are locked, not merely read');
+  assert.ok(ancestorIdx < firstUndeleteIdx, 'checked (and locked) BEFORE anything is un-deleted');
+});
+
+test('every root type checks its ancestors with a locking read', async () => {
+  // area root → the property row; item root → container/area/property rows.
+  for (const [batch, ancestorRe, canned] of [
+    [{ ID: 10, PROPERTY_ID: 3, ROOT_TYPE: 'area', ROOT_ID: 4, ROOT_NAME: 'Garage' },
+      /FROM TALLY\.properties WHERE ID = \?/i, { DELETED_AT: null }],
+    [{ ID: 11, PROPERTY_ID: 3, ROOT_TYPE: 'item', ROOT_ID: 101, ROOT_NAME: 'Mug' },
+      /FROM TALLY\.items i JOIN TALLY\.containers c/i,
+      { CONTAINER_DELETED: null, AREA_DELETED: null, PROP_DELETED: null }],
+  ]) {
+    const { sqls } = harness({
+      'FROM TALLY\\.delete_batches b': [batch],
+      'FROM TALLY\\.properties WHERE ID': [canned],
+      'FROM TALLY\\.items i JOIN': [canned],
+    });
+    await Recycle.restore(batch.ID, 42);
+    const ancestorSql = sqls.find((s) => ancestorRe.test(s));
+    assert.ok(ancestorSql, `the ${batch.ROOT_TYPE}-root ancestor check ran`);
+    assert.match(ancestorSql, /FOR UPDATE/i,
+      `the ${batch.ROOT_TYPE}-root ancestor check locks the rows it trusts`);
+  }
+});
+
 test("a batch in someone else's property is 404, not 403", async () => {
   // The membership INNER JOIN returns nothing, so the batch is indistinguishable
   // from one that never existed — it must not leak that it exists.

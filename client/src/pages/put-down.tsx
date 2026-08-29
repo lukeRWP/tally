@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { PackageOpen, List, Undo2, X, ArrowRight } from 'lucide-react';
 import { TagScanner } from '@/components/scanner/tag-scanner';
 import { DestinationPicker } from '@/components/inventory/destination-picker';

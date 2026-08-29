@@ -35,7 +35,7 @@ export function ProductSearch({ initialQuery = '', onProductSelected }: ProductS
   const [onlineResults, setOnlineResults] = useState<SearchProduct[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
-  const debounceRef = useRef<ReturnType<typeof setTimeout>>();
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
