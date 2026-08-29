@@ -50,10 +50,14 @@ test('agentClaim coerces junk telemetry instead of failing the claim', () => {
   assert.deepEqual(mixed.value.printerStateReasons, ['media-empty'], 'non-string reasons are dropped');
 });
 
-test('agentAck requires ok and carries an optional error string', () => {
-  assert.equal(schema.agentAck.validate({ ok: true }).error, undefined);
-  assert.equal(schema.agentAck.validate({ ok: false, error: 'media-empty' }).error, undefined);
+test('agentAck requires ok AND the claimId fence, and carries an optional error string', () => {
+  assert.equal(schema.agentAck.validate({ ok: true, claimId: 'c1' }).error, undefined);
+  assert.equal(schema.agentAck.validate({ ok: false, claimId: 'c1', error: 'media-empty' }).error, undefined);
   assert.ok(schema.agentAck.validate({}).error);
+  // #104: an ack without its claim id skips the fence and could land on a
+  // LATER claim of the same job — the fence is mandatory, not best-effort.
+  assert.ok(schema.agentAck.validate({ ok: true }).error, 'an unfenced ack must be rejected');
+  assert.ok(schema.agentAck.validate({ ok: false, error: 'x' }).error);
 });
 
 // ── agent auth middleware ────────────────────────────────────────────────────
@@ -404,7 +408,7 @@ test('ackJob(ok) marks done; ack(fail) requeues until the attempt cap then fails
   // ok -> done
   let sql = '';
   PrintService.init({ db: fakeDb((s) => { sql = s; return { affectedRows: 1 }; }), logger, config });
-  assert.equal(await PrintService.ackJob(11, 7, true, null), 'done');
+  assert.equal(await PrintService.ackJob(11, 7, true, null, 'c1'), 'done');
   assert.match(sql, /STATUS\s*=\s*'done'/i);
   assert.match(sql, /PRINTED_AT/i);
 
@@ -413,14 +417,53 @@ test('ackJob(ok) marks done; ack(fail) requeues until the attempt cap then fails
     if (/SELECT/i.test(s)) return [{ ATTEMPTS: 1 }];
     return { affectedRows: 1 };
   }), logger, config });
-  assert.equal(await PrintService.ackJob(11, 7, false, 'media-empty'), 'queued');
+  assert.equal(await PrintService.ackJob(11, 7, false, 'media-empty', 'c1'), 'queued');
 
   // fail at the cap -> failed
   PrintService.init({ db: fakeDb((s) => {
     if (/SELECT/i.test(s)) return [{ ATTEMPTS: 2 }];   // this ack makes 3
     return { affectedRows: 1 };
   }), logger, config });
-  assert.equal(await PrintService.ackJob(11, 7, false, 'media-empty'), 'failed');
+  assert.equal(await PrintService.ackJob(11, 7, false, 'media-empty', 'c1'), 'failed');
+});
+
+test('ackJob refuses an unfenced ack and fences EVERY statement on CLAIM_ID (#104)', async () => {
+  // No claimId -> no write at all. When the fence was optional, an ack that
+  // simply omitted it matched on (ID, CLAIMED_BY, STATUS) alone — which a
+  // LATER claim of the same job by the same agent also satisfies, so a delayed
+  // duplicate ack could mark an in-flight print done or corrupt its attempts.
+  let queried = false;
+  PrintService.init({ db: fakeDb(() => { queried = true; return { affectedRows: 1 }; }), logger, config });
+  assert.equal(await PrintService.ackJob(11, 7, true, null), null, 'an ack with no claimId must not be honored');
+  assert.equal(await PrintService.ackJob(11, 7, false, 'x', null), null);
+  assert.equal(queried, false, 'an unfenced ack must never reach the database');
+
+  // With a claimId, every statement (done-update, attempts-select, fail-update)
+  // carries the fence and binds the id.
+  const seen = [];
+  PrintService.init({ db: fakeDb((s, p) => {
+    seen.push({ sql: s, params: p });
+    return /SELECT/i.test(s) ? [{ ATTEMPTS: 0 }] : { affectedRows: 1 };
+  }), logger, config });
+  await PrintService.ackJob(11, 7, true, null, 'c-A');
+  await PrintService.ackJob(11, 7, false, 'media-empty', 'c-A');
+  assert.equal(seen.length, 3, 'done-update + attempts-select + fail-update');
+  for (const { sql, params } of seen) {
+    assert.match(sql, /AND CLAIM_ID = \?/i, `must fence on CLAIM_ID: ${sql.slice(0, 60)}`);
+    assert.ok(params.includes('c-A'), 'the claim id is bound');
+  }
+});
+
+test("cancelJob covers a stuck 'claimed' job and clears its claim (#104 UI escape)", async () => {
+  // The stale sweep only runs inside claimNext — an agent that never polls
+  // again releases nothing, so user-side cancel is the ONLY escape for a job
+  // wedged in 'claimed'. Pin that it stays in the cancellable set.
+  let sql = '';
+  PrintService.init({ db: fakeDb((s) => { sql = s; return { affectedRows: 1 }; }), logger, config });
+  assert.equal(await PrintService.cancelJob(11, 42), true);
+  assert.match(sql, /IN\s*\('queued',\s*'held',\s*'claimed'\)/i,
+    "'claimed' must remain cancellable — it is the only escape when the agent is gone");
+  assert.match(sql, /CLAIM_ID\s*=\s*NULL/i, 'cancel clears the claim so a late ack cannot land on the row');
 });
 
 test('renderJobPdf renders as the queuing user so Phase 1 scoping still applies', async () => {
@@ -452,7 +495,7 @@ test('ackJob(fail) reports null when a concurrent sweep already requeued the cla
     return { affectedRows: 0 };
   }), logger, config });
 
-  assert.equal(await PrintService.ackJob(11, 7, false, 'media-empty'), null,
+  assert.equal(await PrintService.ackJob(11, 7, false, 'media-empty', 'c1'), null,
     'a no-op write must not report a status the row never took');
   assert.match(sql, /STATUS\s*=\s*'claimed'/i,
     "the failure UPDATE must re-assert STATUS='claimed', not just CLAIMED_BY");
@@ -536,7 +579,7 @@ test('revokeAgent returns false for an agent the caller cannot reach', async () 
 
 // ── routes ────────────────────────────────────────────────────────────────────
 
-test('every route is mounted with the correct auth middleware', () => {
+test('every route is mounted with the correct auth middleware', async () => {
   // Capturing only the path would verify nothing about authorization: an agent
   // route mounted with requireAuth (Pi 401s forever), or a user route mounted
   // with none (unauthenticated job queueing), would both still register 11
@@ -578,6 +621,14 @@ test('every route is mounted with the correct auth middleware', () => {
       // comparison isn't possible; assert a non-handler middleware precedes
       // the final handler instead.
       assert.ok(r.handlers.length >= 2, `${path} must have an auth middleware before its handler`);
+      // #104: existence is not enforcement. Probe the chain's first middleware
+      // with an unauthenticated request — it must 401 without calling next(),
+      // which only the real bearer-auth middleware does.
+      const probe = fakeRes();
+      let nexted = false;
+      await r.handlers[0]({ headers: {} }, probe, () => { nexted = true; });
+      assert.equal(nexted, false, `${path} must not pass an unauthenticated request through`);
+      assert.equal(probe.statusCode, 401, `${path}'s first middleware must actually enforce bearer auth`);
     }
   }
   assert.equal(routes.length, EXPECTED.length, 'no unexpected extra routes registered');

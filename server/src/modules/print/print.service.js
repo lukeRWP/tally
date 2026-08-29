@@ -258,24 +258,27 @@ const PrintService = {
 
   // claimId fences the ack to the specific claim it belongs to. A retried or
   // delayed ack could otherwise land on a LATER claim of the same job (same
-  // agent, also 'claimed') and wrongly mark an in-flight print done.
+  // agent, also 'claimed') and wrongly mark an in-flight print done. The fence
+  // is MANDATORY (#104): when it was optional, an ack that simply omitted
+  // claimId skipped the fence entirely and reopened exactly that hole. The
+  // schema already requires it on the route; refusing here as well keeps a
+  // direct caller from acking unfenced.
   async ackJob(jobId, agentId, ok, errorText, claimId) {
-    const fence = claimId ? ' AND CLAIM_ID = ?' : '';
-    const fenceParam = claimId ? [claimId] : [];
+    if (!claimId) return null;
     if (ok) {
       const result = await _db.query(
         `UPDATE TALLY.print_jobs
             SET STATUS = 'done', PRINTED_AT = NOW(), LAST_ERROR = NULL
-          WHERE ID = ? AND CLAIMED_BY = ? AND STATUS = 'claimed'${fence}`,
-        [jobId, agentId, ...fenceParam]
+          WHERE ID = ? AND CLAIMED_BY = ? AND STATUS = 'claimed' AND CLAIM_ID = ?`,
+        [jobId, agentId, claimId]
       );
       return result.affectedRows > 0 ? 'done' : null;
     }
 
     const rows = await _db.query(
       `SELECT ATTEMPTS FROM TALLY.print_jobs
-        WHERE ID = ? AND CLAIMED_BY = ? AND STATUS = 'claimed'${fence}`,
-      [jobId, agentId, ...fenceParam]
+        WHERE ID = ? AND CLAIMED_BY = ? AND STATUS = 'claimed' AND CLAIM_ID = ?`,
+      [jobId, agentId, claimId]
     );
     if (rows.length === 0) return null;
 
@@ -290,8 +293,8 @@ const PrintService = {
       `UPDATE TALLY.print_jobs
           SET STATUS = ?, ATTEMPTS = ?, LAST_ERROR = ?,
               CLAIM_ID = NULL, CLAIMED_BY = NULL, CLAIMED_AT = NULL
-        WHERE ID = ? AND CLAIMED_BY = ? AND STATUS = 'claimed'${fence}`,
-      [nextStatus, nextAttempts, errorText || null, jobId, agentId, ...fenceParam]
+        WHERE ID = ? AND CLAIMED_BY = ? AND STATUS = 'claimed' AND CLAIM_ID = ?`,
+      [nextStatus, nextAttempts, errorText || null, jobId, agentId, claimId]
     );
     return written.affectedRows > 0 ? nextStatus : null;
   },
