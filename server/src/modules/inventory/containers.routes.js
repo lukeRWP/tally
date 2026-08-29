@@ -117,16 +117,15 @@ module.exports = function containersRoutes({ app, db, logger }) {
       // Resolve property from the area in body
       const propertyId = await AreasService.getPropertyIdForArea(value.areaId);
       if (!propertyId) return error(res, 'Area not found', 404);
-      // If nesting under a parent, it must be a LIVE container in the SAME area
-      // (a container's area always equals its parent's). Blocks cross-area /
-      // cross-property nesting and nesting under a recycled container.
-      if (value.parentContainerId != null) {
-        const parentAreaId = await ContainersService.getActiveAreaId(value.parentContainerId);
-        if (parentAreaId == null) return error(res, 'Parent container not found', 404);
-        if (String(parentAreaId) !== String(value.areaId)) {
-          return error(res, 'Parent container must be in the same area', 400);
-        }
-      }
+      // The parent-container rules (must be a LIVE container in the SAME
+      // area) are enforced by ContainersService.create INSIDE its
+      // transaction, under a FOR UPDATE lock on the parent row (#251). A
+      // route-level pre-check here was the same check-then-write TOCTOU #88
+      // closed for items — and unlike the move route's advisory pre-check
+      // (which guards a preview/confirm gate), nothing here consumed its
+      // answer, while it ran BEFORE the role gate and so leaked parent
+      // liveness to callers with no access to the parent's property. One
+      // check, correctly placed: the locked one.
       req.params.propertyId = propertyId;
       next();
     },
@@ -204,7 +203,8 @@ module.exports = function containersRoutes({ app, db, logger }) {
 
         // Liveness next, BEFORE the confirm gate below — a destination that
         // was recycled must 404 up front, not after the caller has already
-        // confirmed a lossy move only to hit a dead end. ContainersService.move
+        // confirmed a lossy move only to hit a dead end. This read is
+        // ADVISORY ONLY (#251): ContainersService.move
         // re-checks this itself (under a FOR UPDATE lock, so it stays
         // authoritative against a same-instant delete), but that check runs
         // deep inside the transaction the preview below would otherwise sit

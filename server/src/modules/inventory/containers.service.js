@@ -2,6 +2,14 @@ const { generateCode } = require('../../utils/qr');
 const ClosureTableService = require('./closure-table.service');
 const AuditService = require('../audit/audit.service');
 const RecycleService = require('../recycle/recycle.service');
+
+// #252's freeze argument requires the advisory subtree read and the in-tx
+// authoritative re-read to evaluate the SAME predicate — one constant so
+// they cannot drift apart silently (a clause appended to one but not the
+// other would quietly unfreeze the lemma).
+const SUBTREE_IDS_SQL =
+  'SELECT DESCENDANT_ID FROM TALLY.container_paths WHERE ANCESTOR_ID = ? AND DEPTH > 0';
+
 const Reconcile = require('./move-reconcile.service');
 
 let _db = null;
@@ -178,6 +186,38 @@ const ContainersService = {
     // a half-created container (row but no closure path) corrupts every tree read.
     const insertContainer = (qrCode) =>
       _db.withTransaction(async (tx) => {
+        if (data.parentContainerId) {
+          // Lock the parent row this write is about to trust (#251) — the
+          // same check-then-write TOCTOU #88 closed for item create/move,
+          // same SQL shape as items.service's _lockLiveContainer, plus the
+          // AREA_ID it returns for the same-area rule. This is the tx's
+          // first statement, FOR UPDATE OF c: a point lock on the parent's
+          // PK, which every path that could invalidate the check stamps —
+          // the delete cascades UPDATE this row, and a concurrent move of
+          // the parent to another area holds it in its statement-0 lock set
+          // — so whichever commits first, the other sees it. An unlocked
+          // pre-tx check left a window where the parent was recycled (or
+          // moved out of the area) between check and INSERT: an active
+          // child under a hidden or cross-area parent, invisible in
+          // navigation yet still counted in reports/search.
+          const parentRows = await tx.query(
+            `SELECT c.AREA_ID FROM TALLY.containers c
+             JOIN TALLY.areas a ON c.AREA_ID = a.ID
+             WHERE c.ID = ? AND c.DELETED_AT IS NULL AND a.DELETED_AT IS NULL
+             FOR UPDATE OF c`,
+            [data.parentContainerId]
+          );
+          if (!parentRows.length) {
+            const err = new Error('Parent container not found');
+            err.statusCode = 404;
+            throw err;
+          }
+          if (String(parentRows[0].AREA_ID) !== String(data.areaId)) {
+            const err = new Error('Parent container must be in the same area');
+            err.statusCode = 400;
+            throw err;
+          }
+        }
         const result = await tx.query(
           `INSERT INTO TALLY.containers (AREA_ID, PARENT_CONTAINER_ID, NAME, TYPE, DESCRIPTION, QR_CODE)
            VALUES (?, ?, ?, ?, ?, ?)`,
@@ -282,15 +322,66 @@ const ContainersService = {
       ? (await _closureTable.getAncestors(newParentContainerId)).map((r) => Number(r.ANCESTOR_ID))
       : [];
 
+    // The mover's whole SUBTREE joins the lock set (#252). moveNode's Step-3
+    // DELETE replays ancestors(mover) × subtree(mover) IN-lists materialized
+    // by its Step-1/2 reads, and every row a move's rewrite touches has its
+    // DESCENDANT in that mover's subtree. Two moves with overlapping subtrees
+    // (one mover an ancestor of the other — A→B while W∈subtree(A)→S) used to
+    // hold DISJOINT lock sets, run fully concurrently, and whichever Step-3
+    // landed second deleted closure rows the partner had just inserted (the
+    // fresh R→W edge): a lost ancestry edge, silent — no cycle, no error.
+    // With the subtree locked, two rewrites that could touch the same closure
+    // row share a subtree member, i.e. a container row in BOTH lock sets, so
+    // they serialize. Advisory here (pool, pre-tx) exactly like the ancestor
+    // chain above; re-verified post-lock below. Not net-new locking for most
+    // moves: the AREA_ID cascade at the end of this tx already X-locks every
+    // subtree row — this acquires them up front, in the one global order.
+    // Same SQL text as the in-tx re-read on purpose: same predicate, same
+    // rows — only the connection (pool vs tx) separates advisory from
+    // authoritative.
+    const expectedSubtree = (await _db.query(
+      SUBTREE_IDS_SQL,
+      [id]
+    )).map((r) => Number(r.DESCENDANT_ID));
+
     await _db.withTransaction(async (tx) => {
       const lockIds = [...new Set([
         Number(id),
+        ...expectedSubtree,
         ...(newParentContainerId ? [Number(newParentContainerId), ...expectedAncestors] : []),
       ])].sort((a, b) => a - b);
       await tx.query(
         `SELECT ID FROM TALLY.containers WHERE ID IN (${lockIds.map(() => '?').join(', ')}) FOR UPDATE`,
         lockIds
       );
+
+      // Post-lock (#252): the subtree must be exactly the rows we locked.
+      // Runs for EVERY move — root moves rewrite the closure too. This (or
+      // the chain re-read below) is the tx's first plain read, so the read
+      // view starts after the lock waits and sees every commit they let
+      // through. Drift means a concurrent move re-shaped the subtree between
+      // the advisory read and our lock grant — the rows we hold are the wrong
+      // mutex and moveNode's lists would replay a stale membership — so
+      // refuse and let the retry lock the settled tree. Once verified, the
+      // subtree is FROZEN until we commit: a member can only leave as some
+      // move's mover (a row we hold), only join as some move's destination
+      // (a row we hold), and the mover's own ancestor chain can only change
+      // via a move whose locked subtree contains our mover (a row we hold) —
+      // so the lists moveNode derives under these locks stay true through
+      // its Step-3 DELETE.
+      const subtreeNow = await tx.query(
+        SUBTREE_IDS_SQL,
+        [id]
+      );
+      const subtreeIds = new Set(subtreeNow.map((r) => Number(r.DESCENDANT_ID)));
+      const subtreeDrifted =
+        subtreeIds.size !== expectedSubtree.length ||
+        expectedSubtree.some((d) => !subtreeIds.has(d));
+      if (subtreeDrifted) {
+        const err = new Error('The container tree changed while this move was being checked — try again');
+        err.statusCode = 409;
+        throw err;
+      }
 
       // Effective area: derived from the destination PARENT, never trusted from
       // the caller. Moving under a parent in another area without a matching
@@ -302,8 +393,8 @@ const ContainersService = {
 
       if (newParentContainerId) {
         // Post-lock (#87): the destination's ancestor chain must be exactly
-        // the set of rows we locked. This is the first plain read in the tx,
-        // so the read view starts HERE — after every lock wait — and sees
+        // the set of rows we locked. Post-lock plain reads (the subtree
+        // re-read above opened the read view, after every lock wait) see
         // every commit those waits let through. A drifted chain means a
         // concurrent move re-parented the destination between the advisory
         // read and our locks; the rows we hold are then the wrong mutex, so
