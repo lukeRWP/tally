@@ -292,7 +292,13 @@ test('runNow never rejects even when the failure-recording write also throws', a
 
 // ── IMPORTANT 4: the daily cap is enforced in runNow too, not only queue() ───
 
-test('runNow refuses to search once the daily cap is reached, and ends failed', async () => {
+test('runNow refuses to search once the daily cap is reached, and leaves the row queued (#210)', async () => {
+  // Pre-#210 this ended 'failed' — terminal, no manual re-run in v1 — which
+  // turned a temporary daily-budget condition into a permanent per-row
+  // failure. The fix: a capped run records why in LAST_ERROR but does not
+  // touch STATUS, so the row (already 'queued' at this point — this check
+  // runs before the 'searching' transition) stays 'queued' and list()'s own
+  // batch trigger can pick it up again once the cap rolls over.
   const writes = [];
   let searcherCalled = false;
   Matches.init({
@@ -312,8 +318,9 @@ test('runNow refuses to search once the daily cap is reached, and ends failed', 
 
   assert.equal(searcherCalled, false, 'a capped run must not spend a paid search');
   assert.equal(writes.length, 1, 'only the refusal write happens — no searching transition');
-  assert.match(writes[0].sql, /STATUS = 'failed'/,
-    'terminal rather than left queued, or list()\'s batch retry would hit the cap forever');
+  assert.ok(!/STATUS/.test(writes[0].sql),
+    '#210: the row must not be flipped to failed (or any other status) — it stays queued');
+  assert.match(writes[0].sql, /LAST_ERROR = \?/, 'the cap message is still recorded for the worklist');
   assert.ok(writes[0].params.some((p) => /daily/i.test(String(p))),
     'LAST_ERROR names the cap so the worklist shows why, per IMPORTANT 4');
 });
@@ -511,6 +518,83 @@ test('list() retries at most 5 queued rows per call', async () => {
   }
   assert.equal(ran.length, 5,
     'a big backlog must not fire dozens of concurrent runner calls from one GET');
+});
+
+// ── #210: the daily cap is checked ONCE per list() batch, not per row ───────
+//
+// Before the fix, an exhausted cap did not stop list() from re-selecting and
+// dispatching the same queued rows every poll — runNow() refused each one and
+// marked it 'failed' (terminal, no manual re-run in v1), so 20 queued rows
+// behind an exhausted cap burned into 'failed' 5 at a time, and once failed
+// they never got a chance to search again even after the cap rolled over.
+
+test('list() skips the whole batch when the daily cap is exhausted, leaving rows queued', async () => {
+  Matches.init({
+    db: fakeDb((s) => {
+      // SUM(SEARCH_COUNT) checked BEFORE the sweep's /UPDATE/i: countToday's
+      // own SQL contains "UPDATED_AT" (the DATE_SUB filter column), which
+      // /UPDATE/i also matches as a substring — check order matters here.
+      if (/SUM\(SEARCH_COUNT\)/.test(s)) return [{ N: 100 }];        // cap exhausted
+      if (/UPDATE/i.test(s)) return { affectedRows: 0 };            // the sweep
+      return [
+        { ID: 11, ITEM_ID: 1, STATUS: 'queued', CANDIDATES: null, LAST_ERROR: null,
+          ATTEMPTS: 0, CREATED_AT: new Date(), ITEM_NAME: 'Drill', CONTAINER_NAME: 'Shelf' },
+        { ID: 12, ITEM_ID: 2, STATUS: 'queued', CANDIDATES: null, LAST_ERROR: null,
+          ATTEMPTS: 1, CREATED_AT: new Date(), ITEM_NAME: 'Mug', CONTAINER_NAME: 'Shelf' },
+      ];
+    }),
+    logger, config,
+  });
+
+  const ran = [];
+  const original = Matches.runNow;
+  Matches.runNow = async (id) => { ran.push(id); };
+  try {
+    const result = await Matches.list(1, 42);
+    assert.deepEqual(ran, [], 'no runNow calls are dispatched while the cap is exhausted');
+    assert.ok(result.every((r) => r.status === 'queued'),
+      'the rows themselves are untouched — still queued, not burned into failed');
+  } finally {
+    Matches.runNow = original;
+  }
+});
+
+test('list() still dispatches the batch as before when the cap has room', async () => {
+  Matches.init({
+    db: fakeDb((s) => {
+      if (/SUM\(SEARCH_COUNT\)/.test(s)) return [{ N: 3 }];         // plenty of room
+      if (/UPDATE/i.test(s)) return { affectedRows: 0 };           // the sweep
+      return [{ ID: 11, ITEM_ID: 1, STATUS: 'queued', CANDIDATES: null, LAST_ERROR: null,
+                ATTEMPTS: 0, CREATED_AT: new Date(), ITEM_NAME: 'Drill', CONTAINER_NAME: 'Shelf' }];
+    }),
+    logger, config,
+  });
+
+  const ran = [];
+  const original = Matches.runNow;
+  Matches.runNow = async (id) => { ran.push(id); };
+  try {
+    await Matches.list(1, 42);
+    assert.deepEqual(ran, [11], 'the batch still runs normally when the cap check reports room');
+  } finally {
+    Matches.runNow = original;
+  }
+});
+
+test('list() does not query the cap at all when there is no queued row to dispatch', async () => {
+  let countTodayCalled = false;
+  Matches.init({
+    db: fakeDb((s) => {
+      if (/SUM\(SEARCH_COUNT\)/.test(s)) { countTodayCalled = true; return [{ N: 0 }]; }
+      if (/UPDATE/i.test(s)) return { affectedRows: 0 };
+      return [{ ID: 1, ITEM_ID: 1, STATUS: 'ready', CANDIDATES: '[]', LAST_ERROR: null,
+                ATTEMPTS: 0, CREATED_AT: new Date(), ITEM_NAME: 'X', CONTAINER_NAME: 'S' }];
+    }),
+    logger, config,
+  });
+
+  await Matches.list(1, 42);
+  assert.equal(countTodayCalled, false, 'nothing to dispatch means no reason to spend a cap query');
 });
 
 // Distinguishes the two products.BARCODE lookups resolve itself issues
