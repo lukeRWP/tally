@@ -355,6 +355,59 @@ const ContainersService = {
         lockIds
       );
 
+      // Root move into a specific area (#256): lock the destination AREA row
+      // right here — the statement immediately after the container lock
+      // above, before anything else in this transaction runs. Areas are a
+      // DIFFERENT id space from the container family's ascending lock set,
+      // so this can't be folded into that IN-list (there is no parent
+      // container row to join it through — that's exactly the case the
+      // b6-t1 "the cascade takes locks on container rows" reasoning below
+      // doesn't cover: a root move plants the mover directly in the area,
+      // with no locked container row standing in for it). It has to be its
+      // own point lock, and it has to land in ONE fixed position every root
+      // move takes it, for the same reason #87 fixed the ancestor lock's
+      // position: so no concurrent operation can ever observe these two
+      // locks acquired in the opposite order and deadlock against it.
+      //
+      // The only OTHER operation that ever locks this exact area row is
+      // AreasService.cascadeDelete, and its own internal order is
+      // CONTAINERS-then-AREA: it soft-deletes every container CURRENTLY in
+      // the area (a mass "WHERE AREA_ID = ?" UPDATE, which X-locks each of
+      // those rows) before it finally updates — and locks — the area row
+      // itself, last. A root mover and its subtree are, by definition, NOT
+      // YET in the destination area at any point before this transaction
+      // commits, so that cascade's container UPDATE can never match (and so
+      // can never contend for) the rows our statement-0 lock above just
+      // took. The area row is the ONLY resource the two operations actually
+      // share. Taking it here — after our own container lock, before we
+      // trust anything about the area — means whichever transaction reaches
+      // that one shared row first simply makes the other wait behind it;
+      // neither ever holds a row the other one needs, so there is no cycle
+      // to deadlock on, in either direction. (This is the same standing
+      // family rule recycle.service.js's restore follows for its property
+      // lock: an area/property-family lock is always taken in one fixed,
+      // predictable position relative to the container-family lock, never
+      // left to fall wherever a later branch happens to run it — see
+      // _assertAncestorsLive's lock-order comment.)
+      //
+      // Unlike the ancestor/subtree locks above, there is no separate
+      // pre-tx advisory read to drift-check against here: this single
+      // locked read IS the authoritative check, so a dead area is a
+      // straightforward 404 (matching every other "the thing you're
+      // attaching to doesn't exist" case in this family), not a 409 — there
+      // is no earlier answer for it to have drifted away from.
+      if (!newParentContainerId && newAreaId !== undefined) {
+        const areaLockRows = await tx.query(
+          'SELECT ID FROM TALLY.areas WHERE ID = ? AND DELETED_AT IS NULL FOR UPDATE',
+          [newAreaId]
+        );
+        if (!areaLockRows.length) {
+          const err = new Error('Destination area not found');
+          err.statusCode = 404;
+          throw err;
+        }
+      }
+
       // Post-lock (#252): the subtree must be exactly the rows we locked.
       // Runs for EVERY move — root moves rewrite the closure too. This (or
       // the chain re-read below) is the tx's first plain read, so the read
@@ -444,21 +497,13 @@ const ContainersService = {
           throw err;
         }
         effectiveAreaId = parentAreaId;
-      } else if (newAreaId !== undefined) {
-        // Root move into a specific area — that area must be LIVE, or the
-        // container (and its whole subtree, via the AREA_ID cascade below)
-        // would be planted in a soft-deleted area: phantom inventory that's
-        // hidden from area navigation but still surfaces in search/reports.
-        const areaRows = await tx.query(
-          'SELECT ID FROM TALLY.areas WHERE ID = ? AND DELETED_AT IS NULL',
-          [newAreaId]
-        );
-        if (!areaRows.length) {
-          const err = new Error('Destination area not found');
-          err.statusCode = 404;
-          throw err;
-        }
       }
+      // else: root move. If newAreaId was given, it was already locked
+      // (#256, statement 1 above) and confirmed live BEFORE any of this
+      // branch's logic ran; effectiveAreaId already carries it from the
+      // `let effectiveAreaId = newAreaId` above. If newAreaId is undefined,
+      // the container simply keeps its current area — no cascade needed
+      // below.
 
       const fields = ['PARENT_CONTAINER_ID = ?'];
       const values = [newParentContainerId || null];
