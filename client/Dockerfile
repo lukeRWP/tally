@@ -9,6 +9,9 @@ RUN npm run build
 # 101) and listens on 8080 by default, with cache/pid/temp paths pre-chowned
 # for that user — no manual permission surgery needed (trivy DS-0002, #46).
 FROM nginxinc/nginx-unprivileged:alpine
+# The base image already runs unprivileged; the explicit USER satisfies
+# trivy's textual DS-0002 check (it doesn't resolve inherited users).
+USER nginx
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=build /app/dist /usr/share/nginx/html
 EXPOSE 8080
