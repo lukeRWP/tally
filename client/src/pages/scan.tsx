@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { useState, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { ScanLine, ArrowRight } from 'lucide-react';
 import { TagScanner } from '@/components/scanner/tag-scanner';
 import { Button } from '@/components/ui/button';

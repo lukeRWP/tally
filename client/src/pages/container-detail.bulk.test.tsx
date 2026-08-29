@@ -20,7 +20,7 @@
  * instead of `toBeInTheDocument`/`toBeDisabled`/`toHaveAttribute`.
  */
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { MemoryRouter, Route, Routes } from 'react-router';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import type { Container, Item } from '@/types/inventory';
 import { useLayoutMode } from '@/hooks/use-layout-mode';
@@ -32,8 +32,8 @@ vi.mock('@/components/inventory/entity-form', () => ({ EntityForm: () => null })
 vi.mock('@/hooks/use-layout-mode', () => ({ useLayoutMode: vi.fn() }));
 
 const navigateSpy = vi.fn();
-vi.mock('react-router-dom', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('react-router-dom')>();
+vi.mock('react-router', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('react-router')>();
   return { ...actual, useNavigate: () => navigateSpy };
 });
 

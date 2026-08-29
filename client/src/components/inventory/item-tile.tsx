@@ -1,4 +1,4 @@
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { Badge } from '@/components/ui/badge';
 import { getItemIcon } from '@/lib/item-icons';
 import { COMPLETENESS_LABEL, isPartial } from '@/lib/completeness';

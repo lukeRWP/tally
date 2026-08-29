@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router';
 import {
   Pencil, ArrowRightLeft, Trash2, Printer, HandCoins, Share2,
   MoreHorizontal, X, ChevronRight, Camera, Scissors,

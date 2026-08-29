@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { EntityForm } from '@/components/inventory/entity-form';
 import { Button } from '@/components/ui/button';
 import { Select } from '@/components/ui/select';

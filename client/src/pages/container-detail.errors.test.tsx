@@ -14,7 +14,7 @@
  */
 import { beforeEach, expect, test, vi } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/react';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { MemoryRouter, Route, Routes } from 'react-router';
 import type { Container, Item } from '@/types/inventory';
 import { ContainerDetail } from './container-detail';
 
