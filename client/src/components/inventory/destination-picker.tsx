@@ -2,7 +2,8 @@ import * as React from 'react';
 import { X, MapPin, Plus } from 'lucide-react';
 import { api } from '@/lib/api';
 import { useProperties, useAreas, useContainers } from '@/hooks/use-inventory';
-import { useKeyboardNav } from '@/hooks/use-keyboard-nav';
+import { useKeyboardNav, useNavScrollIntoView } from '@/hooks/use-keyboard-nav';
+import { useCoarsePointer } from '@/hooks/use-coarse-pointer';
 import { CreateContainerDialog } from '@/components/inventory/create-container-dialog';
 import { cn } from '@/lib/utils';
 
@@ -105,11 +106,19 @@ export function DestinationPicker({
       : Math.min(containerList.length - 1, Math.max(0, at + delta))));
   }, [containerList.length]);
 
+  // Gate on the pointer, like every page surface gates on its chrome (#235):
+  // a coarse-only tablet fires no j/k, but leaving the ring live there was
+  // half a pattern — this component has no layout mode of its own, so the
+  // pointer IS its "is there a keyboard to serve" signal.
+  const coarse = useCoarsePointer();
   useKeyboardNav({
+    enabled: !coarse,
     onMove: moveHighlight,
     onOpen: () => {
       const bin = containerList[highlightIdx];
-      if (bin) onPick({ id: bin.id, name: bin.name, areaId: bin.areaId });
+      if (!bin) return false;
+      onPick({ id: bin.id, name: bin.name, areaId: bin.areaId });
+      return true;
     },
     // Deliberately no onEscape: this panel has no Esc-to-close affordance of
     // its own (only the X button calls onClose), and both places that mount
@@ -121,6 +130,10 @@ export function DestinationPicker({
     // omitting it here just avoids adding a SECOND reaction (closing this
     // picker) to the same keypress on top of whatever the host page does.
   });
+  // Keeps the cursor visible inside this panel's own overflow-y-auto bin list
+  // (#235): block 'nearest' scrolls the nearest scrollable ancestor, which is
+  // that list, not the page. Rows below carry the matching data-nav-id.
+  useNavScrollIntoView(highlightIdx === -1 ? null : containerList[highlightIdx]?.id ?? null);
 
   return (
     <>
@@ -183,6 +196,7 @@ export function DestinationPicker({
                 <button
                   key={c.id}
                   type="button"
+                  data-nav-id={c.id}
                   onClick={() => onPick({ id: c.id, name: c.name, areaId: c.areaId })}
                   className={cn(
                     'flex items-center gap-2 py-2.5 border-b border-[var(--color-rule)] last:border-b-0 text-left',

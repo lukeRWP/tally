@@ -142,6 +142,36 @@ test('a rigged failure continues the loop and reports a truthful partial outcome
   expect(dismissMock).toHaveBeenCalledWith(3);
 });
 
+test('#239: the per-row dismiss X is disabled while the bulk dismiss loop runs', async () => {
+  let resolveSecond: (v?: unknown) => void = () => {};
+  dismissMock.mockImplementation((id: number) => {
+    if (id === 2) return new Promise((res) => { resolveSecond = res; });
+    return Promise.resolve({});
+  });
+
+  renderList();
+  fireEvent.click(screen.getByRole('button', { name: 'Dismiss 3' }));
+  await screen.findByText('Dismissing… 2 of 3');
+
+  dismissMock.mockClear();
+  // Racing the loop with a row's own X would double-count against the
+  // loop's own outcome (a stale "succeed" on a row it's about to reach, or a
+  // 404 on one it already has) — the button must be disabled, and even a
+  // synthetic click through that must not call dismiss.
+  const xButtons = screen.getAllByRole('button', { name: 'Dismiss notification' });
+  expect(xButtons.length).toBe(3);
+  xButtons.forEach((btn) => expect((btn as HTMLButtonElement).disabled).toBe(true));
+  fireEvent.click(xButtons[0]);
+  expect(dismissMock).not.toHaveBeenCalled();
+
+  resolveSecond();
+  await waitFor(() => expect(toastMock).toHaveBeenCalledWith('Dismissed 3'));
+
+  // Loop finished — a row's own X is live again.
+  const xAfter = screen.getAllByRole('button', { name: 'Dismiss notification' })[0] as HTMLButtonElement;
+  expect(xAfter.disabled).toBe(false);
+});
+
 test('the dismiss button is disabled and shows progress while the loop runs, and mark-all-read stays untouched', async () => {
   let resolveSecond: (v?: unknown) => void = () => {};
   dismissMock.mockImplementation((id: number) => {

@@ -220,3 +220,48 @@ test('Restore/Select are disabled with a progress label while the bulk loop runs
   resolveSecond!();
   await waitFor(() => expect(toast).toHaveBeenCalledWith('Restored 3'));
 });
+
+test('#239: a row toggle is inert while the restore loop runs, so a mid-loop click cannot be stomped by the end-of-loop selection', async () => {
+  let resolveFirst: (() => void) | null = null;
+  const { fetchMock } = makeFetchMock({});
+  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === 'string' ? input : input.toString();
+    if (url.includes('/api/recycle/_y_/restore/1')) {
+      return new Promise<Response>((res) => { resolveFirst = () => res(jsonResponse({ success: true, data: {} })); });
+    }
+    return fetchMock(input, init);
+  }));
+  renderList();
+
+  await screen.findByText('Drill');
+  fireEvent.click(screen.getByRole('button', { name: 'Select' }));
+  // Select only Drill (1) and Sander (2) — Level (3) stays unselected and
+  // free to click mid-loop.
+  fireEvent.click(screen.getByRole('button', { name: 'Select Drill' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Select Sander' }));
+  expect(screen.getByRole('button', { name: 'Select Level' }).getAttribute('aria-pressed')).toBe('false');
+
+  fireEvent.click(screen.getByRole('button', { name: /^Restore 2$/ }));
+
+  // Restore(1) is stuck in flight — the loop is parked mid-run.
+  await screen.findByText('Restoring… 1 of 2');
+  expect(screen.getByText('2 selected')).toBeTruthy();
+
+  // Pre-fix, this click would toggle Level into `selected` right away —
+  // only to have the loop's own `setSelected(new Set(failed))` silently
+  // erase that click's effect the moment the loop finished. Post-fix, the
+  // click must be a no-op from the very first frame: it never mutates
+  // `selected` at all.
+  fireEvent.click(screen.getByRole('button', { name: 'Select Level' }));
+  expect(screen.getByRole('button', { name: 'Select Level' }).getAttribute('aria-pressed')).toBe('false');
+  expect(screen.getByText('2 selected')).toBeTruthy();
+
+  resolveFirst!();
+  await waitFor(() => expect(toast).toHaveBeenCalledWith('Restored 2'));
+
+  // Both restores succeeded (no failures) and Level was never touched by
+  // the mid-loop click — final selection is empty, not { 3 }.
+  expect(screen.getByRole('button', { name: 'Select Level' }).getAttribute('aria-pressed')).toBe('false');
+  expect(screen.getByRole('button', { name: 'Select Drill' }).getAttribute('aria-pressed')).toBe('false');
+  expect(screen.getByRole('button', { name: 'Select Sander' }).getAttribute('aria-pressed')).toBe('false');
+});

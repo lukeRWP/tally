@@ -5,7 +5,7 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { ColHead } from '@/components/ui/col-head';
 import { useLayoutMode } from '@/hooks/use-layout-mode';
-import { useKeyboardNav } from '@/hooks/use-keyboard-nav';
+import { useKeyboardNav, useNavScrollIntoView } from '@/hooks/use-keyboard-nav';
 import type { Property } from '@/types/inventory';
 import { ErrorState } from '@/components/ui/error-state';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -173,8 +173,18 @@ export function Home() {
     data: searchResults,
     isLoading: searchLoading,
     isError: searchError,
+    isPlaceholderData: searchIsPlaceholder,
     refetch: refetchSearch,
   } = useSearchItems(searchQuery, filters);
+  // #238: `useSearchItems` keeps the previous result set mounted (marked
+  // placeholder) while a new query settles, so the list's height — and the
+  // shared scroll container's position — never collapses out from under the
+  // user. That means `searchResults` can briefly be the OLD query's rows (or
+  // its empty list) while `searchQuery` already reads the NEW one — the
+  // empty-state message below names `searchQuery` directly, so showing it
+  // off placeholder data would tell the user "no items for X" about a query
+  // that hasn't actually been searched yet. Gated below on `!searchIsPlaceholder`.
+  const showSkeleton = searchLoading || (searchIsPlaceholder && (searchResults?.length ?? 0) === 0);
 
   // Debounce search
   React.useEffect(() => {
@@ -205,9 +215,18 @@ export function Home() {
     enabled: wide,
     onSearch: () => searchInputRef.current?.focus(),
     onMove: searching ? moveHighlight : undefined,
-    onOpen: searching ? () => { if (highlightedId != null) navigate(`/item/${highlightedId}`); } : undefined,
+    onOpen: searching
+      ? () => {
+        if (highlightedId == null) return false;
+        navigate(`/item/${highlightedId}`);
+        return true;
+      }
+      : undefined,
     onEscape: searching ? () => setHighlightedId(null) : undefined,
   });
+  // Keeps the cursor on screen past one screenful of results (#235) — the
+  // result rows below carry the matching data-nav-id.
+  useNavScrollIntoView(highlightedId);
 
   // Mirror the settled query and filters into the URL so Back restores this
   // screen's search instead of dumping the user on recents. `replace` keeps
@@ -422,7 +441,7 @@ export function Home() {
             Results{searchResults ? ` · ${searchResults.length}` : ''}
           </ColHead>
 
-          {searchLoading && (
+          {showSkeleton && (
             <div className="flex flex-col gap-2 mt-2">
               {[1, 2, 3].map((i) => (
                 <Skeleton key={i} className="h-14 w-full" />
@@ -437,7 +456,7 @@ export function Home() {
             <ErrorState message="Couldn't run that search." onRetry={() => refetchSearch()} />
           )}
 
-          {!searchLoading && searchResults && searchResults.length === 0 && (
+          {!showSkeleton && !searchIsPlaceholder && searchResults && searchResults.length === 0 && (
             <div className="flex flex-col items-center gap-3 py-10 text-center">
               <p className="font-mono text-[11px] uppercase tracking-[0.1em] text-[var(--color-text-muted)]">
                 Nothing matched
@@ -455,6 +474,7 @@ export function Home() {
           {searchResults?.map((item) => (
             <div
               key={item.id}
+              data-nav-id={item.id}
               className={cn(
                 'rounded-[var(--radius-sm)] border-b border-[var(--color-rule)] last:border-b-0',
                 highlightedId === item.id && 'bg-[var(--color-elevated)] ring-1 ring-[var(--color-text)]',

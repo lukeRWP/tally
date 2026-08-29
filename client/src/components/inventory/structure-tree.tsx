@@ -62,6 +62,9 @@ function ContainerRow({ node, depth, expanded, onToggle, onSelect, selectedId }:
   return (
     <>
       <div
+        // The keyboard ring's scroll target (#235): areas.tsx passes this same
+        // id to useNavScrollIntoView, so a j/k move keeps the row on screen.
+        data-nav-id={container.id}
         className="flex items-center gap-1 min-h-[44px] border-b border-[var(--color-rule)]"
         style={{ paddingLeft: depth * INDENT }}
       >

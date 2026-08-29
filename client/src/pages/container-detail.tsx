@@ -33,7 +33,7 @@ import { useCarryStore } from '@/store/carry-store';
 import type { Item } from '@/types/inventory';
 import { cn } from '@/lib/utils';
 import { useLayoutMode } from '@/hooks/use-layout-mode';
-import { useKeyboardNav } from '@/hooks/use-keyboard-nav';
+import { useKeyboardNav, useNavScrollIntoView } from '@/hooks/use-keyboard-nav';
 
 export function ContainerDetail() {
   // Above every early return — hooks must run on each render.
@@ -93,6 +93,14 @@ export function ContainerDetail() {
    * The ring j/k walks: nested bins THEN item rows, exactly as rendered below.
    * Deriving this straight from the same arrays the JSX maps over means it
    * can never drift from what is actually on screen.
+   *
+   * Grid linearity (#235): the wide layout draws each section as
+   * `grid-cols-2` with the DEFAULT auto-flow (row), which places DOM children
+   * row-major — so this DOM-ordered ring IS the grid's reading order (left,
+   * right, next row), like text. That equivalence is what keeps j/k sane in
+   * two columns; switching either grid to `grid-flow-col` would silently
+   * break it (the ring would stride visually by rows while the cards read by
+   * columns) and is pinned against in container-detail.keyboard-nav.test.tsx.
    */
   const visibleOrder = React.useMemo(() => [
     ...(children ?? []).map((c) => ({ type: 'container' as const, id: c.id })),
@@ -145,11 +153,15 @@ export function ContainerDetail() {
     enabled: wide && !selecting,
     onMove: moveHighlight,
     onOpen: () => {
-      if (!highlighted) return;
+      if (!highlighted) return false;
       navigate(highlighted.type === 'container' ? `/container/${highlighted.id}` : `/item/${highlighted.id}`);
+      return true;
     },
     onEscape: () => setHighlightedKey(null),
   });
+  // Keeps the cursor on screen in a bin longer than the viewport (#235) — the
+  // row wrappers below carry the matching data-nav-id (same (type, id) key).
+  useNavScrollIntoView(highlightedKey);
 
   // A background refetch (30s staleTime + refetch-on-focus) can remove rows
   // out from under an open selection — prune ghosts so the "N selected"
@@ -174,6 +186,13 @@ export function ContainerDetail() {
   const anchor = React.useRef<string | null>(null);
 
   function toggleSelected(key: string, shift = false) {
+    // Inert while a bulk loop runs (#239): the checkboxes stay clickable (the
+    // cards below carry no disabled prop), but a click here would mutate
+    // `selected` mid-loop — a change the loop's own end-of-run
+    // `setSelected(new Set(failed))` then silently overwrites, so the click
+    // visibly "worked" for a moment and then vanished for no reason the user
+    // could see.
+    if (bulkRunning) return;
     setSelected((prev) => {
       const next = new Set(prev);
 
@@ -383,6 +402,10 @@ export function ContainerDetail() {
   }
 
   function handleSelectAll() {
+    // Same gate as toggleSelected (#239) — the "All" button is already
+    // disabled while bulkRunning, but this keeps the function itself honest
+    // independent of that, matching recycle-bin-list.tsx's shape.
+    if (bulkRunning) return;
     setSelected(
       new Set([
         ...(children ?? []).map((c) => `container:${c.id}`),
@@ -587,6 +610,7 @@ export function ContainerDetail() {
         {children?.map((child) => (
           <div
             key={child.id}
+            data-nav-id={`container:${child.id}`}
             className={cn(
               'rounded-[var(--radius-sm)] border-b border-[var(--color-rule)] last:border-b-0',
               highlighted?.type === 'container' && highlighted.id === child.id
@@ -624,6 +648,7 @@ export function ContainerDetail() {
         {items?.map((item) => (
           <div
             key={item.id}
+            data-nav-id={`item:${item.id}`}
             className={cn(
               'rounded-[var(--radius-sm)] border-b border-[var(--color-rule)] last:border-b-0',
               highlighted?.type === 'item' && highlighted.id === item.id
