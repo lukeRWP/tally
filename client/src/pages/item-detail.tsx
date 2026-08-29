@@ -1017,7 +1017,7 @@ export function ItemDetail() {
             // Pre-filled ONLY when the Description row opened this dialog, so
             // saving there ADOPTS the catalogue text and the row stops being
             // inherited — while an edit to the quantity leaves it alone.
-            description: item.description ?? (adoptDesc ? item.productDescription ?? '' : '') ?? '',
+            description: item.description ?? (adoptDesc ? item.productDescription ?? '' : ''),
             quantity: item.quantity,
             purchasePrice: item.purchasePrice ?? '',
             condition: item.condition,
