@@ -21,12 +21,11 @@ import { useEffect, useRef } from 'react';
  *   2. the surface calls `useNavScrollIntoView(highlightedId)` beside its
  *      `useKeyboardNav` call.
  *
- * On every cursor CHANGE the row scrolls into view with `block: 'nearest'`,
+ * On every cursor MOVE the row scrolls into view with `block: 'nearest'`,
  * which respects whatever scroll container the row lives in (root-layout's
- * <main>, the destination picker's own overflow list). The initial mount is
- * deliberately skipped: arriving on a page with a pre-selected row (deep link,
- * Back) is use-scroll-restoration.ts's moment, not this hook's — restoration
- * restores the container's scrollTop via rAF and must not be fought for it.
+ * <main>, the destination picker's own overflow list). A "move" is leaving a
+ * real previous cursor — see useNavScrollIntoView for the exact rule and why
+ * a mount-skip was not enough.
  */
 export interface KeyboardNavOptions {
   /** Move the selection. Not called when nothing is selectable. */
@@ -48,20 +47,31 @@ export interface KeyboardNavOptions {
 }
 
 /**
- * Scrolls the row marked `data-nav-id={id}` into view whenever `id` changes.
+ * Scrolls the row marked `data-nav-id={id}` into view on a cursor MOVE.
  *
  * The shared half of the ring's scroll mechanism (see the header comment) —
  * pass the surface's own cursor state (id, key, or null). `block: 'nearest'`
  * means a row already on screen moves nothing at all, so a cursor handed off
  * by a click (matches.tsx's selection sync) is a no-op rather than a jump.
+ *
+ * The rule (#235 round 2): scroll only when `prev !== null && id !== prev` —
+ * leaving one real cursor for another. A plain skip-the-first-effect-run was
+ * not enough: matches.tsx seeds its cursor from `?sel=` one effect AFTER
+ * mount (null on the mount commit, the id right after), so the skip was
+ * spent on null and the seed's arrival counted as a "move" — scrolling on a
+ * fresh load and racing use-scroll-restoration.ts's rAF restore. Under this
+ * rule the FIRST non-null id per mount, however many commits late, is a
+ * silent baseline; arrival stays scroll restoration's moment. It also means
+ * a cleared-then-reset cursor (Escape, then j) re-baselines on its first
+ * landing instead of jumping.
  */
 export function useNavScrollIntoView(id: string | number | null | undefined) {
-  // Skip the mount: a pre-selected row on arrival belongs to scroll
-  // restoration (see header). Only a move made ON this page scrolls.
-  const mounted = useRef(false);
+  /** The last cursor observed; null doubles as "no baseline yet". */
+  const prevRef = useRef<string | number | null>(null);
   useEffect(() => {
-    if (!mounted.current) { mounted.current = true; return; }
-    if (id == null) return;
+    const prev = prevRef.current;
+    prevRef.current = id ?? null;
+    if (id == null || prev == null || id === prev) return;
     const el = document.querySelector(`[data-nav-id="${CSS.escape(String(id))}"]`);
     // Optional call: jsdom implements no scrollIntoView, and the existing
     // keyboard suites run every one of these moves without mocking it.

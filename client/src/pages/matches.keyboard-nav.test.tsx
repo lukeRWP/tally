@@ -269,23 +269,29 @@ test('L6: resolving the last actionable row never leaves a ghost ring — lands 
 
 // ── #235: the cursor stays on screen ─────────────────────────────────────
 
-test('#235: a highlight move scrolls the row into view (block nearest) via its data-nav-id', () => {
+test('#235: a highlight move scrolls the row into view (block nearest) via its data-nav-id — but the ?sel= seed does not', () => {
   // jsdom has no scrollIntoView — mock it onto the prototype so the shared
   // useNavScrollIntoView mechanism has something to hit.
   const scrollSpy = vi.fn();
   Element.prototype.scrollIntoView = scrollSpy;
   try {
-    renderMatches();
+    // The round-2 bug shape: this page's cursor is null on the mount commit
+    // and syncs to ?sel= one effect later. That seed is the scroll BASELINE
+    // — a fresh/refreshed load must not scroll (that moment belongs to
+    // use-scroll-restoration's rAF restore), even though the cursor "changed".
+    renderMatches(['/matches?sel=1']);
+    expect(ringOn('Item 1')).toBe(true);
+    expect(scrollSpy).not.toHaveBeenCalled();
 
+    // A real move off the baseline scrolls the row's own wrapper.
     fireEvent.keyDown(window, { key: 'j' });
     expect(scrollSpy).toHaveBeenCalledTimes(1);
     expect(scrollSpy).toHaveBeenCalledWith({ block: 'nearest' });
-    // The element scrolled is the highlighted row's own wrapper.
-    expect(scrollSpy.mock.contexts[0]).toBe(rowWrapper('Item 1'));
+    expect(scrollSpy.mock.contexts[0]).toBe(rowWrapper('Item 2'));
 
     fireEvent.keyDown(window, { key: 'j' });
     expect(scrollSpy).toHaveBeenCalledTimes(2);
-    expect(scrollSpy.mock.contexts[1]).toBe(rowWrapper('Item 2'));
+    expect(scrollSpy.mock.contexts[1]).toBe(rowWrapper('Item 3'));
   } finally {
     delete (Element.prototype as unknown as { scrollIntoView?: unknown }).scrollIntoView;
   }
