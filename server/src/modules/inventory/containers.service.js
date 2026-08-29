@@ -2,6 +2,14 @@ const { generateCode } = require('../../utils/qr');
 const ClosureTableService = require('./closure-table.service');
 const AuditService = require('../audit/audit.service');
 const RecycleService = require('../recycle/recycle.service');
+
+// #252's freeze argument requires the advisory subtree read and the in-tx
+// authoritative re-read to evaluate the SAME predicate — one constant so
+// they cannot drift apart silently (a clause appended to one but not the
+// other would quietly unfreeze the lemma).
+const SUBTREE_IDS_SQL =
+  'SELECT DESCENDANT_ID FROM TALLY.container_paths WHERE ANCESTOR_ID = ? AND DEPTH > 0';
+
 const Reconcile = require('./move-reconcile.service');
 
 let _db = null;
@@ -332,7 +340,7 @@ const ContainersService = {
     // rows — only the connection (pool vs tx) separates advisory from
     // authoritative.
     const expectedSubtree = (await _db.query(
-      'SELECT DESCENDANT_ID FROM TALLY.container_paths WHERE ANCESTOR_ID = ? AND DEPTH > 0',
+      SUBTREE_IDS_SQL,
       [id]
     )).map((r) => Number(r.DESCENDANT_ID));
 
@@ -362,7 +370,7 @@ const ContainersService = {
       // so the lists moveNode derives under these locks stay true through
       // its Step-3 DELETE.
       const subtreeNow = await tx.query(
-        'SELECT DESCENDANT_ID FROM TALLY.container_paths WHERE ANCESTOR_ID = ? AND DEPTH > 0',
+        SUBTREE_IDS_SQL,
         [id]
       );
       const subtreeIds = new Set(subtreeNow.map((r) => Number(r.DESCENDANT_ID)));
