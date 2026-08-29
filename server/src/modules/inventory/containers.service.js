@@ -251,16 +251,42 @@ const ContainersService = {
     };
 
     // Everything that decides the move must happen INSIDE the transaction under
-    // row locks. The cycle check was previously a check-then-act OUTSIDE the tx:
-    // two concurrent mutual moves (A→under B while B→under A) could each pass a
-    // stale "is the other my descendant?" check and both commit, forming a
-    // 2-cycle in container_paths that corrupts every tree read. We now lock the
-    // moving container and its destination parent FOR UPDATE (in ID order to
-    // avoid deadlock), then re-check the cycle as a locking read.
+    // row locks. Two generations of this bug:
+    //   • The cycle check was once a check-then-act OUTSIDE the tx: two
+    //     concurrent mutual moves (A→under B while B→under A) could each pass
+    //     a stale "is the other my descendant?" check and both commit a
+    //     2-cycle in container_paths that corrupts every tree read.
+    //   • Locking just the mover and the destination fixed pairs but not
+    //     rings (#87): with A→B→C→D→A, moves 1+3 can commit first, after
+    //     which moves 2+4 hold DISJOINT lock pairs — neither waits, each
+    //     re-check passes against a state with no cycle yet, and together
+    //     they commit the 4-cycle.
+    // So the lock set is the mover, the destination, and every CURRENT
+    // ancestor of the destination — one ascending-ID FOR UPDATE statement,
+    // the same globally consistent order every multi-container lock in this
+    // codebase uses, so no two moves can acquire these rows in conflicting
+    // orders. Any concurrent move that could change the destination's
+    // ancestry has its own mover somewhere in that chain, so it must wait on
+    // our locks; the chain is re-read AFTER the locks are held, and if it
+    // shifted between the advisory read and the locks we refuse (409) rather
+    // than trust a stale chain. The cycle check then reads the same
+    // post-lock snapshot: the last member of a ring to get its locks always
+    // sees the rest of the ring committed and refuses.
+    //
+    // The advisory ancestor read runs on the pool, pre-tx, ON PURPOSE:
+    // inside the tx a plain SELECT would pin the InnoDB read view BEFORE the
+    // lock waits, and every later plain read (the re-check and the cycle
+    // check included) would see a snapshot older than the commits we just
+    // waited on.
+    const expectedAncestors = newParentContainerId
+      ? (await _closureTable.getAncestors(newParentContainerId)).map((r) => Number(r.ANCESTOR_ID))
+      : [];
+
     await _db.withTransaction(async (tx) => {
-      const lockIds = [Number(id)];
-      if (newParentContainerId) lockIds.push(Number(newParentContainerId));
-      lockIds.sort((a, b) => a - b);
+      const lockIds = [...new Set([
+        Number(id),
+        ...(newParentContainerId ? [Number(newParentContainerId), ...expectedAncestors] : []),
+      ])].sort((a, b) => a - b);
       await tx.query(
         `SELECT ID FROM TALLY.containers WHERE ID IN (${lockIds.map(() => '?').join(', ')}) FOR UPDATE`,
         lockIds
@@ -275,6 +301,27 @@ const ContainersService = {
       let effectiveAreaId = newAreaId;
 
       if (newParentContainerId) {
+        // Post-lock (#87): the destination's ancestor chain must be exactly
+        // the set of rows we locked. This is the first plain read in the tx,
+        // so the read view starts HERE — after every lock wait — and sees
+        // every commit those waits let through. A drifted chain means a
+        // concurrent move re-parented the destination between the advisory
+        // read and our locks; the rows we hold are then the wrong mutex, so
+        // refuse and let the client retry against the settled tree.
+        const ancestorsNow = await tx.query(
+          'SELECT ANCESTOR_ID FROM TALLY.container_paths WHERE DESCENDANT_ID = ? AND DEPTH > 0',
+          [newParentContainerId]
+        );
+        const nowIds = new Set(ancestorsNow.map((r) => Number(r.ANCESTOR_ID)));
+        const chainDrifted =
+          nowIds.size !== expectedAncestors.length ||
+          expectedAncestors.some((a) => !nowIds.has(a));
+        if (chainDrifted) {
+          const err = new Error('The container tree changed while this move was being checked — try again');
+          err.statusCode = 409;
+          throw err;
+        }
+
         const cycle = await tx.query(
           'SELECT 1 FROM TALLY.container_paths WHERE ANCESTOR_ID = ? AND DESCENDANT_ID = ? LIMIT 1',
           [id, newParentContainerId]

@@ -137,11 +137,33 @@ async function reconcile(tx, set, { destPropertyId }) {
   // Tags: find-or-create in the destination, then repoint each attachment row.
   const { attached, byName, toCreate } = await tagPlan(tx, set, destPropertyId);
   for (const name of toCreate) {
-    const res = await tx.query(
-      'INSERT INTO TALLY.tags (NAME, COLOR, PROPERTY_ID) VALUES (?, NULL, ?)',
-      [name, destPropertyId]
-    );
-    byName.set(name.toLowerCase(), res.insertId);
+    let tagId;
+    try {
+      const res = await tx.query(
+        'INSERT INTO TALLY.tags (NAME, COLOR, PROPERTY_ID) VALUES (?, NULL, ?)',
+        [name, destPropertyId]
+      );
+      tagId = res.insertId;
+    } catch (err) {
+      // A concurrent move raced us to creating this destination tag
+      // (uq_tags_name_property, #244): converge on the winner's row instead
+      // of 500ing and rolling back a move whose own data was fine — the same
+      // catch-ER_DUP_ENTRY-then-re-select pattern as TagsService.findOrCreate
+      // (tags.service.js). One difference: here the re-select must be a
+      // LOCKING read. This transaction runs REPEATABLE READ, so a plain
+      // SELECT would replay our pre-collision snapshot and still see no row;
+      // FOR SHARE reads latest committed and holds the winner's row until
+      // the repoints below commit against it. (ER_DUP_ENTRY aborts only the
+      // statement, not the transaction.)
+      if (err.code !== 'ER_DUP_ENTRY') throw err;
+      const winner = await tx.query(
+        'SELECT ID FROM TALLY.tags WHERE NAME = ? AND PROPERTY_ID = ? LIMIT 1 FOR SHARE',
+        [name, destPropertyId]
+      );
+      if (!winner.length) throw err; // collided yet absent — surface the original error
+      tagId = winner[0].ID;
+    }
+    byName.set(name.toLowerCase(), tagId);
   }
   for (const a of attached) {
     await tx.query(
