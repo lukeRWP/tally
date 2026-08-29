@@ -195,6 +195,17 @@ const PrintService = {
 
     await PrintService.sweepStaleClaims(agent.propertyId);
 
+    // The agent is asking "anything for me?" while its own telemetry says the
+    // printer cannot print (#125). Dealing it a job anyway just burns one of
+    // the job's 3 attempts per poll for nothing — the honest answer is nothing.
+    // Jobs stay 'queued' (the telemetry banner explains why they wait) and are
+    // dealt on the first claim after the printer recovers. Only an EXPLICIT
+    // 'stopped' withholds: the schema coerces junk telemetry to 'unknown',
+    // which — like idle/printing — claims normally, so telemetry still can
+    // never break a claim. The sweep above still runs so a claim abandoned by
+    // a dead agent process is not stranded while the printer is down.
+    if (telemetry.printerState === 'stopped') return null;
+
     // PROPERTY_ID and PRESET come from the agent row — never from the request,
     // so an agent cannot reach another property or pull a roll it hasn't loaded.
     const claimId = crypto.randomUUID();

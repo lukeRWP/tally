@@ -310,6 +310,58 @@ test('claimNext returns null when nothing is claimable', async () => {
   assert.equal(await PrintService.claimNext({ id: 7, propertyId: 3, loadedMedia: 'small' }, {}), null);
 });
 
+test('claimNext withholds jobs while the agent reports its printer stopped (#125)', async () => {
+  const seen = [];
+  PrintService.init({ db: fakeDb((sql, params) => {
+    seen.push({ sql, params });
+    if (/UPDATE TALLY\.printer_agents/i.test(sql)) return { affectedRows: 1 };
+    if (/SET STATUS = CASE/i.test(sql)) return { affectedRows: 0 };      // stale sweep
+    if (/SET STATUS = 'claimed'/i.test(sql)) return { affectedRows: 1 }; // would deal a job if reached
+    return [{ ID: 11, PROPERTY_ID: 3, CREATED_BY: 42, ENTITY_TYPE: 'container',
+              ENTITY_IDS: '[5]', PRESET: 'large', STATUS: 'claimed', ATTEMPTS: 0 }];
+  }), logger, config });
+
+  const job = await PrintService.claimNext(
+    { id: 7, propertyId: 3, loadedMedia: 'large' },
+    { printerState: 'stopped', printerStateReasons: ['media-empty'] });
+
+  assert.equal(job, null, 'a printer that says "I cannot print" must not be dealt a job');
+  const telem = seen.find(s => /UPDATE TALLY\.printer_agents/i.test(s.sql));
+  assert.ok(telem, 'the stopped telemetry is still recorded');
+  assert.ok(telem.params.includes('stopped'), 'PRINTER_STATE persists the reported state');
+  assert.ok(!seen.some(s => /SET STATUS = 'claimed'/i.test(s.sql)),
+    'no claim UPDATE may run — queued jobs keep their attempts unburned');
+  assert.ok(seen.some(s => /SET STATUS = CASE/i.test(s.sql)),
+    'the stale sweep still runs so a dead process\'s claim is not stranded while stopped');
+});
+
+test('claimNext with unknown telemetry claims normally — only an explicit stop withholds', async () => {
+  // 'unknown' is what the schema coerces ALL junk to, so this is also the
+  // malformed-telemetry path: it must never cost the agent its claim.
+  for (const telemetry of [{}, { printerState: 'unknown' }, { printerState: 'idle' }]) {
+    PrintService.init({ db: fakeDb((sql) => {
+      if (/UPDATE TALLY\.printer_agents/i.test(sql)) return { affectedRows: 1 };
+      if (/SET STATUS = CASE/i.test(sql)) return { affectedRows: 0 };
+      if (/SET STATUS = 'claimed'/i.test(sql)) return { affectedRows: 1 };
+      return [{ ID: 11, PROPERTY_ID: 3, CREATED_BY: 42, ENTITY_TYPE: 'container',
+                ENTITY_IDS: '[5]', PRESET: 'large', STATUS: 'claimed', ATTEMPTS: 0 }];
+    }), logger, config });
+    const job = await PrintService.claimNext({ id: 7, propertyId: 3, loadedMedia: 'large' }, telemetry);
+    assert.equal(job?.id, 11, `${JSON.stringify(telemetry)} must still be dealt a job`);
+  }
+});
+
+test('listAgents carries the agent last-contact time as camelCase lastSeenAt (#204)', async () => {
+  PrintService.init({ db: fakeDb(() => [{
+    ID: 7, PROPERTY_ID: 3, NAME: 'Garage Pi', LOADED_MEDIA: 'large',
+    PRINTER_STATE: 'idle', PRINTER_STATE_REASONS: '[]',
+    LAST_SEEN_AT: '2026-08-29 10:00:00',
+  }]), logger, config });
+  const [agent] = await PrintService.listAgents(3, 42);
+  assert.equal(agent.lastSeenAt, '2026-08-29 10:00:00',
+    'LAST_SEEN_AT maps through — the UI needs it to say how long the agent has been gone');
+});
+
 test('sweepStaleClaims requeues abandoned claims and increments attempts', async () => {
   let sql = '';
   PrintService.init({ db: fakeDb((s) => { sql = s; return { affectedRows: 2 }; }), logger, config });
