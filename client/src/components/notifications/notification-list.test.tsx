@@ -86,6 +86,37 @@ test('clicking a notification with an entity navigates with {state:{from:"alerts
   expect(navigateSpy).toHaveBeenCalledWith('/item/1', { state: { from: 'alerts' } });
 });
 
+// #237 — item_date/item_lending stamp the *source-row* id as entityId (dedup
+// key); the server now projects the owning item as itemId at read time. The
+// click must land on the item, carrying the same alerts back-state.
+
+test('an item_date notification with itemId navigates to its item with the alerts state', () => {
+  notifications = [makeNotification({
+    id: 10, title: 'Warranty due', entityType: 'item_date', entityId: 9, itemId: 77,
+  })];
+  renderList();
+  fireEvent.click(screen.getByText('Warranty due'));
+  expect(navigateSpy).toHaveBeenCalledWith('/item/77', { state: { from: 'alerts' } });
+});
+
+test('an item_lending notification with itemId navigates to its item with the alerts state', () => {
+  notifications = [makeNotification({
+    id: 11, title: 'Drill overdue', type: 'lending_due', entityType: 'item_lending', entityId: 5, itemId: 88,
+  })];
+  renderList();
+  fireEvent.click(screen.getByText('Drill overdue'));
+  expect(navigateSpy).toHaveBeenCalledWith('/item/88', { state: { from: 'alerts' } });
+});
+
+test('an item_date notification without itemId (deleted source row / old API) falls back to Home', () => {
+  notifications = [makeNotification({
+    id: 12, title: 'Orphaned date', entityType: 'item_date', entityId: 999, itemId: null,
+  })];
+  renderList();
+  fireEvent.click(screen.getByText('Orphaned date'));
+  expect(navigateSpy).toHaveBeenCalledWith('/', { state: { from: 'alerts' } });
+});
+
 test('"Dismiss 3" loops the single-dismiss endpoint over every notification and reports a clean outcome', async () => {
   renderList();
   fireEvent.click(screen.getByRole('button', { name: 'Dismiss 3' }));

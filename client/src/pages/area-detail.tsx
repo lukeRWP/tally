@@ -29,7 +29,7 @@ export function AreaDetail() {
   const [printOpen, setPrintOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const { data: area, isLoading: areaLoading, isError: areaError, refetch: refetchArea } = useArea(id);
-  const { data: containers, isLoading: containersLoading } = useContainers(id);
+  const { data: containers, isLoading: containersLoading, isError: containersError, refetch: refetchContainers } = useContainers(id);
   const createContainer = useCreateContainer();
   const deleteArea = useDeleteArea();
   const stageMany = usePrintQueueStore((s) => s.addMany);
@@ -167,7 +167,11 @@ export function AreaDetail() {
 
         {containersLoading && <Skeleton className="h-14 w-full mt-2" />}
 
-        {containers && containers.length === 0 && (
+        {containersError && (
+          <ErrorState message="Couldn't load containers." onRetry={() => refetchContainers()} />
+        )}
+
+        {!containersLoading && !containersError && containers && containers.length === 0 && (
           <div className="flex flex-col items-center gap-3 py-8">
             <p className="font-mono text-[11px] uppercase tracking-[0.06em] text-[var(--color-text-muted)] text-center">
               No containers yet

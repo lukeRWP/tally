@@ -10,6 +10,9 @@ function _mapNotification(row) {
     message: row.MESSAGE,
     entityType: row.ENTITY_TYPE || null,
     entityId: row.ENTITY_ID || null,
+    // ITEM_ID is projected only by getForUser (read-time join for item_date /
+    // item_lending rows); undefined elsewhere → null either way.
+    itemId: row.ITEM_ID || null,
     readAt: row.READ_AT || null,
     createdAt: row.CREATED_AT,
   };
@@ -60,14 +63,25 @@ const NotificationsService = {
   // ── Get for User ────────────────────────────────────────────────────────────
 
   async getForUser(userId, { limit = 50, offset = 0, unreadOnly = false } = {}) {
-    let sql = `SELECT * FROM TALLY.notifications WHERE USER_ID = ?`;
+    // item_date / item_lending notifications store the *source-row* id in
+    // ENTITY_ID (the dedup key needs it), which the client cannot navigate to.
+    // Resolve the owning item at read time via conditional LEFT JOINs — no
+    // restamping, no schema change. Both joins key on a row this user already
+    // owns (n.USER_ID filter below), so no cross-user surface is added. The
+    // COALESCE is NULL for other entity types and for deleted source rows,
+    // which the client treats as "no destination".
+    let sql = `SELECT n.*, COALESCE(d.ITEM_ID, il.ITEM_ID) AS ITEM_ID
+       FROM TALLY.notifications n
+       LEFT JOIN TALLY.item_dates d    ON n.ENTITY_TYPE = 'item_date'    AND d.ID  = n.ENTITY_ID
+       LEFT JOIN TALLY.item_lending il ON n.ENTITY_TYPE = 'item_lending' AND il.ID = n.ENTITY_ID
+       WHERE n.USER_ID = ?`;
     const params = [userId];
 
     if (unreadOnly) {
-      sql += ` AND READ_AT IS NULL`;
+      sql += ` AND n.READ_AT IS NULL`;
     }
 
-    sql += ` ORDER BY CREATED_AT DESC LIMIT ? OFFSET ?`;
+    sql += ` ORDER BY n.CREATED_AT DESC LIMIT ? OFFSET ?`;
     params.push(limit, offset);
 
     const rows = await _db.query(sql, params);

@@ -11,7 +11,7 @@ import { Breadcrumbs } from '@/components/layout/breadcrumbs';
 import { ContainerCard } from '@/components/inventory/container-card';
 import { ItemCard } from '@/components/inventory/item-card';
 import { EntityForm } from '@/components/inventory/entity-form';
-import { ErrorState } from '@/components/ui/error-state';
+import { ErrorState, SectionError } from '@/components/ui/error-state';
 import {
   useContainer,
   useContainerChildren,
@@ -78,8 +78,8 @@ export function ContainerDetail() {
   }, [id]);
 
   const { data: container, isLoading: containerLoading, isError: containerError, refetch: refetchContainer } = useContainer(id);
-  const { data: children, isLoading: childrenLoading } = useContainerChildren(id);
-  const { data: items, isLoading: itemsLoading } = useItems(id);
+  const { data: children, isLoading: childrenLoading, isError: childrenError, refetch: refetchChildren } = useContainerChildren(id);
+  const { data: items, isLoading: itemsLoading, isError: itemsError, refetch: refetchItems } = useItems(id);
   const createContainer = useCreateContainer();
   const createItem = useCreateItem();
   const stageMany = usePrintQueueStore((s) => s.addMany);
@@ -570,7 +570,11 @@ export function ContainerDetail() {
 
         {childrenLoading && <Skeleton className="h-14 w-full mt-2" />}
 
-        {children && children.length === 0 && (
+        {childrenError && (
+          <SectionError message="Couldn't load nested containers." onRetry={() => refetchChildren()} />
+        )}
+
+        {!childrenLoading && !childrenError && children && children.length === 0 && (
           <p className="font-mono text-[11px] uppercase tracking-[0.06em] text-[var(--color-text-muted)] py-3">
             No nested containers
           </p>
@@ -606,7 +610,11 @@ export function ContainerDetail() {
 
         {itemsLoading && <Skeleton className="h-14 w-full mt-2" />}
 
-        {items && items.length === 0 && (
+        {itemsError && (
+          <SectionError message="Couldn't load items." onRetry={() => refetchItems()} />
+        )}
+
+        {!itemsLoading && !itemsError && items && items.length === 0 && (
           <p className="font-mono text-[11px] uppercase tracking-[0.06em] text-[var(--color-text-muted)] py-3">
             No items in this container
           </p>

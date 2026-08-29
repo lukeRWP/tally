@@ -9,6 +9,12 @@ export interface Notification {
   message: string;
   entityType: string | null;
   entityId: number | null;
+  /**
+   * For item_date / item_lending notifications the server resolves the owning
+   * item at read time (ENTITY_ID stays the source-row id for dedup). Null for
+   * other entity types, deleted source rows, or an older API.
+   */
+  itemId?: number | null;
   readAt: string | null;
   createdAt: string;
 }
