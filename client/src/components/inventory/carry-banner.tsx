@@ -119,7 +119,11 @@ export function CarryBanner() {
 
   return (
     <div className={cn('fixed z-40', dock,
-      'border-2 border-[var(--color-primary)] bg-[var(--color-primary-bg)] rounded-[var(--radius-sm)] px-3 py-2 flex items-center gap-2')}>
+      // --color-primary-bg is an 8%-alpha tint meant for chips on solid
+      // surfaces; this banner floats over page content, so the tint is
+      // layered on an opaque base or the page bleeds through it.
+      '[background:linear-gradient(var(--color-primary-bg),var(--color-primary-bg)),var(--color-bg)]',
+      'border-2 border-[var(--color-primary)] rounded-[var(--radius-sm)] px-3 py-2 flex items-center gap-2')}>
       <span className="min-w-0 flex-1">
         <span className="block font-mono text-[10px] uppercase tracking-[0.1em] text-[var(--color-primary)] font-bold">
           carrying {carried.length > 1 ? `· ${carried.length}` : ''}
