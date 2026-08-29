@@ -76,8 +76,14 @@ const pool = mysql.createPool(buildPoolConfig());
 pool.on('connection', (connection) => {
   connection.query(`SET SESSION MAX_EXECUTION_TIME=${QUERY_TIMEOUT_MS}`, (err) => {
     if (err) {
-      // The pool tears down connections that fail; nothing to do but record it.
-      logger.warn(`[db] failed to set session timeout on new connection: ${err.code || err.message}`);
+      // An ordinary error response to the SET only reaches this per-command
+      // callback — it never surfaces as a connection-level 'error', so the
+      // pool would keep serving this connection with NO timeout at all.
+      // Destroy it instead (PoolConnection.destroy removes it from the pool);
+      // a persistent SET failure then shows up as connection churn + warns
+      // rather than a silently uncapped pool.
+      logger.warn(`[db] failed to set session timeout on new connection — destroying it: ${err.code || err.message}`);
+      connection.destroy();
     }
   });
 });

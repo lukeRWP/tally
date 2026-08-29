@@ -166,10 +166,30 @@ test('withTransaction does not retry — a deadlock rolls back and surfaces', as
 test("pool 'connection' handler sets the SHORT timeout, registered once", () => {
   assert.equal(state.connectionHandlers.length, 1, 'exactly one connection handler');
   const seen = [];
+  let destroyed = 0;
   // The event delivers the CORE (callback-style) connection.
-  state.connectionHandlers[0]({ query: (sql, cb) => { seen.push(sql); if (cb) cb(null); } });
+  state.connectionHandlers[0]({
+    query: (sql, cb) => { seen.push(sql); if (cb) cb(null); },
+    destroy: () => { destroyed += 1; },
+  });
   assert.deepEqual(seen, ['SET SESSION MAX_EXECUTION_TIME=30000'],
     'one SET, and it is the short default — never the long timeout');
+  assert.equal(destroyed, 0, 'a connection whose SET succeeded is kept');
+});
+
+test("pool 'connection' handler DESTROYS a connection whose SET fails — it never serves from the pool", () => {
+  // An error response to the SET reaches only this per-command callback; it is
+  // NOT a connection-level 'error', so the pool would otherwise keep serving
+  // the connection with no timeout at all.
+  warns.length = 0;
+  let destroyed = 0;
+  state.connectionHandlers[0]({
+    query: (sql, cb) => cb(mysqlError('ER_UNKNOWN_SYSTEM_VARIABLE', 1193)),
+    destroy: () => { destroyed += 1; },
+  });
+  assert.equal(destroyed, 1, 'the connection is destroyed, not left in the pool untimed');
+  assert.equal(warns.length, 1, 'the failure is logged');
+  assert.match(warns[0], /destroying/i);
 });
 
 test('query() issues no per-query SET round trip', async () => {
