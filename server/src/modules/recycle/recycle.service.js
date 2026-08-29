@@ -140,7 +140,15 @@ const RecycleService = {
 
   /**
    * A batch may only come back if everything above its root is live. Checked
-   * inside the restore transaction against the real rows, not inferred.
+   * inside the restore transaction against the real rows, not inferred — and
+   * LOCKED (#88): these SELECTs are what the restore trusts, and without
+   * FOR UPDATE a concurrent soft-delete of an ancestor could commit between
+   * this read and the un-delete UPDATEs in restore(), bringing rows back
+   * under a freshly deleted parent — the exact phantom state the bin exists
+   * to remove. Each query reads its ancestor rows by PK join, so the locks
+   * are point locks on exactly the rows being trusted, never a range; every
+   * delete cascade stamps those same rows, so the two operations serialize —
+   * whichever commits first, the other sees it.
    */
   async _assertAncestorsLive(tx, batch) {
     const refuse = (message) => {
@@ -151,7 +159,7 @@ const RecycleService = {
 
     if (batch.ROOT_TYPE === 'area') {
       const rows = await tx.query(
-        'SELECT DELETED_AT FROM TALLY.properties WHERE ID = ?',
+        'SELECT DELETED_AT FROM TALLY.properties WHERE ID = ? FOR UPDATE',
         [batch.PROPERTY_ID]
       );
       if (!rows.length) refuse('The property this belonged to no longer exists');
@@ -167,7 +175,8 @@ const RecycleService = {
            JOIN TALLY.areas a ON c.AREA_ID = a.ID
            JOIN TALLY.properties p ON a.PROPERTY_ID = p.ID
            LEFT JOIN TALLY.containers parent ON c.PARENT_CONTAINER_ID = parent.ID
-          WHERE c.ID = ?`,
+          WHERE c.ID = ?
+          FOR UPDATE`,
         [batch.ROOT_ID]
       );
       if (!rows.length) refuse('That container no longer exists');
@@ -186,7 +195,8 @@ const RecycleService = {
          JOIN TALLY.containers c ON i.CONTAINER_ID = c.ID
          JOIN TALLY.areas a ON c.AREA_ID = a.ID
          JOIN TALLY.properties p ON a.PROPERTY_ID = p.ID
-        WHERE i.ID = ?`,
+        WHERE i.ID = ?
+        FOR UPDATE`,
       [batch.ROOT_ID]
     );
     if (!rows.length) refuse('That item no longer exists');

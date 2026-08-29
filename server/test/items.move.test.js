@@ -36,21 +36,41 @@ function txDb(routes) {
 const GET_BY_ID = /PROPERTY_ID AS PROPERTY_ID/;
 // getPropertyIdForItem's SELECT is the only query starting with this prefix.
 const GET_PROPERTY_ID_FOR_ITEM = /SELECT a\.PROPERTY_ID/;
+// _lockLiveContainer's locked liveness re-check (#88): the only items.service
+// query that selects c.ID from containers.
+const LOCK_CONTAINER = /SELECT c\.ID FROM TALLY\.containers c/;
+// Routed as [{ ID: 30 }] when the destination is live; [] when recycled.
+const LIVE_DEST = [LOCK_CONTAINER, [{ ID: 30 }]];
 
-// ── REGRESSION PIN — same-property move is untouched ────────────────────────
+// ── Same-property move: check and write share ONE transaction (#88) ─────────
+// The destination-liveness SELECT must carry FOR UPDATE and run on the SAME
+// tx as the UPDATE, before it — an unlocked route-level check leaves a window
+// for the container to be recycled between check and write (phantom item).
 
-test('same-property move is byte-identical to before', async () => {
+test('same-property move locks the live destination FOR UPDATE in the same tx as the UPDATE', async () => {
   const audits = [];
   const origLog = AuditService.logChange;
   AuditService.logChange = async (...args) => { audits.push(args); };
   const db = txDb([
+    LIVE_DEST,
     [GET_BY_ID, [{ ID: 5, NAME: 'Widget', CONTAINER_ID: 30 }]],
     [GET_PROPERTY_ID_FOR_ITEM, [{ PROPERTY_ID: 1 }]],
   ]);
   Items.init({ db, logger: noop });
   try {
     const out = await Items.move(5, 30, 42); // no opts — the pre-existing call shape
-    assert.equal(db.txCount, 0, 'no transaction is opened for a same-property move');
+    assert.equal(db.txCount, 1, 'exactly one transaction for the check+write pair');
+
+    const lockIdx = db.calls.findIndex((c) => LOCK_CONTAINER.test(c.sql));
+    const updateIdx = db.calls.findIndex((c) => /UPDATE TALLY\.items SET CONTAINER_ID/.test(c.sql));
+    assert.ok(lockIdx >= 0, 'the destination-liveness check ran');
+    assert.match(db.calls[lockIdx].sql, /FOR UPDATE/, 'the liveness check locks the container row');
+    assert.match(db.calls[lockIdx].sql, /c\.DELETED_AT IS NULL AND a\.DELETED_AT IS NULL/,
+      'the locked check keeps the container+area liveness shape');
+    assert.ok(updateIdx >= 0, 'the UPDATE ran');
+    assert.ok(lockIdx < updateIdx, 'the lock is taken BEFORE the write that trusts it');
+    assert.equal(db.calls[lockIdx].tx, db.lastTx, 'the lock runs ON the transaction');
+    assert.equal(db.calls[updateIdx].tx, db.lastTx, 'the UPDATE runs on the SAME transaction');
 
     const updates = db.calls.filter((c) => /UPDATE TALLY\.items SET CONTAINER_ID/.test(c.sql));
     assert.equal(updates.length, 1, 'exactly one UPDATE TALLY.items');
@@ -69,10 +89,31 @@ test('same-property move is byte-identical to before', async () => {
   }
 });
 
+test('same-property move 404s and never writes when the destination died after the route check', async () => {
+  const audits = [];
+  const origLog = AuditService.logChange;
+  AuditService.logChange = async (...args) => { audits.push(args); };
+  const db = txDb([
+    [LOCK_CONTAINER, []], // recycled between the route's check and the write
+    [GET_PROPERTY_ID_FOR_ITEM, [{ PROPERTY_ID: 1 }]],
+  ]);
+  Items.init({ db, logger: noop });
+  try {
+    await assert.rejects(() => Items.move(5, 30, 42),
+      (e) => e.statusCode === 404 && /Destination container/.test(e.message));
+    assert.ok(!db.calls.some((c) => /UPDATE TALLY\.items/.test(c.sql)),
+      'the item is never moved into a dead container');
+    assert.equal(audits.length, 0, 'a refused move is not audited');
+  } finally {
+    AuditService.logChange = origLog;
+  }
+});
+
 // ── Cross-property: one transaction, same tx handle throughout ─────────────
 
 test('cross-property move runs the UPDATE and reconciliation inside ONE transaction, on the same tx handle', async () => {
   const db = txDb([
+    LIVE_DEST,
     [GET_BY_ID, [{ ID: 5, NAME: 'Widget', CONTAINER_ID: 30 }]],
   ]);
   Items.init({ db, logger: noop });
@@ -97,7 +138,15 @@ test('cross-property move runs the UPDATE and reconciliation inside ONE transact
 
     assert.equal(db.txCount, 1, 'exactly one transaction opened');
 
-    const updateCall = db.calls.find((c) => /UPDATE TALLY\.items SET CONTAINER_ID/.test(c.sql));
+    // #88: the locked destination-liveness check rides the same tx, first.
+    const lockIdx = db.calls.findIndex((c) => LOCK_CONTAINER.test(c.sql));
+    const updateIdx = db.calls.findIndex((c) => /UPDATE TALLY\.items SET CONTAINER_ID/.test(c.sql));
+    assert.ok(lockIdx >= 0, 'the destination-liveness check ran');
+    assert.match(db.calls[lockIdx].sql, /FOR UPDATE/, 'the liveness check locks the container row');
+    assert.equal(db.calls[lockIdx].tx, db.lastTx, 'the lock runs ON the transaction');
+    assert.ok(lockIdx < updateIdx, 'the lock is taken BEFORE the UPDATE that trusts it');
+
+    const updateCall = db.calls[updateIdx];
     assert.ok(updateCall, 'the UPDATE ran');
     assert.equal(updateCall.tx, db.lastTx, 'the UPDATE ran on the transaction handle');
 
@@ -116,10 +165,34 @@ test('cross-property move runs the UPDATE and reconciliation inside ONE transact
   }
 });
 
+test('cross-property move rolls up as 404 with no write when the destination died after the route check', async () => {
+  const db = txDb([
+    [LOCK_CONTAINER, []], // recycled between the route's check and the tx
+  ]);
+  Items.init({ db, logger: noop });
+
+  const origMovingSet = Reconcile.movingSet;
+  const origReconcile = Reconcile.reconcile;
+  Reconcile.movingSet = async () => { throw new Error('reconciliation must not start against a dead destination'); };
+  Reconcile.reconcile = async () => { throw new Error('reconciliation must not start against a dead destination'); };
+  try {
+    await assert.rejects(
+      () => Items.move(5, 30, 42, { crossProperty: { srcPropertyId: 1, destPropertyId: 2 } }),
+      (e) => e.statusCode === 404 && /Destination container/.test(e.message)
+    );
+    assert.ok(!db.calls.some((c) => /UPDATE TALLY\.items/.test(c.sql)),
+      'the item is never moved into a dead container');
+  } finally {
+    Reconcile.movingSet = origMovingSet;
+    Reconcile.reconcile = origReconcile;
+  }
+});
+
 // ── Cross-property audit: moved-out + moved-in, never plain "moved" ────────
 
 test('cross-property move logs exactly moved-out and moved-in — never a plain "moved"', async () => {
   const db = txDb([
+    LIVE_DEST,
     [GET_BY_ID, [{ ID: 5, NAME: 'Widget', CONTAINER_ID: 30 }]],
   ]);
   Items.init({ db, logger: noop });
@@ -161,6 +234,7 @@ test('cross-property move logs exactly moved-out and moved-in — never a plain 
 test('cross-property move calls Reconcile.auditMove only AFTER the transaction has resolved', async () => {
   const order = [];
   const db = txDb([
+    LIVE_DEST,
     [GET_BY_ID, [{ ID: 5, NAME: 'Widget', CONTAINER_ID: 30 }]],
   ]);
   const origWithTransaction = db.withTransaction;
@@ -193,6 +267,7 @@ test('cross-property move calls Reconcile.auditMove only AFTER the transaction h
 
 test('move() with crossProperty returns {item, consequences}, with the reconcile result passed through untouched', async () => {
   const db = txDb([
+    LIVE_DEST,
     [GET_BY_ID, [{ ID: 5, NAME: 'Widget', CONTAINER_ID: 30 }]],
   ]);
   Items.init({ db, logger: noop });

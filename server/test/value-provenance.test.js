@@ -21,17 +21,19 @@ const noop = { warn() {}, info() {}, error() {} };
 async function captureInsert(data) {
   Audit.init({ db: { query: async () => [] }, logger: noop });
   let insert = null;
+  // create() now checks-and-writes inside one transaction (#88), so the mock
+  // db exposes withTransaction; the catch-all row also answers the container
+  // liveness lock with a live row.
+  const query = async (sql, params) => {
+    if (/^\s*INSERT INTO TALLY\.items/i.test(sql)) {
+      insert = { sql, params };
+      return { insertId: 1 };
+    }
+    if (/PROPERTY_ID/i.test(sql)) return [{ PROPERTY_ID: 1 }];
+    return [{ ID: 1, NAME: 'x', CONTAINER_ID: 1 }];
+  };
   Items.init({
-    db: {
-      query: async (sql, params) => {
-        if (/^\s*INSERT INTO TALLY\.items/i.test(sql)) {
-          insert = { sql, params };
-          return { insertId: 1 };
-        }
-        if (/PROPERTY_ID/i.test(sql)) return [{ PROPERTY_ID: 1 }];
-        return [{ ID: 1, NAME: 'x', CONTAINER_ID: 1 }];
-      },
-    },
+    db: { query, withTransaction: async (fn) => fn({ query }) },
     logger: noop,
   });
   // Distinctive containerId and quantity on purpose: with both set to 1, an
@@ -74,22 +76,21 @@ test('the create INSERT binds one param per placeholder', async () => {
 test('a QR collision retries with the SAME columns, losing nothing', async () => {
   Audit.init({ db: { query: async () => [] }, logger: noop });
   const inserts = [];
+  const query = async (sql, params) => {
+    if (/^\s*INSERT INTO TALLY\.items/i.test(sql)) {
+      inserts.push({ sql, params });
+      if (inserts.length === 1) {
+        const err = new Error('Duplicate entry for key uq_items_qr_code');
+        err.code = 'ER_DUP_ENTRY';
+        throw err;
+      }
+      return { insertId: 2 };
+    }
+    if (/PROPERTY_ID/i.test(sql)) return [{ PROPERTY_ID: 1 }];
+    return [{ ID: 2, NAME: 'x', CONTAINER_ID: 1 }];
+  };
   Items.init({
-    db: {
-      query: async (sql, params) => {
-        if (/^\s*INSERT INTO TALLY\.items/i.test(sql)) {
-          inserts.push({ sql, params });
-          if (inserts.length === 1) {
-            const err = new Error('Duplicate entry for key uq_items_qr_code');
-            err.code = 'ER_DUP_ENTRY';
-            throw err;
-          }
-          return { insertId: 2 };
-        }
-        if (/PROPERTY_ID/i.test(sql)) return [{ PROPERTY_ID: 1 }];
-        return [{ ID: 2, NAME: 'x', CONTAINER_ID: 1 }];
-      },
-    },
+    db: { query, withTransaction: async (fn) => fn({ query }) },
     logger: noop,
   });
 

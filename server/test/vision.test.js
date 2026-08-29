@@ -571,11 +571,15 @@ test('ItemsService.create binds CURRENT_VALUE in the right position', async () =
   const AuditService = require('../src/modules/audit/audit.service');
   AuditService.init({ db: { query: async () => [] }, logger });
   let sql = '', params = null;
+  // create() checks-and-writes in one transaction (#88): the mock exposes
+  // withTransaction, and the container-liveness lock is answered with a live row.
+  const query = async (s, p) => {
+    if (/INSERT INTO TALLY\.items/.test(s)) { sql = s; params = p; return { insertId: 1 }; }
+    if (/SELECT c\.ID FROM TALLY\.containers c/.test(s)) return [{ ID: 3 }];
+    return [];
+  };
   ItemsService.init({
-    db: { query: async (s, p) => {
-      if (/INSERT INTO TALLY\.items/.test(s)) { sql = s; params = p; return { insertId: 1 }; }
-      return [];
-    } },
+    db: { query, withTransaction: async (fn) => fn({ query }) },
     logger,
   });
   await ItemsService.create(
