@@ -24,7 +24,7 @@
  * callback instead of the render-scoped `rows`.
  */
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { toast } from '@/components/ui/toast';
 import { ApiError } from '@/lib/api';

@@ -8,7 +8,7 @@
  * a Retry that calls the query's own `refetch`.
  */
 import { fireEvent, render, screen } from '@testing-library/react';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { MemoryRouter, Route, Routes } from 'react-router';
 import { expect, test, vi } from 'vitest';
 import type { Area } from '@/types/inventory';
 import { AreaDetail } from './area-detail';

@@ -16,7 +16,7 @@ import { CreateContainerDialog } from './create-container-dialog';
 import { useProperties, useAreas, useCreateContainer } from '@/hooks/use-inventory';
 
 const navigateMock = vi.fn();
-vi.mock('react-router-dom', () => ({
+vi.mock('react-router', () => ({
   useNavigate: () => navigateMock,
 }));
 

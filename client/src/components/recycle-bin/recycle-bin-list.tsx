@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Link } from 'react-router-dom';
+import { Link } from 'react-router';
 import { RotateCcw, Trash2, Box, Package, MapPin, CheckSquare, Check } from 'lucide-react';
 import { api, ApiError } from '@/lib/api';
 import { queryKeys } from '@/lib/query-client';

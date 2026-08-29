@@ -1,4 +1,4 @@
-import { Routes, Route, Navigate } from 'react-router-dom';
+import { Routes, Route, Navigate } from 'react-router';
 import { RootLayout } from '@/components/layout/root-layout';
 import { Login } from '@/pages/login';
 import { OAuthCallback } from '@/pages/oauth-callback';

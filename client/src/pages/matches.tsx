@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router';
 import { ArrowLeft, ExternalLink, Package, PackageSearch } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';

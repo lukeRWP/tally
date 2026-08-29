@@ -1,4 +1,4 @@
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { DoorOpen } from 'lucide-react';
 import { RuledRow } from '@/components/ui/ruled-row';
 import type { Area } from '@/types/inventory';
