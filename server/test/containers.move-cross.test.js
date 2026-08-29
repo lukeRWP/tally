@@ -223,6 +223,55 @@ test('cross-property move: movingSet is computed from the closure table and the 
   assert.equal(out.consequences.tagsCarried, 0);
 });
 
+// ── #214: a recycled item inside the moved tote reconciles tags too ─────────
+// Soft-deleted items physically travel with the container. Before this fix,
+// movingSet dropped them entirely, so their entity_tags rows kept pointing at
+// SOURCE-property tags — and restoring one later produced an item in property
+// B wearing property-A tags, the state the tags routes forbid at attach time.
+// The traveller's tags now get the live-item treatment (find-or-create in the
+// destination, repoint the row) INSIDE the move's own transaction, while the
+// visible consequence numbers stay live-only, exactly what the preview showed.
+
+test('#214: a soft-deleted item in a moved tote gets its entity_tags repointed to destination tags, inside the move transaction, without touching the visible counts', async () => {
+  const db = txDb([
+    [/SELECT DESCENDANT_ID FROM TALLY\.container_paths WHERE ANCESTOR_ID = \?/, [{ DESCENDANT_ID: 5 }]],
+    // One LIVE item (101, untagged) and one RECYCLED item (103) in the tote.
+    [/FROM TALLY\.items\s+WHERE CONTAINER_ID IN/, [
+      { ID: 101 },
+      { ID: 103, DELETED_AT: '2026-08-01 00:00:00' },
+    ]],
+    // The only attachment in the subtree belongs to the RECYCLED item.
+    [/FROM TALLY\.tags t[\s\S]*entity_tags/, [
+      { TAG_ID: 7, NAME: 'Xmas', ENTITY_TYPE: 'item', ENTITY_ID: 103 },
+    ]],
+    [/FROM TALLY\.tags WHERE PROPERTY_ID/, []], // destination has no such tag
+    [/INSERT INTO TALLY\.tags/, { insertId: 41 }],
+    [/UPDATE TALLY\.entity_tags/, { affectedRows: 1 }],
+    [/SELECT.*FROM TALLY\.item_accessories/, []],
+    [GET_BY_ID, [{ ID: 5, NAME: 'Tote', AREA_ID: 7 }]],
+  ]);
+  Containers.init({ db, logger: noop });
+
+  const out = await Containers.move(5, null, undefined, 42, {
+    crossProperty: { srcPropertyId: 1, destPropertyId: 2 },
+  });
+
+  const created = db.calls.find((c) => /INSERT INTO TALLY\.tags/.test(c.sql));
+  assert.ok(created, "the recycled traveller's tag name is find-or-created in the destination");
+  assert.equal(created.tx, db.lastTx, 'created INSIDE the move transaction, not on the pool');
+  assert.ok(created.params.includes('Xmas') && created.params.includes(2),
+    'created by name, in the DESTINATION property');
+
+  const repointed = db.calls.find((c) => /UPDATE TALLY\.entity_tags/.test(c.sql));
+  assert.ok(repointed, "the recycled traveller's attachment row is repointed — the live-item treatment");
+  assert.equal(repointed.tx, db.lastTx, 'repointed INSIDE the move transaction, not on the pool');
+  assert.deepEqual(repointed.params, [41, 7, 'item', 103],
+    'source tag 7 on recycled item 103 now points at destination tag 41');
+
+  assert.deepEqual(out.consequences, { unlinked: [], tagsCarried: 0, tagsCreated: 0 },
+    'the visible numbers stay live-only — a recycled traveller reconciles silently');
+});
+
 // ── Route: destination-property membership gate fires BEFORE any preview ───
 
 // Fake app that records route registrations, extracts the final handler for

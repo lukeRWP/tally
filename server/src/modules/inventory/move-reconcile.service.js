@@ -9,7 +9,7 @@ const AuditService = require('../audit/audit.service');
  */
 
 async function movingSet(tx, entityType, entityId) {
-  if (entityType === 'item') return { containerIds: [], itemIds: [Number(entityId)] };
+  if (entityType === 'item') return { containerIds: [], itemIds: [Number(entityId)], deletedItemIds: [] };
 
   // The closure table stores a DEPTH-0 self row, so ANCESTOR_ID = root returns
   // the root itself plus every descendant in one read.
@@ -22,14 +22,23 @@ async function movingSet(tx, entityType, entityId) {
   // the DEPTH-0 self row always matches — but a future caller passing a
   // dead/unknown id must not turn this into `IN ()`, invalid SQL) has no
   // items to look up.
-  if (!containerIds.length) return { containerIds, itemIds: [] };
+  if (!containerIds.length) return { containerIds, itemIds: [], deletedItemIds: [] };
+  // No DELETED_AT filter here: soft-deleted items sit in the moved containers
+  // and physically travel with them, so the set must know about them — but
+  // partitioned OUT of itemIds, which feeds every count, consequence surface,
+  // and the accessory-link breakage. Only tag reconciliation (see reconcile())
+  // reads deletedItemIds, so a restored item doesn't resurface in the
+  // destination property still wearing source-property tags.
   const items = await tx.query(
-    `SELECT ID FROM TALLY.items
-      WHERE CONTAINER_ID IN (${containerIds.map(() => '?').join(',')})
-        AND DELETED_AT IS NULL`,
+    `SELECT ID, DELETED_AT FROM TALLY.items
+      WHERE CONTAINER_ID IN (${containerIds.map(() => '?').join(',')})`,
     containerIds
   );
-  return { containerIds, itemIds: items.map((r) => r.ID) };
+  return {
+    containerIds,
+    itemIds: items.filter((r) => r.DELETED_AT == null).map((r) => r.ID),
+    deletedItemIds: items.filter((r) => r.DELETED_AT != null).map((r) => r.ID),
+  };
 }
 
 /** The entity_tags rows attached to anything in the set, with tag names. */
@@ -79,12 +88,21 @@ async function staying(tx, links, itemIds) {
   const stayIds = [...new Set(
     links.map((l) => Number(inSet.has(Number(l.ITEM_ID)) ? l.ACCESSORY_ID : l.ITEM_ID))
   )];
+  // DELETED_AT rides along so a recycled staying-end is dropped from the sheet
+  // entirely — its link still breaks (reconcile() deletes every half-out link,
+  // recycled end or not), but a recycled item's name never renders as a
+  // consequence, and a move whose only broken links point at recycled items
+  // doesn't demand a confirm. Filtering in the WHERE instead would collapse
+  // "recycled" into the missing-row `#id` fallback and still render a row.
   const rows = await tx.query(
-    `SELECT ID, NAME FROM TALLY.items WHERE ID IN (${stayIds.map(() => '?').join(',')})`,
+    `SELECT ID, NAME, DELETED_AT FROM TALLY.items WHERE ID IN (${stayIds.map(() => '?').join(',')})`,
     stayIds
   );
-  const names = new Map(rows.map((r) => [Number(r.ID), r.NAME]));
-  return stayIds.map((id) => ({ itemId: id, name: names.get(id) ?? `#${id}` }));
+  const recycled = new Set(rows.filter((r) => r.DELETED_AT != null).map((r) => Number(r.ID)));
+  const names = new Map(rows.filter((r) => r.DELETED_AT == null).map((r) => [Number(r.ID), r.NAME]));
+  return stayIds
+    .filter((id) => !recycled.has(id))
+    .map((id) => ({ itemId: id, name: names.get(id) ?? `#${id}` }));
 }
 
 /**
@@ -135,7 +153,34 @@ function needsConfirm(consequences, confirm) {
 // is actually read here.
 async function reconcile(tx, set, { destPropertyId }) {
   // Tags: find-or-create in the destination, then repoint each attachment row.
-  const { attached, byName, toCreate } = await tagPlan(tx, set, destPropertyId);
+  //
+  // The remap covers soft-deleted travellers too (set.deletedItemIds — absent
+  // from older callers/stubs, hence the ?? []): recycled items physically ride
+  // the moved subtree, so leaving their entity_tags rows pointing at
+  // source-property tags would let a later restore resurrect an item in the
+  // destination property wearing another property's tags — exactly the state
+  // the tags routes forbid at attach time. They get the SAME treatment as live
+  // items' tags, in the same transaction; only the REPORTED numbers below stay
+  // live-only, matching what previewConsequences promised — a recycled item
+  // appears in no consequence surface, so a tag carried (or even created) only
+  // for a recycled traveller reconciles silently.
+  const deletedItemIds = set.deletedItemIds ?? [];
+  const remapSet = deletedItemIds.length
+    ? { containerIds: set.containerIds, itemIds: [...set.itemIds, ...deletedItemIds] }
+    : set;
+  const { attached, byName, toCreate } = await tagPlan(tx, remapSet, destPropertyId);
+
+  // The live-only view for reporting, resolved BEFORE the create loop below
+  // mutates byName (afterwards every name resolves, and "would be created"
+  // becomes unanswerable).
+  const deletedSet = new Set(deletedItemIds.map(Number));
+  const liveAttached = attached.filter(
+    (a) => !(a.ENTITY_TYPE === 'item' && deletedSet.has(Number(a.ENTITY_ID)))
+  );
+  const liveCreated = new Set(
+    liveAttached.filter((a) => !byName.has(a.NAME.toLowerCase())).map((a) => a.NAME.toLowerCase())
+  );
+
   for (const name of toCreate) {
     const res = await tx.query(
       'INSERT INTO TALLY.tags (NAME, COLOR, PROPERTY_ID) VALUES (?, NULL, ?)',
@@ -160,8 +205,9 @@ async function reconcile(tx, set, { destPropertyId }) {
     );
   }
 
-  // No audit here — see auditMove below for why.
-  return { unlinked, tagsCarried: distinctTagCount(attached), tagsCreated: toCreate.length };
+  // No audit here — see auditMove below for why. Counts are the live-only
+  // view (identical to the full set when nothing recycled travelled).
+  return { unlinked, tagsCarried: distinctTagCount(liveAttached), tagsCreated: liveCreated.size };
 }
 
 // Audits both sides of a cross-property move, once per moved root — a
