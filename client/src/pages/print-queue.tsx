@@ -71,6 +71,7 @@ export function PrintQueuePage() {
   const removeStagedMany = usePrintQueueStore((s) => s.removeMany);
   const setPreset = usePrintQueueStore((s) => s.setPreset);
   const setAllPresets = usePrintQueueStore((s) => s.setAllPresets);
+  const setPresetMany = usePrintQueueStore((s) => s.setPresetMany);
 
   // `sendProgress` doubles as the "is a send in flight" flag (`sending`
   // below) AND the `N of M` counter the other three batch surfaces all
@@ -156,6 +157,23 @@ export function PrintQueuePage() {
     removeStagedMany(keys);
     exitSelectMode();
     toast(`Removed ${keys.length}`);
+  }
+
+  // What the select-mode bar's own roll setter scopes to — a retarget of
+  // PART of the batch, unlike "Set all to" above the list (which is
+  // unscoped and stays exactly as it was). Per-row preset buttons are
+  // hidden while selecting (#281), so without this there was no way at all
+  // to retarget a subset once you'd started trimming it.
+  const selectedLabels = staged.filter((l) => selected.has(l.key));
+
+  function handleBulkPreset(preset: PrintablePreset) {
+    const keys = [...selected];
+    if (keys.length === 0) return;
+    setPresetMany(keys, preset);
+    if (preset === 'large') {
+      const skipped = selectedLabels.filter((l) => l.entityType === 'item').length;
+      if (skipped > 0) toast(`Items keep their size — ${selectedLabels.length - skipped} set to 4×6`);
+    }
   }
 
   async function handlePrintAll() {
@@ -509,6 +527,23 @@ export function PrintQueuePage() {
           </p>
           <Button variant="ghost" size="sm" onClick={handleSelectAll}>All</Button>
           <Button variant="outline" size="sm" onClick={exitSelectMode}>Cancel</Button>
+          {/* The scoped roll setter #281 asked for — "one action (Remove)
+              plus the roll setter". "Set all to" above the list is
+              unscoped and stays; this is the only way to retarget a
+              SUBSET, since per-row preset buttons are hidden while
+              selecting. */}
+          <div className="flex gap-1">
+            {ROLLS.map((r) => {
+              if (r.value === 'large' && selected.size > 0 && selectedLabels.every((l) => l.entityType === 'item')) return null;
+              return (
+                <Button key={r.value} size="sm" variant="outline"
+                  disabled={selected.size === 0}
+                  onClick={() => handleBulkPreset(r.value)}>
+                  {r.label}
+                </Button>
+              );
+            })}
+          </div>
           <Button size="sm" variant="outline" disabled={selected.size === 0} onClick={handleBulkRemove}>
             <X className="w-4 h-4" />
             Remove{selected.size > 0 ? ` ${selected.size}` : ''}

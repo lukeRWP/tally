@@ -72,6 +72,9 @@ interface PrintQueueState {
   clear: () => void;
   setPreset: (key: string, preset: PrintablePreset) => void;
   setAllPresets: (preset: PrintablePreset) => void;
+  /** Same as setAllPresets, scoped to a key subset — the select-mode bar's
+   * roll setter, for retargeting part of a batch instead of all of it. */
+  setPresetMany: (keys: string[], preset: PrintablePreset) => void;
   has: (entityType: StagedLabel['entityType'], id: number) => boolean;
 }
 
@@ -143,6 +146,19 @@ export const usePrintQueueStore = create<PrintQueueState>((set, get) => ({
     // onto one via a bulk change.
     const next = get().staged.map((l) =>
       preset === 'large' && l.entityType === 'item' ? l : { ...l, preset },
+    );
+    save(next);
+    set({ staged: next });
+  },
+
+  setPresetMany: (keys, preset) => {
+    const targets = new Set(keys);
+    // Same `large`-skips-items rule as setAllPresets — a subset retarget
+    // must not silently force a manifest preset onto an item either.
+    const next = get().staged.map((l) =>
+      targets.has(l.key) && !(preset === 'large' && l.entityType === 'item')
+        ? { ...l, preset }
+        : l,
     );
     save(next);
     set({ staged: next });

@@ -17,7 +17,7 @@
  * No @testing-library/jest-dom in this repo (see container-detail.bulk.test.tsx),
  * so assertions read raw DOM properties instead of `toHaveTextContent`/`toBeDisabled`.
  */
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { usePrintQueueStore } from '@/store/print-queue-store';
 import type { StagedLabel } from '@/store/print-queue-store';
@@ -137,10 +137,37 @@ test('per-row controls disappear while selecting so a tap cannot fire two action
 
   fireEvent.click(screen.getByRole('button', { name: 'Select' }));
 
-  // Only the printer's Loaded Roll picker survives — the row's own preset
-  // buttons and its remove-X are both real nested buttons, hidden while
-  // selecting so a tap can't fire the row's toggle AND a button at once.
-  expect(screen.getAllByRole('button', { name: '2×1' }).length).toBe(1);
+  // The row's own preset buttons and its remove-X are both real nested
+  // buttons, hidden while selecting so a tap can't fire the row's toggle
+  // AND a button at once — back down to 1 (the printer's Loaded Roll
+  // picker) plus the select-mode bar's own scoped roll setter = 2.
+  expect(screen.getAllByRole('button', { name: '2×1' }).length).toBe(2);
+});
+
+test('select-mode roll setter retargets exactly the selected rows, leaving the rest untouched', () => {
+  seedStaged([
+    label({ id: 1, name: 'Item One', preset: 'small' }),
+    label({ id: 2, name: 'Item Two', preset: 'small' }),
+    label({ id: 3, name: 'Item Three', preset: 'small' }),
+  ]);
+  render(<PrintQueuePage />);
+
+  fireEvent.click(screen.getByRole('button', { name: 'Select' }));
+  fireEvent.click(screen.getByLabelText('Select Item One'));
+  fireEvent.click(screen.getByLabelText('Select Item Two'));
+
+  // Scope to the select-mode bar itself — the printer's own Loaded Roll
+  // picker up top also has a "3×3" button, and it's never disabled.
+  const bar = screen.getByText('2 selected').closest('div')!;
+  fireEvent.click(within(bar).getByRole('button', { name: '3×3' }));
+
+  const presets = Object.fromEntries(
+    usePrintQueueStore.getState().staged.map((l) => [l.name, l.preset]),
+  );
+  // Exactly the two selected rows retargeted — "Set all to" above the list
+  // is unscoped and untouched by this; this is the only way to retarget a
+  // SUBSET, since per-row preset buttons are hidden while selecting.
+  expect(presets).toEqual({ 'Item One': 'medium', 'Item Two': 'medium', 'Item Three': 'small' });
 });
 
 test('a send shows a truthful N of M counter instead of a bare "Sending…"', async () => {
