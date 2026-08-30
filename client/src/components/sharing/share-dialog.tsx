@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Copy, Trash2, Loader2, Link2 } from 'lucide-react';
+import { Copy, Trash2, Loader2, Link2, Check } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -9,7 +9,12 @@ import {
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { ShareUrl } from './share-url';
-import { useMyShareLinks, useCreateShareLink, useRevokeShareLink } from '@/hooks/use-sharing';
+import {
+  useMyShareLinks,
+  useCreateShareLink,
+  useRevokeShareLink,
+  useShareDisclosure,
+} from '@/hooks/use-sharing';
 import { toast } from '@/components/ui/toast';
 import { cn } from '@/lib/utils';
 
@@ -39,10 +44,33 @@ function formatDate(dateStr: string) {
 export function ShareDialog({ entityType, entityId, entityName, isOpen, onOpenChange }: ShareDialogProps) {
   const [expiresInDays, setExpiresInDays] = React.useState(7);
   const [newLinkUrl, setNewLinkUrl] = React.useState<string | null>(null);
+  /**
+   * Only the boxes the sharer has actually moved. Everything else falls back to
+   * the server's declared `defaultValue` (sharing.disclosure.js), so if a
+   * default is ever changed the dialog shows the truth without a second edit
+   * here. Today every default is on, so an untouched dialog sends no
+   * `disclosure` at all — exactly the request it sent before #298.
+   */
+  const [touched, setTouched] = React.useState<Record<string, boolean>>({});
 
   const { data: allLinks, isLoading: linksLoading } = useMyShareLinks();
+  const { data: categories } = useShareDisclosure(entityType);
   const createLink = useCreateShareLink();
   const revokeLink = useRevokeShareLink();
+
+  const always = React.useMemo(() => (categories ?? []).filter((c) => !c.optional), [categories]);
+  const optional = React.useMemo(() => (categories ?? []).filter((c) => c.optional), [categories]);
+
+  /**
+   * Whether a category is currently ticked: the sharer's own choice if they
+   * made one, otherwise whatever the server says it defaults to. Read straight
+   * off the catalogue rather than seeded into state, so there is no window
+   * where the boxes render all-on before the defaults arrive.
+   */
+  const isOn = React.useCallback(
+    (c: { key: string; defaultValue: boolean }) => touched[c.key] ?? c.defaultValue,
+    [touched],
+  );
 
   // Filter links for this specific entity
   const entityLinks = React.useMemo(
@@ -58,12 +86,22 @@ export function ShareDialog({ entityType, entityId, entityName, isOpen, onOpenCh
     if (!isOpen) {
       setNewLinkUrl(null);
       setExpiresInDays(7);
+      setTouched({});
     }
   }, [isOpen]);
 
   function handleGenerate() {
+    // Everything on -> send no `disclosure`, so the row stored is identical to
+    // one written before this feature and the link publishes exactly what it
+    // would have published yesterday. Anything else is sent in full, including
+    // a category that is off only because the server says so by default: the
+    // server would apply that itself, but sending it keeps the request an
+    // honest record of the link the sharer was shown.
+    const chosen = Object.fromEntries(optional.map((c) => [c.key, isOn(c)]));
+    const disclosure = Object.values(chosen).every(Boolean) ? undefined : chosen;
+
     createLink.mutate(
-      { entityType, entityId, expiresInDays },
+      { entityType, entityId, expiresInDays, disclosure },
       {
         onSuccess: (link) => {
           const linkData = link as unknown as { url: string };
@@ -126,6 +164,56 @@ export function ShareDialog({ entityType, entityId, entityName, isOpen, onOpenCh
             ))}
           </div>
         </div>
+
+        {/* What actually travels (#298).
+            The dialog used to promise only that "anyone can view without
+            signing in" — true, and silent about the interesting half: a
+            receipt, a street address, a price. This list is served by the
+            server from the same table that strips the public payload
+            (sharing.disclosure.js), so it cannot describe a link the server
+            does not then build — including which boxes start ticked, which
+            comes from that table's declared defaults rather than an assumption
+            here. Today they all start on: this is a place to say no, not a
+            change to what a share publishes by default. */}
+        {!!categories?.length && (
+          <div data-testid="share-disclosure">
+            <p className="text-xs font-medium text-[var(--color-text-muted)] mb-2">
+              What the recipient will see
+            </p>
+            <ul className="flex flex-col gap-2">
+              {always.map((c) => (
+                <li key={c.key} className="flex gap-2 text-xs">
+                  <Check
+                    className="w-3.5 h-3.5 mt-0.5 shrink-0 text-[var(--color-text-muted)]"
+                    aria-hidden="true"
+                  />
+                  <span>
+                    <span className="text-[var(--color-text)]">{c.label}</span>
+                    <span className="block text-[var(--color-text-muted)]">{c.detail}</span>
+                  </span>
+                </li>
+              ))}
+              {optional.map((c) => (
+                <li key={c.key}>
+                  <label className="flex gap-2 text-xs cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={isOn(c)}
+                      onChange={(e) =>
+                        setTouched((prev) => ({ ...prev, [c.key]: e.target.checked }))
+                      }
+                      className="accent-[var(--color-primary)] w-3.5 h-3.5 mt-0.5 shrink-0"
+                    />
+                    <span>
+                      <span className="text-[var(--color-text)]">{c.label}</span>
+                      <span className="block text-[var(--color-text-muted)]">{c.detail}</span>
+                    </span>
+                  </label>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
 
         {/* Generate button */}
         <Button

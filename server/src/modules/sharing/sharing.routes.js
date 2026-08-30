@@ -7,9 +7,26 @@ module.exports = function sharingRoutes({ app, db, logger, config }) {
   const AreasService = require('../inventory/areas.service');
 
   const { createShareLink } = require('./sharing.schema');
+  const disclosure = require('./sharing.disclosure');
   const { success, error } = require('../../utils/response');
 
   const { requireAuth, resolvePropertyRole, requireRole } = app.locals;
+
+  // ── GET /api/sharing/_x_/disclosure ───────────────────────────────────────
+  // Authenticated: what a share link of each entity type can publish.
+  //
+  // ShareDialog reads its "what the recipient will see" list from here rather
+  // than carrying its own copy, so the warning shown to the sharer and the
+  // strip enforced on the public route can never disagree — they are the same
+  // table (sharing.disclosure.js).
+
+  app.get(
+    '/api/sharing/_x_/disclosure',
+    requireAuth,
+    async (req, res) => {
+      success(res, { categories: disclosure.catalogue() });
+    }
+  );
 
   // ── POST /api/sharing/_y_/create ───────────────────────────────────────────
   // Authenticated: create a share link
@@ -48,8 +65,8 @@ module.exports = function sharingRoutes({ app, db, logger, config }) {
     resolvePropertyRole,
     requireRole('owner', 'editor'),
     async (req, res) => {
-      const { entityType, entityId, expiresInDays } = req.validatedBody;
-      const link = await SharingService.create(entityType, entityId, req.user.id, expiresInDays);
+      const { entityType, entityId, expiresInDays, disclosure: choices } = req.validatedBody;
+      const link = await SharingService.create(entityType, entityId, req.user.id, expiresInDays, choices);
       success(res, { link }, 'Share link created', 201);
     }
   );
@@ -89,7 +106,14 @@ module.exports = function sharingRoutes({ app, db, logger, config }) {
         return error(res, 'Share link not found or expired', 404);
       }
 
-      const entity = await SharingService.getEntityForShare(tokenData.entityType, tokenData.entityId);
+      // The link's own disclosure choice rides into the payload build, so what
+      // a stranger receives is what this link's sharer agreed to publish. NULL
+      // (every link created before #298) means everything, unchanged.
+      const entity = await SharingService.getEntityForShare(
+        tokenData.entityType,
+        tokenData.entityId,
+        tokenData.disclosure,
+      );
       if (!entity) {
         return error(res, 'Entity not found', 404);
       }

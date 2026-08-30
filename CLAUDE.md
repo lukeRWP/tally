@@ -472,8 +472,12 @@ Labels can be queued for automatic printing on a USB thermal printer (Munbyn ITP
 - `POST /api/sharing/_y_/create` generates a share token with a configurable expiry (default 7 days).
 - `GET /api/sharing/_x_/:token` resolves the token and returns a read-only view of the shared entity.
 - `DELETE /api/sharing/_d_/:token` revokes a share link immediately.
-- Share links are stored in the `share_links` table with `TOKEN`, `ENTITY_TYPE`, `ENTITY_ID`, `EXPIRES_AT`, and `CREATED_BY` columns.
+- Share links are stored in the `share_links` table with `TOKEN`, `ENTITY_TYPE`, `ENTITY_ID`, `EXPIRES_AT`, `CREATED_BY`, and `DISCLOSURE` columns.
 - The client renders shared content on a standalone `/share/:token` page — no nav, no auth, no sidebar.
+- **What a link publishes is a per-link choice**, catalogued in `server/src/modules/sharing/sharing.disclosure.js` — the single source of truth for both the sharer-facing list (`GET /api/sharing/_x_/disclosure`, read by `ShareDialog`) and the strip applied when the public payload is built (`applyDisclosure`, called once in `getEntityForShare`). Add a field to the public payload → add it to that catalogue, or it can never be withheld.
+- **Every category defaults to ON**, and each states so explicitly via `defaultOn` in that catalogue — changing what a *new* share publishes by default is that one line, nothing else. (#298 is where the address / purchase-price calls get made; neither has been made.)
+- **A default applies at link-creation time only — never on read.** `resolve()` must never consult `defaultOn`: `share_links.DISCLOSURE` NULL means "everything" and a key missing from a stored object means "on", *permanently*, so flipping a default cannot retroactively change what an already-issued URL publishes. `sharing.disclosure.test.js` flips every default to `false` and asserts no existing link moves; do not "simplify" the NULL handling past it.
+- **The public payload is not a dump of the row.** Fields nothing on `/share/:token` renders are deliberately absent: no `recordedByName` on condition snapshots, no `purchasePrice` on the items of a property/area/container share (the item share carries its own, which `ItemView` shows), no depreciation fields, no `productSpecs`.
 
 ### Diagnosing "AI photos aren't working"
 

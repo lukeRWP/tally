@@ -106,3 +106,63 @@ test('an expired or unknown token is still a 404 with no share block', async (t)
   assert.equal(body.success, false);
   assert.equal(body.data, undefined);
 });
+
+// ── Disclosure (#298) ───────────────────────────────────────────────────────
+// ShareDialog told the sharer "anyone can view without signing in" and never
+// what travels. These pin the two halves of the fix: the dialog can read the
+// catalogue, and the link's own choice reaches the payload build.
+
+test('the dialog can read the same catalogue the server enforces', async () => {
+  const { status, body } = await get('/api/sharing/_x_/disclosure');
+  assert.equal(status, 200);
+  const cats = body.data.categories;
+  assert.deepEqual(Object.keys(cats).sort(), ['area', 'container', 'item', 'property']);
+
+  const item = cats.item;
+  assert.ok(item.some((c) => c.key === 'files' && c.optional), 'receipts are an opt-out');
+  assert.ok(item.some((c) => !c.optional), 'and the always-shared rows are stated too');
+  assert.ok(
+    item.every((c) => c.defaultValue === true),
+    'every category ships on by default — this endpoint must not narrow anything',
+  );
+  assert.ok(
+    cats.property.some((c) => c.key === 'address'),
+    'the street address is the property-share choice',
+  );
+});
+
+test('the public route hands the link\'s own disclosure to the payload build', async (t) => {
+  let passed = 'not called';
+  t.mock.method(SharingService, 'validate', async () => ({
+    entityType: 'item',
+    entityId: 9,
+    createdBy: 1,
+    createdByName: 'Luke Turner',
+    expiresAt: '2026-09-05T00:00:00.000Z',
+    createdAt: '2026-08-29T00:00:00.000Z',
+    disclosure: { files: false },
+  }));
+  t.mock.method(SharingService, 'getEntityForShare', async (type, id, choice) => {
+    passed = choice;
+    return { type: 'item', item: { id: 9 }, files: [], dates: [], conditionSnapshots: [] };
+  });
+
+  const { status } = await get('/api/sharing/_x_/view/tok');
+  assert.equal(status, 200);
+  assert.deepEqual(passed, { files: false }, 'the stored choice must reach the strip');
+});
+
+test('a link with no stored disclosure builds its payload the old way', async (t) => {
+  let passed = 'not called';
+  t.mock.method(SharingService, 'validate', async () => ({
+    entityType: 'container', entityId: 4, createdBy: 1, createdByName: null,
+    expiresAt: null, createdAt: null, disclosure: null,
+  }));
+  t.mock.method(SharingService, 'getEntityForShare', async (type, id, choice) => {
+    passed = choice;
+    return { type: 'container', container: { id: 4 }, nestedContainers: [], items: [] };
+  });
+
+  await get('/api/sharing/_x_/view/tok');
+  assert.equal(passed, null, 'null means share everything — unchanged behaviour');
+});

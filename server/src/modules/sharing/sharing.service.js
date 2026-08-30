@@ -1,5 +1,6 @@
 const crypto = require('crypto');
 const storage = require('../../infrastructure/storage');
+const disclosure = require('./sharing.disclosure');
 
 let _db = null;
 let _logger = null;
@@ -26,18 +27,29 @@ const SharingService = {
       createdBy: row.CREATED_BY,
       expiresAt: row.EXPIRES_AT,
       createdAt: row.CREATED_AT,
+      // Resolved, never raw: a NULL column and an all-true object are the same
+      // link, and the dialog should not have to know that.
+      disclosure: disclosure.resolve(row.DISCLOSURE, row.ENTITY_TYPE),
     };
   },
 
   // ── CRUD ───────────────────────────────────────────────────────────────────
 
-  async create(entityType, entityId, createdBy, expiresInDays = 7) {
+  /**
+   * `choices` is the sharer's per-link disclosure (see sharing.disclosure.js).
+   * Omitted, or all-defaults, stores NULL — a row indistinguishable from every
+   * link created before the column existed, publishing exactly the same thing.
+   */
+  async create(entityType, entityId, createdBy, expiresInDays = 7, choices = null) {
     const token = crypto.randomBytes(32).toString('hex');
+    const chosen = disclosure.normalizeChoice(choices, entityType);
 
     const result = await _db.query(
-      `INSERT INTO TALLY.share_links (TOKEN, ENTITY_TYPE, ENTITY_ID, CREATED_BY, EXPIRES_AT)
-       VALUES (?, ?, ?, ?, DATE_ADD(NOW(), INTERVAL ? DAY))`,
-      [token, entityType, entityId, createdBy, expiresInDays]
+      `INSERT INTO TALLY.share_links (TOKEN, ENTITY_TYPE, ENTITY_ID, CREATED_BY, EXPIRES_AT, DISCLOSURE)
+       VALUES (?, ?, ?, ?, DATE_ADD(NOW(), INTERVAL ? DAY), ?)`,
+      // Stringified explicitly: mysql2 escapes a bare object as `k = v` pairs,
+      // which is not JSON and not what a JSON column wants.
+      [token, entityType, entityId, createdBy, expiresInDays, chosen ? JSON.stringify(chosen) : null]
     );
 
     const rows = await _db.query(
@@ -55,7 +67,7 @@ const SharingService = {
     // and a share whose creator is gone must still resolve (the page then just
     // omits the "shared by" line rather than inventing one).
     const rows = await _db.query(
-      `SELECT s.ENTITY_TYPE, s.ENTITY_ID, s.CREATED_BY, s.EXPIRES_AT, s.CREATED_AT,
+      `SELECT s.ENTITY_TYPE, s.ENTITY_ID, s.CREATED_BY, s.EXPIRES_AT, s.CREATED_AT, s.DISCLOSURE,
               u.DISPLAY_NAME AS CREATED_BY_NAME
        FROM TALLY.share_links s
        LEFT JOIN TALLY.users u ON s.CREATED_BY = u.ID
@@ -72,6 +84,9 @@ const SharingService = {
       createdByName: row.CREATED_BY_NAME || null,
       expiresAt: row.EXPIRES_AT || null,
       createdAt: row.CREATED_AT || null,
+      // Raw here on purpose — the public route hands it straight back to
+      // applyDisclosure(), which is the only thing entitled to interpret it.
+      disclosure: row.DISCLOSURE ?? null,
     };
   },
 
@@ -92,19 +107,32 @@ const SharingService = {
 
   // ── Public entity fetching ─────────────────────────────────────────────────
 
-  async getEntityForShare(entityType, entityId) {
+  /**
+   * The whole public payload. `storedDisclosure` is the raw share_links column
+   * for this link; the strip runs here, after the envelope is built, so there
+   * is exactly one place where a sharer's "no" is honoured and no query edit
+   * can route around it. Omitted (or NULL) publishes everything — the
+   * behaviour of every link created before #298.
+   */
+  async getEntityForShare(entityType, entityId, storedDisclosure = null) {
+    let envelope;
     switch (entityType) {
       case 'property':
-        return SharingService._getPropertyForShare(entityId);
+        envelope = await SharingService._getPropertyForShare(entityId);
+        break;
       case 'area':
-        return SharingService._getAreaForShare(entityId);
+        envelope = await SharingService._getAreaForShare(entityId);
+        break;
       case 'container':
-        return SharingService._getContainerForShare(entityId);
+        envelope = await SharingService._getContainerForShare(entityId);
+        break;
       case 'item':
-        return SharingService._getItemForShare(entityId);
+        envelope = await SharingService._getItemForShare(entityId);
+        break;
       default:
         return null;
     }
+    return envelope ? disclosure.applyDisclosure(envelope, storedDisclosure) : null;
   },
 
   async _getPropertyForShare(propertyId) {
@@ -134,7 +162,7 @@ const SharingService = {
 
     // All items for this property
     const itemRows = await _db.query(
-      `SELECT i.ID, i.CONTAINER_ID, i.NAME, i.DESCRIPTION, i.QUANTITY, i.PURCHASE_PRICE,
+      `SELECT i.ID, i.CONTAINER_ID, i.NAME, i.DESCRIPTION, i.QUANTITY,
               i.\`CONDITION\`, i.STATUS, i.QR_CODE, i.CREATED_AT,
               p.NAME AS PRODUCT_NAME, p.BRAND AS PRODUCT_BRAND, p.IMAGE_URL AS PRODUCT_IMAGE_URL
        FROM TALLY.items i
@@ -172,13 +200,18 @@ const SharingService = {
         qrCode: c.QR_CODE || null,
         createdAt: c.CREATED_AT,
       })),
+      // NO purchasePrice (#298). It used to ride on every item of a whole-
+      // property share — the household's spend on everything it owns, to
+      // anyone holding the URL — and the share page has never rendered it:
+      // `ItemLine` in share-view.tsx draws name, condition, description and
+      // quantity, and nothing else. An item share still carries its own price,
+      // because `ItemView` genuinely shows it.
       items: itemRows.map(i => ({
         id: i.ID,
         containerId: i.CONTAINER_ID,
         name: i.NAME,
         description: i.DESCRIPTION || null,
         quantity: i.QUANTITY != null ? Number(i.QUANTITY) : 1,
-        purchasePrice: i.PURCHASE_PRICE != null ? Number(i.PURCHASE_PRICE) : null,
         condition: i.CONDITION || null,
         status: i.STATUS || null,
         qrCode: i.QR_CODE || null,
@@ -214,7 +247,7 @@ const SharingService = {
 
     // Items within this area
     const itemRows = await _db.query(
-      `SELECT i.ID, i.CONTAINER_ID, i.NAME, i.DESCRIPTION, i.QUANTITY, i.PURCHASE_PRICE,
+      `SELECT i.ID, i.CONTAINER_ID, i.NAME, i.DESCRIPTION, i.QUANTITY,
               i.\`CONDITION\`, i.STATUS, i.QR_CODE, i.CREATED_AT,
               p.NAME AS PRODUCT_NAME, p.BRAND AS PRODUCT_BRAND, p.IMAGE_URL AS PRODUCT_IMAGE_URL
        FROM TALLY.items i
@@ -251,7 +284,6 @@ const SharingService = {
         name: i.NAME,
         description: i.DESCRIPTION || null,
         quantity: i.QUANTITY != null ? Number(i.QUANTITY) : 1,
-        purchasePrice: i.PURCHASE_PRICE != null ? Number(i.PURCHASE_PRICE) : null,
         condition: i.CONDITION || null,
         status: i.STATUS || null,
         qrCode: i.QR_CODE || null,
@@ -291,7 +323,7 @@ const SharingService = {
 
     // All items within this container and its descendants
     const itemRows = await _db.query(
-      `SELECT i.ID, i.CONTAINER_ID, i.NAME, i.DESCRIPTION, i.QUANTITY, i.PURCHASE_PRICE,
+      `SELECT i.ID, i.CONTAINER_ID, i.NAME, i.DESCRIPTION, i.QUANTITY,
               i.\`CONDITION\`, i.STATUS, i.QR_CODE, i.CREATED_AT,
               p.NAME AS PRODUCT_NAME, p.BRAND AS PRODUCT_BRAND, p.IMAGE_URL AS PRODUCT_IMAGE_URL
        FROM TALLY.items i
@@ -334,7 +366,6 @@ const SharingService = {
         name: i.NAME,
         description: i.DESCRIPTION || null,
         quantity: i.QUANTITY != null ? Number(i.QUANTITY) : 1,
-        purchasePrice: i.PURCHASE_PRICE != null ? Number(i.PURCHASE_PRICE) : null,
         condition: i.CONDITION || null,
         status: i.STATUS || null,
         qrCode: i.QR_CODE || null,
@@ -351,7 +382,7 @@ const SharingService = {
     const itemRows = await _db.query(
       `SELECT i.*,
               p.NAME AS PRODUCT_NAME, p.BRAND AS PRODUCT_BRAND, p.IMAGE_URL AS PRODUCT_IMAGE_URL,
-              p.DESCRIPTION AS PRODUCT_DESCRIPTION, p.SPECS AS PRODUCT_SPECS,
+              p.DESCRIPTION AS PRODUCT_DESCRIPTION,
               c.NAME AS CONTAINER_NAME,
               a.ID AS AREA_ID, a.NAME AS AREA_NAME,
               a.PROPERTY_ID AS PROPERTY_ID, pr.NAME AS PROPERTY_NAME
@@ -437,8 +468,10 @@ const SharingService = {
         condition: row.CONDITION || null,
         status: row.STATUS || null,
         qrCode: row.QR_CODE || null,
-        depreciationEnabled: row.DEPRECIATION_ENABLED != null ? Boolean(row.DEPRECIATION_ENABLED) : false,
-        depreciationRate: row.DEPRECIATION_RATE != null ? Number(row.DEPRECIATION_RATE) : null,
+        // NO depreciationEnabled / depreciationRate (#298): the household's
+        // valuation model, and share-view.tsx names neither. Depreciation is
+        // computed client-side on the authenticated item page (item-detail.tsx),
+        // which is where those two fields are read.
         createdAt: row.CREATED_AT,
         updatedAt: row.UPDATED_AT,
         // Product info
@@ -446,7 +479,9 @@ const SharingService = {
         productBrand: row.PRODUCT_BRAND || null,
         productImageUrl: row.PRODUCT_IMAGE_URL || null,
         productDescription: row.PRODUCT_DESCRIPTION || null,
-        productSpecs: row.PRODUCT_SPECS || null,
+        // NO productSpecs (#298): a free-form JSON blob shipped whole to an
+        // anonymous viewer, and `productOf()` in share-view.tsx builds its
+        // product object from name/brand/imageUrl/description only.
         // Breadcrumb
         breadcrumb: [
           { id: row.PROPERTY_ID, name: row.PROPERTY_NAME || null, type: 'property' },
