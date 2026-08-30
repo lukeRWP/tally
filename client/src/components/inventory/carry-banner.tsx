@@ -160,7 +160,10 @@ export function CarryBanner() {
         className="shrink-0 inline-flex items-center gap-1 bg-[var(--color-primary)] text-white rounded-[var(--radius-sm)] px-2.5 min-h-[max(34px,var(--tap-min))] font-mono text-[10px] font-bold uppercase tracking-[0.06em]"
       >
         <ScanLine className="w-3.5 h-3.5" />
-        {carried.some((c) => c.kind === 'container') ? 'Scan dest' : 'Scan bin'}
+        {/* #284: "Scan" names the phone's only path — /move's desk mode is a
+            destination picker, not a camera, and item-detail.tsx's own Move
+            button already forks this same sentence on `touch`. */}
+        {touch ? 'Scan' : 'Choose'} {carried.some((c) => c.kind === 'container') ? 'dest' : 'bin'}
       </button>
       <button
         type="button"

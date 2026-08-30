@@ -460,8 +460,23 @@ export function PrintQueuePage() {
                       <>
                         <div className="flex gap-1">
                           {ROLLS.map((r) => {
-                            // `large` is a contents manifest — never offered for an item.
-                            if (r.value === 'large' && l.entityType === 'item') return null;
+                            // `large` is a contents manifest — never offered for
+                            // an item. Reserved as an invisible slot rather than
+                            // omitted (#284): omitting it shifted every VISIBLE
+                            // button's x-position by a roll's width whenever a
+                            // row's entityType differed from its neighbour's, so
+                            // setting rolls down a mixed batch meant re-aiming on
+                            // every item row. The slot keeps the cluster's width
+                            // — and so its alignment against the fixed `X` — the
+                            // same on every row.
+                            if (r.value === 'large' && l.entityType === 'item') {
+                              return (
+                                <Button key={r.value} size="sm" variant="outline" disabled
+                                  aria-hidden="true" tabIndex={-1} className="invisible">
+                                  {r.label}
+                                </Button>
+                              );
+                            }
                             return (
                               <Button key={r.value} size="sm"
                                 variant={l.preset === r.value ? 'default' : 'outline'}

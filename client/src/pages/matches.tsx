@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { Link, useSearchParams } from 'react-router';
-import { ArrowLeft, ExternalLink, Package, PackageSearch } from 'lucide-react';
+import { ArrowLeft, ArrowUpRight, ExternalLink, Package, PackageSearch } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -147,11 +147,24 @@ function CandidatePanel({ match, onPick, onDismiss, resolving, onBack }: {
         </button>
       )}
 
-      <div className="border-b-2 border-[var(--color-text)] pb-2">
-        <h2 className="truncate text-base font-bold uppercase tracking-[0.06em]">{match.itemName}</h2>
-        <p className="truncate font-mono text-[10px] uppercase tracking-[0.08em] text-[var(--color-text-muted)]">
-          {match.containerName}
-        </p>
+      <div className="flex items-start justify-between gap-2 border-b-2 border-[var(--color-text)] pb-2">
+        <div className="min-w-0">
+          <h2 className="truncate text-base font-bold uppercase tracking-[0.06em]">{match.itemName}</h2>
+          <p className="truncate font-mono text-[10px] uppercase tracking-[0.08em] text-[var(--color-text-muted)]">
+            {match.containerName}
+          </p>
+        </div>
+        {/* #284: these rows arrive here because a photo identified them, and
+            the panel showed the candidates' own images but never the item's —
+            an ambiguous match forced a navigation away to /item and back just
+            to look at the thing being matched. itemId is already in the
+            payload (ProductMatch, use-matches.ts). */}
+        <Link
+          to={`/item/${match.itemId}`}
+          className="inline-flex shrink-0 items-center gap-1 rounded-[var(--radius-sm)] px-1.5 py-1 font-mono text-[10px] uppercase tracking-[0.06em] text-[var(--color-primary)] hover:bg-[var(--color-elevated)]"
+        >
+          View item <ArrowUpRight className="h-3 w-3" />
+        </Link>
       </div>
 
       {working && (

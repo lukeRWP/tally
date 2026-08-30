@@ -161,6 +161,60 @@ test('bulk Restore loops sequentially, continues past a failure, and reports a t
   expect(screen.getByText('1 selected')).toBeTruthy();
 });
 
+test('#284: "N selected" freezes at the batch size while the restore loop runs, instead of counting down against the progress label', async () => {
+  // The list GET reflects whichever batches haven't been restored YET — the
+  // same shape a real invalidation-driven refetch produces once a restore's
+  // onSuccess fires (recycle-bin-list.tsx's invalidateEverything). Batch 2's
+  // restore is parked mid-flight (same shape as the "disabled with a
+  // progress label" test above) so the loop can be inspected between steps.
+  const removed = new Set<number>();
+  let resolveSecond: (() => void) | null = null;
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === 'string' ? input : input.toString();
+    if (url.includes('/api/recycle/_x_/list')) {
+      return jsonResponse({ success: true, data: { batches: batches.filter((b) => !removed.has(b.id)) } });
+    }
+    const m = url.match(/\/api\/recycle\/_y_\/restore\/(\d+)/);
+    if (m && init?.method === 'POST') {
+      const id = Number(m[1]);
+      if (id === 2) {
+        return new Promise<Response>((res) => {
+          resolveSecond = () => { removed.add(2); res(jsonResponse({ success: true, data: {} })); };
+        });
+      }
+      removed.add(id);
+      return jsonResponse({ success: true, data: { restored: {} } });
+    }
+    return jsonResponse({ success: true, data: {} });
+  });
+  vi.stubGlobal('fetch', fetchMock);
+  renderList();
+
+  await screen.findByText('Drill');
+  fireEvent.click(screen.getByRole('button', { name: 'Select' }));
+  fireEvent.click(screen.getByRole('button', { name: 'All' }));
+  expect(within(selectBar()).getByText('3 selected')).toBeTruthy();
+
+  fireEvent.click(screen.getByRole('button', { name: /^Restore 3$/ }));
+
+  // Batch 1 (Drill) has restored and its invalidation-driven refetch has
+  // landed — the row is gone from the list — while the loop is stuck on
+  // batch 2 (Sander), still parked mid-flight.
+  await waitFor(() => expect(screen.queryByText('Drill')).toBeNull());
+  await screen.findByText('Restoring… 2 of 3');
+
+  // Pre-fix, "selected" was pruned down to what the list still contains (2:
+  // Sander + Level) the moment Drill disappeared — reading "2 selected"
+  // beside "Restoring… 2 of 3", a contradiction anyone would read as a bug.
+  // Post-fix it stays frozen at the original batch size for the whole loop.
+  expect(within(selectBar()).getByText('3 selected')).toBeTruthy();
+
+  resolveSecond!();
+  await waitFor(() => expect(toast).toHaveBeenCalledWith('Restored 3'));
+  // Loop finished with no failures — now genuinely empty, not frozen.
+  expect(within(selectBar()).getByText('0 selected')).toBeTruthy();
+});
+
 test('a blocked restore whose payload carries an ancestor id renders it as a LINK', async () => {
   vi.stubGlobal('fetch', makeFetchMock({
     2: () => jsonResponse({

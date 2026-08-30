@@ -534,7 +534,14 @@ export function RecycleBinList() {
           style={{ bottom: barOffsetCss({ touch: !wide, carrying: carryBannerShowing }) }}
         >
           <p className="font-mono text-xs uppercase tracking-[0.06em] text-[var(--color-text)] shrink-0 whitespace-nowrap tabular-nums">
-            {selected.size} selected
+            {/* #284: the ghost-pruning effect above drops rows from `selected`
+                as restored batches disappear from `batches` mid-loop, so this
+                count was counting DOWN while `restoreProgress` below counted
+                up — both numbers true, together reading as a contradiction.
+                Mirrors container-detail.tsx's identical fix: freeze on
+                `restoreProgress.total`, set once per loop, rather than a
+                second tracked value. */}
+            {bulkRunning ? (restoreProgress?.total ?? selected.size) : selected.size} selected
           </p>
           <Button variant="ghost" size="sm" onClick={handleSelectAll} disabled={bulkRunning}>
             All

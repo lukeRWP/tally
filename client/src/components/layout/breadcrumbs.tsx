@@ -51,7 +51,12 @@ export function Breadcrumbs({ items }: BreadcrumbsProps) {
         {items.map((item) => (
           <span key={`${item.type}-${item.id}`} className="flex items-center gap-1 shrink-0">
             <ChevronRight className="w-3 h-3 shrink-0" />
-            <Link to={getPath(item)} className="hover:text-[var(--color-text-secondary)] transition-colors py-2 max-w-[120px] truncate inline-flex items-center min-h-[var(--tap-min)]">
+            {/* #284: 120px was a phone-width cap applied at every width — at
+                1440 the nav has ~1100px to work with and the row already
+                scrolls horizontally for the phone case, so a crumb like
+                "Christmas decorations — loft bay 3" truncated with 900px of
+                empty rule beside it. Uncapped from `lg` up. */}
+            <Link to={getPath(item)} className="hover:text-[var(--color-text-secondary)] transition-colors py-2 max-w-[120px] lg:max-w-none truncate inline-flex items-center min-h-[var(--tap-min)]">
               {item.name}
             </Link>
           </span>
