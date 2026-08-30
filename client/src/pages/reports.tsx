@@ -389,12 +389,14 @@ export function Reports() {
             >
               {/* Hand-built rather than RuledRow: the options panel below holds
                   buttons of its own, which cannot live inside a row that is
-                  itself a <button>. */}
+                  itself a <button>. Focus ring mirrors ruled-row.tsx (#315) —
+                  inset rather than button.tsx's offset ring, for the same
+                  reason: these rows are stacked with no gap between them. */}
               <button
                 type="button"
                 onClick={() => toggleReport(report.id)}
                 aria-expanded={isExpanded}
-                className="flex w-full items-center gap-3 py-3 text-left transition-colors hover:bg-[var(--color-elevated)]/60 active:bg-[var(--color-elevated)] focus-visible:outline-none focus-visible:bg-[var(--color-elevated)]"
+                className="flex w-full items-center gap-3 py-3 text-left transition-colors hover:bg-[var(--color-elevated)]/60 active:bg-[var(--color-elevated)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--color-primary)]"
               >
                 <Icon
                   className={cn(
