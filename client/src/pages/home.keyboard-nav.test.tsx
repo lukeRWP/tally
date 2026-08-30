@@ -140,3 +140,18 @@ test('the ring is off entirely on touch chrome', () => {
   fireEvent.keyDown(window, { key: 'j' });
   expect(ringOn('Drill')).toBe(false);
 });
+
+// ── #270: the cursor survives the detail round-trip ──────────────────────
+
+test('#270: a cursor in ?sel is live on arrival, and j continues from it', () => {
+  // Back hands the page its history entry, params and all. Held in useState
+  // the highlight was gone, and the next j re-seeded at result 1 — hundreds
+  // of pixels above a correctly restored scroll position, moving nothing.
+  renderHome(['/?q=drill&sel=2']);
+
+  expect(ringOn('Drill Bits')).toBe(true);
+
+  fireEvent.keyDown(window, { key: 'j' });
+  expect(ringOn('Drill Case')).toBe(true);
+  expect(ringOn('Drill Bits')).toBe(false);
+});

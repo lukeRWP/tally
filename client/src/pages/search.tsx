@@ -108,6 +108,15 @@ export function SearchPage() {
    * which matters most on the one surface people arrive at repeatedly.
    */
   const selectedId = searchParams.get('sel') ? Number(searchParams.get('sel')) : null;
+  /**
+   * Whether this mount ARRIVED carrying a cursor (#271).
+   *
+   * Read once, at mount, because that is when `autoFocus` is applied: a fresh
+   * visit wants the field (it is why you came), but coming Back from an item
+   * you were mid-browse — and stealing focus into the field then made `j`
+   * type a literal `j` into the query, with Escape the only way out.
+   */
+  const [arrivedWithCursor] = React.useState(() => searchParams.get('sel') != null);
   const select = React.useCallback((id: number | null) => {
     setSearchParams((prev) => {
       const next = new URLSearchParams(prev);
@@ -127,6 +136,9 @@ export function SearchPage() {
         : Math.min(ids.length - 1, Math.max(0, at + delta));
       select(ids[next]);
     },
+    // Reached only when focus is OUTSIDE the field (#271): the hook's first
+    // Escape blurs and stops there, so the cursor Back restored survives the
+    // one gesture that could leave the input, and a second Escape clears it.
     onEscape: () => select(null),
     onOpen: () => {
       if (selectedId == null) return false;
@@ -136,6 +148,12 @@ export function SearchPage() {
     // '/' already lives in this page's own input, so refocusing it is the
     // useful thing rather than navigating to the page you are on.
     onSearch: () => inputRef.current?.focus(),
+    // Tab onto a result row IS a cursor move (#279) — one cursor, not a focus
+    // outline racing a ring. Rows carry data-nav-id={item.id}.
+    onFocusRow: (navId) => {
+      const id = Number(navId);
+      if (Number.isFinite(id)) select(id);
+    },
   });
   // Keeps the cursor on screen past one screenful of results (#235) — rows
   // below carry the matching data-nav-id.
@@ -167,7 +185,7 @@ export function SearchPage() {
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             className="pl-9"
-            autoFocus
+            autoFocus={!arrivedWithCursor}
           />
         </div>
       </div>

@@ -2457,6 +2457,13 @@ function ManualCreate({
           onPick={(bin) => {
             onPickDest({ id: bin.id, name: bin.name, areaId: bin.areaId });
             setPicking(false);
+            // Put focus back in the form (#279). The button that had it
+            // ("Choose a bin") unmounts with the picker, and the browser then
+            // drops focus to <body> — ten tab stops, the whole sidebar, from
+            // the form you were filling in. The only other focus-return
+            // effect here keys on receiptCount, which a bin change never
+            // ticks. Focus moves BEFORE the unmount, so nothing to restore.
+            nameRef.current?.focus();
           }}
           onClose={() => setPicking(false)}
         />

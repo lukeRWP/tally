@@ -1,4 +1,5 @@
-import { useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
+import { useSearchParams } from 'react-router';
 
 /**
  * Desktop keyboard navigation.
@@ -26,6 +27,14 @@ import { useEffect, useRef } from 'react';
  * <main>, the destination picker's own overflow list). A "move" is leaving a
  * real previous cursor — see useNavScrollIntoView for the exact rule and why
  * a mount-skip was not enough.
+ *
+ * Surviving the round trip (#270): a cursor held in `useState` dies on every
+ * Back, because Back remounts the surface while use-scroll-restoration.ts
+ * faithfully restores the pixels — so the list came back exactly where you
+ * left it with nothing highlighted, and the next `j` re-seeded at row 1,
+ * hundreds of pixels off-screen, scrolling nothing (the baseline rule above
+ * correctly refuses to scroll a first landing). The cursor therefore lives in
+ * the URL — see useNavCursorParam.
  */
 export interface KeyboardNavOptions {
   /** Move the selection. Not called when nothing is selectable. */
@@ -38,12 +47,91 @@ export interface KeyboardNavOptions {
    * focused, exactly as before.
    */
   onOpen?: () => boolean | void;
-  /** Back out: clear the selection, close the panel. */
+  /**
+   * Back out: clear the selection, close the panel.
+   *
+   * Runs only when focus is NOT in a field (#271). Escape has two jobs on a
+   * ringed surface — leave the field, leave the selection — and firing both
+   * on one press meant `/search`'s restored `?sel` cursor was destroyed by
+   * the only gesture that could blur its autoFocused input. They are now
+   * sequential: first Escape leaves the field, second Escape leaves the
+   * selection.
+   */
   onEscape?: () => void;
   /** Focus the page's search field. */
   onSearch?: () => void;
+  /**
+   * Tab moved focus onto a row — adopt it as the cursor (#279).
+   *
+   * Called with that row's `data-nav-id` (the nearest ancestor carrying one),
+   * so a Tab user and the ring share ONE cursor instead of drawing two and
+   * letting Enter arbitrate between them: the ring on row 20 while the focus
+   * outline sat on row 1, and Enter opening row 20. Fusing beats refereeing —
+   * Tab now MOVES the ring. Surfaces should ignore an id they don't recognise.
+   */
+  onFocusRow?: (navId: string) => void;
   /** Off in touch chrome, where there is no keyboard to serve. */
   enabled?: boolean;
+}
+
+/**
+ * A ring cursor parked in the URL, so it survives a detail round-trip (#270).
+ *
+ * The model is search.tsx's `?sel=`, the one surface that already got this
+ * right: look, Enter, read, Back, and the highlight is still on the row you
+ * left. State cannot do it — Back remounts the surface — and it is the URL
+ * rather than a sessionStorage cache precisely because the browser's history
+ * entry is already the thing POP restores, so the cursor rides back on the
+ * same navigation that restores the scroll offset, with no second POP/PUSH
+ * rule to keep in sync.
+ *
+ * How this composes with use-scroll-restoration.ts, whose semantics are
+ * hard-won and untouched here:
+ *
+ *   POP     the restored history entry carries the params, so the cursor is
+ *           already in the URL on the mount commit — the same navigation
+ *           whose rAF restores `scrollTop`. Nothing races: the cursor's first
+ *           non-null value per mount is useNavScrollIntoView's silent
+ *           BASELINE, so it never scrolls and never fights the restore.
+ *   PUSH    a new pathname carries no cursor param, and scroll resets to top.
+ *           Both start clean, for the same reason and at the same moment.
+ *   REPLACE every write here is `{ replace: true }` on the SAME pathname,
+ *           which use-scroll-restoration.ts provably ignores (it is keyed on
+ *           pathname; Home's debounced search REPLACEs on every keystroke and
+ *           must not reset scroll). So walking the ring with j/k never
+ *           disturbs the scroll cache, and never adds a history entry —
+ *           Back still leaves the page rather than rewinding the cursor.
+ *
+ * Writes are skipped when the value is unchanged, so a focus landing on the
+ * already-current row costs no navigation at all.
+ */
+export function useNavCursorParam(param: string): {
+  cursor: string | null;
+  setCursor: (value: string | null) => void;
+} {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const raw = searchParams.get(param);
+  const cursor = raw == null || raw === '' ? null : raw;
+
+  // Read the live params through a ref so `setCursor` keeps a STABLE identity
+  // — surfaces pass it into useCallback deps for their move handlers, and an
+  // identity that changed on every param write would churn the whole ring.
+  const paramsRef = useRef(searchParams);
+  paramsRef.current = searchParams;
+
+  const setCursor = useCallback((value: string | null) => {
+    const current = paramsRef.current.get(param);
+    if ((current ?? null) === value) return;
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      // MERGE, never rebuild — the surface's own params (q, status, tags…)
+      // share this URL and must survive a cursor move.
+      if (value == null) next.delete(param); else next.set(param, value);
+      return next;
+    }, { replace: true });
+  }, [param, setSearchParams]);
+
+  return { cursor, setCursor };
 }
 
 /**
@@ -86,6 +174,30 @@ export function useNavScrollIntoView(id: string | number | null | undefined) {
  * reaches the input — the single most common way a shortcut layer like this
  * becomes actively hostile.
  */
+/**
+ * `target.closest(selector)`, safe for an arbitrary event target.
+ *
+ * A keydown/focusin target is not guaranteed to be an Element (window and the
+ * document both fire here), so the capability is tested rather than the type
+ * asserted — the same lesson isTyping below learned the hard way.
+ */
+function closestMatch(target: EventTarget | null, selector: string): Element | null {
+  const el = target as Element | null;
+  if (!el || typeof el.closest !== 'function') return null;
+  return el.closest(selector);
+}
+
+/**
+ * A row's SECONDARY control — one the ring must keep its hands off.
+ *
+ * Almost every ringed row is a single button, so fusing focus into the ring
+ * (see onFocusRow) and letting the ring own Enter agree perfectly. The areas
+ * tree is the exception: its rows carry an expand chevron beside the name.
+ * Focusing that chevron must not move the ring, and Enter on it must expand
+ * the bin rather than open it — mark such controls `data-nav-ignore`.
+ */
+const NAV_IGNORE = '[data-nav-ignore]';
+
 export function isTyping(target: EventTarget | null): boolean {
   // Partial<HTMLElement>, not HTMLElement: a keydown target is not guaranteed
   // to be an element at all. Casting to HTMLElement told TypeScript every field
@@ -99,16 +211,45 @@ export function isTyping(target: EventTarget | null): boolean {
 }
 
 export function useKeyboardNav({
-  onMove, onOpen, onEscape, onSearch, enabled = true,
+  onMove, onOpen, onEscape, onSearch, onFocusRow, enabled = true,
 }: KeyboardNavOptions) {
+  /**
+   * Tab (or a click) landing on a row hands the ring its cursor (#279).
+   *
+   * `focusin` rather than `focus` because it bubbles — one window listener
+   * covers every row without per-row wiring — and the nearest `data-nav-id`
+   * ancestor is looked up rather than the focused node itself, since the
+   * focusable thing is the row's inner button while the marker sits on the
+   * wrapper. Adopting a cursor the surface already holds costs nothing:
+   * useNavScrollIntoView uses `block: 'nearest'`, and the browser has just
+   * scrolled the newly focused row into view anyway.
+   */
+  useEffect(() => {
+    if (!enabled || !onFocusRow) return;
+    const onFocusIn = (e: FocusEvent) => {
+      if (closestMatch(e.target, NAV_IGNORE)) return;
+      const navId = closestMatch(e.target, '[data-nav-id]')?.getAttribute('data-nav-id');
+      if (navId) onFocusRow(navId);
+    };
+    window.addEventListener('focusin', onFocusIn);
+    return () => window.removeEventListener('focusin', onFocusIn);
+  }, [enabled, onFocusRow]);
+
   useEffect(() => {
     if (!enabled) return;
 
     const onKeyDown = (e: KeyboardEvent) => {
       // Escape is the exception: it must work FROM a field, because getting out
-      // of one is most of what it is for.
+      // of one is most of what it is for. But that is ALL it does from a field
+      // (#271) — blurring and clearing the selection on the same press meant
+      // the only gesture that could leave `/search`'s autoFocused input also
+      // threw away the cursor Back had just restored. Sequential instead:
+      // first Escape leaves the field, second Escape leaves the selection.
       if (e.key === 'Escape') {
-        if (isTyping(e.target)) (e.target as HTMLElement).blur();
+        if (isTyping(e.target)) {
+          (e.target as HTMLElement).blur();
+          return;
+        }
         onEscape?.();
         return;
       }
@@ -137,6 +278,11 @@ export function useKeyboardNav({
           break;
         case 'Enter':
           if (!onOpen) return;
+          // A row's secondary control keeps its own Enter (#279) — expanding
+          // a tree row must not open the bin. Everywhere else a ringed row is
+          // one button, so the ring and the focus outline mark the same thing
+          // and the ring may speak for it.
+          if (closestMatch(e.target, NAV_IGNORE)) return;
           // The ring owns Enter only when it actually opened something — a
           // Tab-focused row or button must not fire on the same press (#235).
           // With nothing highlighted, onOpen reports false and the keypress

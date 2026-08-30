@@ -5,7 +5,7 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { ColHead } from '@/components/ui/col-head';
 import { useLayoutMode } from '@/hooks/use-layout-mode';
-import { useKeyboardNav, useNavScrollIntoView } from '@/hooks/use-keyboard-nav';
+import { useKeyboardNav, useNavCursorParam, useNavScrollIntoView } from '@/hooks/use-keyboard-nav';
 import type { Property } from '@/types/inventory';
 import { ErrorState } from '@/components/ui/error-state';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -199,18 +199,44 @@ export function Home() {
    * (`onSearch` is unconditional), matching search.tsx's own contract for it.
    */
   const resultIds = React.useMemo(() => (searchResults ?? []).map((r) => r.id), [searchResults]);
-  const [highlightedId, setHighlightedId] = React.useState<number | null>(null);
+  /**
+   * The cursor lives in `?sel`, not in state (#270).
+   *
+   * Held in useState it died on every Back — scroll restoration put the list
+   * back at the pixel you left and the highlight did not come with it, so the
+   * next `j` re-seeded at result 1, off the top of the viewport, moving
+   * nothing visible. The URL is what POP restores, so cursor and pixels come
+   * back together; every write is a same-pathname REPLACE, which
+   * use-scroll-restoration.ts deliberately ignores. Same shape as search.tsx.
+   */
+  const { cursor: selParam, setCursor } = useNavCursorParam('sel');
+  const highlightedId = React.useMemo(() => {
+    if (selParam == null) return null;
+    const n = Number(selParam);
+    return Number.isFinite(n) ? n : null;
+  }, [selParam]);
   // A new query re-ranks (or replaces) the result set — a stale id surviving
   // into it could highlight an unrelated row that happens to share an id.
-  React.useEffect(() => { setHighlightedId(null); }, [searchQuery]);
+  //
+  // Keyed on the query the cursor BELONGS to rather than on "have I run
+  // before": the query the URL arrived with must not clear the cursor Back
+  // just restored (#270), and a run-counter would get that wrong under
+  // StrictMode's deliberate second mount, which replays effects with
+  // unchanged deps. Comparing values instead makes the effect idempotent.
+  const cursorQuery = React.useRef(searchQuery);
+  React.useEffect(() => {
+    if (cursorQuery.current === searchQuery) return;
+    cursorQuery.current = searchQuery;
+    setCursor(null);
+  }, [searchQuery, setCursor]);
   const moveHighlight = React.useCallback((delta: 1 | -1) => {
     if (resultIds.length === 0) return;
     const at = highlightedId == null ? -1 : resultIds.indexOf(highlightedId);
     const next = at === -1
       ? (delta === 1 ? 0 : resultIds.length - 1)
       : Math.min(resultIds.length - 1, Math.max(0, at + delta));
-    setHighlightedId(resultIds[next]);
-  }, [resultIds, highlightedId]);
+    setCursor(String(resultIds[next]));
+  }, [resultIds, highlightedId, setCursor]);
   useKeyboardNav({
     enabled: wide,
     onSearch: () => searchInputRef.current?.focus(),
@@ -222,7 +248,15 @@ export function Home() {
         return true;
       }
       : undefined,
-    onEscape: searching ? () => setHighlightedId(null) : undefined,
+    onEscape: searching ? () => setCursor(null) : undefined,
+    // Tab onto a result row IS a cursor move (#279) — only result rows carry
+    // data-nav-id here, so recents can never seed a ring it doesn't have.
+    onFocusRow: searching
+      ? (navId) => {
+        const n = Number(navId);
+        if (Number.isFinite(n) && resultIds.includes(n)) setCursor(String(n));
+      }
+      : undefined,
   });
   // Keeps the cursor on screen past one screenful of results (#235) — the
   // result rows below carry the matching data-nav-id.

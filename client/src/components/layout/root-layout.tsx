@@ -247,6 +247,17 @@ export function RootLayout() {
 
   return (
     <div className="flex h-[100dvh] bg-[var(--color-bg)] overflow-x-hidden">
+      {/* Skip link (#279). <aside> is the first thing in the DOM and holds Add
+          plus seven nav rows, so EVERY page costs eight tab stops before its
+          first breadcrumb — twenty before the first fact on item detail. First
+          child of the layout so it is tab stop 1, invisible until focused.
+          <main> needs tabIndex={-1} to be a focus target at all. */}
+      <a
+        href="#main-content"
+        className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-[100] focus:px-3 focus:py-2 focus:rounded-[var(--radius-sm)] focus:bg-[var(--color-text)] focus:text-[var(--color-bg)] focus:font-mono focus:text-xs focus:font-bold focus:uppercase focus:tracking-[0.08em]"
+      >
+        Skip to content
+      </a>
       {sidebar && <Sidebar />}
 
       {/* Main content area */}
@@ -258,6 +269,8 @@ export function RootLayout() {
         )}
         <main
           ref={mainRef}
+          id="main-content"
+          tabIndex={-1}
           className={cn(
             'flex-1 overflow-y-auto overflow-x-hidden px-4 pt-4',
             // With no bottom nav there is nothing to clear, so the reserved
