@@ -10,7 +10,10 @@ import { useSearchParams } from 'react-router';
  *
  * Deliberately narrow. These are the four keys people already expect from a
  * list (`/` to search, j/k to move, Enter to open, Escape to back out); a
- * larger set would need teaching, and nothing here teaches it.
+ * larger set would need teaching, and nothing here teaches it. A surface
+ * whose rows carry real decisions can bind its own keys on top via onAction
+ * (#269) — the hook stays the single keydown listener with the single set of
+ * guards, and the surface owns what the extra keys mean.
  *
  * Keeping the cursor VISIBLE (#235): the hook itself never knows which row is
  * highlighted — every surface owns its own cursor state — so scrolling is a
@@ -70,6 +73,32 @@ export interface KeyboardNavOptions {
    * Tab now MOVES the ring. Surfaces should ignore an id they don't recognise.
    */
   onFocusRow?: (navId: string) => void;
+  /**
+   * A key the SURFACE binds, for the decisions its rows actually carry (#269).
+   *
+   * The four keys above move a cursor; they never *do* anything. That was
+   * fine for a list whose rows only open — and useless on /matches, where the
+   * ring reached a row, opened its candidate panel, and then handed you back
+   * to the mouse for the only thing the page exists to do. Rather than let
+   * such a surface add its own window listener (which would have to re-derive
+   * every guard below, and would get one of them wrong), it hands the key
+   * here and gets the guards for free: not while typing, not with a modifier
+   * held, not from a `data-nav-ignore` control, and not on auto-repeat.
+   *
+   * `e.repeat` is dropped because a held key is not a gesture a mouse has:
+   * every action a surface is likely to bind here is a one-way decision, and
+   * leaning on the key must not walk one down a backlog. For the same reason
+   * the key must arrive ALONE — see ACTION_BURST_MS, which is what keeps a
+   * barcode scanner from resolving a worklist.
+   *
+   * No return value: the fire is deferred by ACTION_BURST_MS, so nothing the
+   * surface says can still decide `preventDefault` for an event that is long
+   * over. The hook prevents the default of any key it arms instead — arming
+   * IS taking responsibility for the keypress — which is what stops a bound
+   * letter from reaching Firefox's type-ahead find or a bound Space from
+   * scrolling the page under the panel.
+   */
+  onAction?: (key: string) => void;
   /** Off in touch chrome, where there is no keyboard to serve. */
   enabled?: boolean;
 }
@@ -209,6 +238,48 @@ function closestMatch(target: EventTarget | null, selector: string): Element | n
  */
 const NAV_IGNORE = '[data-nav-ignore]';
 
+/**
+ * How much silence has to surround an action key for it to count as a person.
+ *
+ * `isTyping` below is the only thing standing between a bare-key binding and
+ * the rest of the world, and it defends exactly one case: a text field has
+ * focus. Everywhere a scanner reaches tally today that is enough, because a
+ * scan lands in a field (/move's typed-code input) or in the camera. But
+ * /matches has NO fields at all — so a USB barcode scanner firing while that
+ * page is open at a desk types its payload straight into the bindings, with
+ * focus resting on a button or on <body>. Twelve digits, twelve resolves,
+ * each one an irreversible link to the wrong product, silently. The ring's
+ * older keys (j/k/Enter) were harmless under the same treatment; the action
+ * keys are the first ones where this costs data, so the guard arrives with
+ * them.
+ *
+ * There is no structural signal to use instead. A HID scanner IS a keyboard:
+ * its events are trusted, carry no device identity, and are indistinguishable
+ * from a person's except in one respect — cadence. It types a whole payload
+ * in a burst, 1-20ms between characters (which is why a scan feels
+ * instantaneous), and even the inter-character delays those devices expose
+ * top out around 30ms. A human pressing a decision key cannot come close:
+ * ~100ms is the floor for two DELIBERATE presses, and a key that means "use
+ * candidate 2 of this match" is far slower again. (The alternative that is
+ * structural rather than heuristic — moving the actions onto modifier chords
+ * a scanner cannot emit — costs exactly the ergonomics these bindings exist
+ * to buy, so it is the wrong trade here.)
+ *
+ * So an action key fires only when it is ISOLATED: no other keydown within
+ * this window on EITHER side of it. Rejecting keys that arrive too soon after
+ * the previous one — the obvious form of this guard — still lets the FIRST
+ * character of a burst through, because nothing precedes it, and on a
+ * three-candidate row a leading 1, 2 or 3 is a live decision. Waiting the
+ * window out before firing is what closes that: silence afterwards is the one
+ * thing a burst cannot fake.
+ *
+ * 60ms: triple the cadence of the scanners this has to stop, comfortably
+ * under the ~100ms floor of a deliberate second press, and under the ~100ms
+ * at which added latency becomes perceptible at all — so the key still feels
+ * instant, and what it fires is a network round trip anyway.
+ */
+const ACTION_BURST_MS = 60;
+
 export function isTyping(target: EventTarget | null): boolean {
   // Partial<HTMLElement>, not HTMLElement: a keydown target is not guaranteed
   // to be an element at all. Casting to HTMLElement told TypeScript every field
@@ -222,8 +293,26 @@ export function isTyping(target: EventTarget | null): boolean {
 }
 
 export function useKeyboardNav({
-  onMove, onOpen, onEscape, onSearch, onFocusRow, enabled = true,
+  onMove, onOpen, onEscape, onSearch, onFocusRow, onAction, enabled = true,
 }: KeyboardNavOptions) {
+  /**
+   * The armed-but-not-yet-fired action key, and when the last key arrived.
+   *
+   * Refs, and the timer is deliberately NOT cleared by the keydown effect's
+   * cleanup: `onAction` is a fresh closure on every render of the surface, so
+   * that effect re-subscribes constantly, and tearing the pending action down
+   * with it would silently swallow a keypress any time a poll re-rendered
+   * inside the 60ms window. Only unmount cancels. Reading the handler back
+   * through a ref at fire time is also what keeps the deferral honest: the
+   * action runs against the surface's CURRENT state, not the render that
+   * happened to be mounted when the key went down.
+   */
+  const onActionRef = useRef(onAction);
+  onActionRef.current = onAction;
+  const armedRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastKeyAtRef = useRef(0);
+  useEffect(() => () => { if (armedRef.current) clearTimeout(armedRef.current); }, []);
+
   /**
    * Tab (or a click) landing on a row hands the ring its cursor (#279).
    *
@@ -250,6 +339,17 @@ export function useKeyboardNav({
     if (!enabled) return;
 
     const onKeyDown = (e: KeyboardEvent) => {
+      // Burst bookkeeping, before any of the early returns so that EVERY key
+      // the window sees counts — a barcode is mostly characters this hook
+      // does not bind, and they are exactly what proves the digits around
+      // them came from a machine. Any keydown at all also disarms a pending
+      // action: a second key inside the window means either a burst or a
+      // changed mind, and neither should resolve a match.
+      if (armedRef.current) { clearTimeout(armedRef.current); armedRef.current = null; }
+      const now = Date.now();
+      const sinceLastKey = now - lastKeyAtRef.current;
+      lastKeyAtRef.current = now;
+
       // Escape is the exception: it must work FROM a field, because getting out
       // of one is most of what it is for. But that is ALL it does from a field
       // (#271) — blurring and clearing the selection on the same press meant
@@ -300,11 +400,27 @@ export function useKeyboardNav({
           // stays the browser's, so focused controls keep working.
           if (onOpen() === true) e.preventDefault();
           break;
-        default:
+        default: {
+          // Everything the ring itself does not claim is offered to the
+          // surface (#269) — see onAction for the guards this inherits.
+          if (!onAction || e.repeat) return;
+          if (closestMatch(e.target, NAV_IGNORE)) return;
+          // Mid-burst: something was typed less than a window ago, so this
+          // key has a machine behind it. (The first key of a burst passes
+          // here and is caught on the other side instead — it gets disarmed
+          // by the character that follows it.)
+          if (sinceLastKey < ACTION_BURST_MS) return;
+          const key = e.key;
+          e.preventDefault();
+          armedRef.current = setTimeout(() => {
+            armedRef.current = null;
+            onActionRef.current?.(key);
+          }, ACTION_BURST_MS);
+        }
       }
     };
 
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [onMove, onOpen, onEscape, onSearch, enabled]);
+  }, [onMove, onOpen, onEscape, onSearch, onAction, enabled]);
 }
