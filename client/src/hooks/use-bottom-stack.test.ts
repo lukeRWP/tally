@@ -16,7 +16,9 @@
  * discovers on a phone six weeks later. See toast.test.tsx for the same
  * invariant pinned at the component's own prop boundary.
  */
+import { createElement, type ReactNode } from 'react';
 import { renderHook, act } from '@testing-library/react';
+import { MemoryRouter } from 'react-router';
 import { describe, expect, it, afterEach } from 'vitest';
 import {
   barOffsetCss,
@@ -138,7 +140,7 @@ describe('toastOffsetCss — the regression #289 follow-up guards against', () =
 
 describe('useCarryBannerShowing', () => {
   it('true for an active carry, true for a "put back" (lastMove), false for neither', () => {
-    const { result, rerender } = renderHook(() => useCarryBannerShowing());
+    const { result, rerender } = renderHook(() => useCarryBannerShowing(), { wrapper: MemoryRouter });
     expect(result.current).toBe(false);
 
     act(() => { useCarryStore.getState().pickUp([{ id: 1, name: 'Thing' }]); });
@@ -155,6 +157,26 @@ describe('useCarryBannerShowing', () => {
     expect(result.current).toBe(true);
 
     act(() => { useCarryStore.getState().clearLastMove(); });
+    rerender();
+    expect(result.current).toBe(false);
+  });
+
+  it('false on /move, carrying or not — /move owns the carrying state and its own undo, so CarryBanner never renders there (and nothing should reserve clearance for it)', () => {
+    const wrapper = ({ children }: { children: ReactNode }) =>
+      createElement(MemoryRouter, { initialEntries: ['/move'] }, children);
+    const { result, rerender } = renderHook(() => useCarryBannerShowing(), { wrapper });
+    expect(result.current).toBe(false);
+
+    act(() => { useCarryStore.getState().pickUp([{ id: 1, name: 'Thing' }]); });
+    rerender();
+    expect(result.current).toBe(false);
+
+    act(() => {
+      useCarryStore.setState({
+        carried: [],
+        lastMove: { items: [{ id: 1, name: 'Thing' }], to: { id: 2, name: 'Bin', type: 'container' } },
+      });
+    });
     rerender();
     expect(result.current).toBe(false);
   });

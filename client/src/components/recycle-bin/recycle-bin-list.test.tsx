@@ -321,3 +321,25 @@ test('the bar\'s own offset matches the shared model, and moves once the carry b
   expect(selectBar().style.bottom).toBe(carryingOffset);
   expect(selectBar().style.bottom).not.toBe(barOffsetCss({ touch: false, carrying: false }));
 });
+
+// ── #267 twin: this page has the same toggle, the same scroll-key overlap ──
+
+test('#267 twin: activating select mode blurs the toggle, so the very next Space is not swallowed by it', async () => {
+  vi.stubGlobal('fetch', makeFetchMock({}).fetchMock);
+  renderList();
+  await screen.findByText('Drill');
+
+  const toggle = screen.getByRole('button', { name: 'Select' });
+  toggle.focus();
+  expect(document.activeElement).toBe(toggle);
+
+  fireEvent.click(toggle);
+
+  // Select mode is genuinely on (the bar is up)...
+  expect(screen.getByText('0 selected')).toBeTruthy();
+  // ...but the toggle no longer holds focus. A focused <button> treats Space
+  // as a click; left focused here, the next "scroll the list" Space keypress
+  // would re-fire this exact onClick and silently empty the selection.
+  expect(document.activeElement).not.toBe(toggle);
+  expect(document.activeElement).toBe(document.body);
+});

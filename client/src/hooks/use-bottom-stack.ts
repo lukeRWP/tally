@@ -1,4 +1,5 @@
 import { useEffect, useId } from 'react';
+import { useLocation } from 'react-router';
 import { useCarryStore } from '@/store/carry-store';
 import { useBottomBarStore } from '@/store/bottom-bar-store';
 
@@ -157,9 +158,22 @@ export function useBottomBarActive(): boolean {
   return useBottomBarStore((s) => Object.keys(s.bars).length > 0);
 }
 
-/** Read-only: is the carry banner (an active carry OR its "put back" undo) currently showing? */
+/**
+ * Read-only: is the carry banner (an active carry OR its "put back" undo)
+ * currently showing? `/move` OWNS both the carrying state and the undo for
+ * what it just did, so CarryBanner itself never renders there
+ * (carry-banner.tsx's own early return) — this predicate has to match that
+ * exactly, or every consumer downstream (root-layout.tsx's `<main>`
+ * reserve, a page's own select bar, the toast layer) reserves clearance for
+ * a banner that isn't actually on screen. Previously root-layout.tsx kept
+ * its own copy of this same `pathname !== '/move'` guard alongside the
+ * carry-banner's — unifying the ARITHMETIC but leaving the CONDITION
+ * duplicated in three places is exactly how this class of drift grows
+ * back, so it lives here now and all three read it from one place.
+ */
 export function useCarryBannerShowing(): boolean {
-  return useCarryStore((s) => s.carried.length > 0 || s.lastMove !== null);
+  const { pathname } = useLocation();
+  return useCarryStore((s) => (s.carried.length > 0 || s.lastMove !== null) && pathname !== '/move');
 }
 
 /**

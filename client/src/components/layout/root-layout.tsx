@@ -17,11 +17,10 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
 import { buildCaptureUrl } from '@/lib/capture-url';
-import { useCarryStore } from '@/store/carry-store';
 import { useLayoutMode } from '@/hooks/use-layout-mode';
 import { useHasCamera } from '@/hooks/use-has-camera';
 import { useScrollRestoration } from '@/hooks/use-scroll-restoration';
-import { stackReserveCss, useBottomBarActive } from '@/hooks/use-bottom-stack';
+import { stackReserveCss, useBottomBarActive, useCarryBannerShowing } from '@/hooks/use-bottom-stack';
 
 /**
  * What "where" the current page already answers, so the container dialog
@@ -222,11 +221,11 @@ export function RootLayout() {
 
   // The banner is `fixed`, so it occludes the last row of every page it shows
   // on. Reserve for it here rather than deleting the banner on the one page
-  // where that hurt most. /move renders the scanner but never the banner, so
-  // it must not pay.
-  const carrying = useCarryStore(
-    (s) => (s.carried.length > 0 || s.lastMove !== null) && pathname !== '/move',
-  );
+  // where that hurt most. `useCarryBannerShowing` already knows /move renders
+  // the scanner but never the banner (the same guard carry-banner.tsx's own
+  // early return uses) — this used to be a second, independent copy of that
+  // exact condition.
+  const carrying = useCarryBannerShowing();
   // A page's own select-mode bar (container-detail.tsx, recycle-bin-list.tsx)
   // is equally `fixed` and equally worth reserving for — see use-bottom-stack.ts.
   const barActive = useBottomBarActive();

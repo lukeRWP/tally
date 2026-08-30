@@ -1,9 +1,9 @@
-import { useNavigate, useLocation } from 'react-router';
+import { useNavigate } from 'react-router';
 import { X, ScanLine, Undo2 } from 'lucide-react';
 import { useCarryStore, type CarriedItem } from '@/store/carry-store';
 import { useMoveItem, useMoveContainer } from '@/hooks/use-inventory';
 import { useLayoutMode } from '@/hooks/use-layout-mode';
-import { carryBannerOffsetCss } from '@/hooks/use-bottom-stack';
+import { carryBannerOffsetCss, useCarryBannerShowing } from '@/hooks/use-bottom-stack';
 import { toast } from '@/components/ui/toast';
 import { cn } from '@/lib/utils';
 
@@ -36,7 +36,11 @@ export function CarryBanner() {
   const touch = useLayoutMode() !== 'sidebar';
   const dockClassName = touch ? 'left-3 right-3' : 'right-6 w-[26rem]';
   const dockOffset = carryBannerOffsetCss(touch);
-  const { pathname } = useLocation();
+  // Whether THIS banner should render at all — shared with root-layout.tsx's
+  // own `<main>` reserve and the toast layer (use-bottom-stack.ts) so the
+  // /move exception (below) can't drift into a second, independent copy of
+  // the same condition the way the offset arithmetic once did.
+  const showing = useCarryBannerShowing();
   const carried = useCarryStore((s) => s.carried);
   const lastMove = useCarryStore((s) => s.lastMove);
   const clear = useCarryStore((s) => s.clear);
@@ -80,9 +84,11 @@ export function CarryBanner() {
   }
 
   // /move asks "where does this go?" and owns both the carrying state and the
-  // undo for what it just did. The guard has to come BEFORE the lastMove
-  // branch or that banner still renders there, giving one move two Undos.
-  if (pathname === '/move') return null;
+  // undo for what it just did — `showing` is already false there (see
+  // useCarryBannerShowing's own doc comment). The guard has to come BEFORE
+  // the lastMove branch or that banner still renders there, giving one move
+  // two Undos.
+  if (!showing) return null;
 
   if (lastMove) {
     return (
@@ -122,8 +128,9 @@ export function CarryBanner() {
     );
   }
 
-  if (carried.length === 0) return null;
-
+  // Reaching here means `showing` was true and `lastMove` was falsy, so
+  // `useCarryBannerShowing`'s own `||` guarantees carried.length > 0 —
+  // no separate empty-check needed.
   return (
     <div
       className={cn('fixed z-40', dockClassName,

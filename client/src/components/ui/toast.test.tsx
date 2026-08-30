@@ -13,6 +13,7 @@
  * the arithmetic feeding it is).
  */
 import { act, render } from '@testing-library/react';
+import { MemoryRouter } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useLayoutMode } from '@/hooks/use-layout-mode';
 import { stackReserveCss } from '@/hooks/use-bottom-stack';
@@ -38,6 +39,15 @@ function resetStores() {
   useCarryStore.setState({ carried: [], lastMove: null, pinnedDest: null, lastDest: null });
 }
 
+/** `useCarryBannerShowing` (use-bottom-stack.ts) needs a Router context. */
+function renderToaster(initialEntries: string[] = ['/']) {
+  return render(
+    <MemoryRouter initialEntries={initialEntries}>
+      <Toaster />
+    </MemoryRouter>,
+  );
+}
+
 beforeEach(() => {
   lastProps = null;
   resetStores();
@@ -52,14 +62,14 @@ describe('desk/sidebar chrome', () => {
   beforeEach(() => { vi.mocked(useLayoutMode).mockReturnValue('sidebar'); });
 
   it('plain (nothing stacked): keeps sonner\'s own default centered placement', () => {
-    render(<Toaster />);
+    renderToaster();
     expect(lastProps?.offset).toBeUndefined();
     expect(lastProps?.mobileOffset).toBeUndefined();
   });
 
   it('carrying: overrides too — at the narrower end of "sidebar" chrome (a 1180px landscape tablet) a centered toast\'s default width reaches past the carry banner\'s right-anchored panel, confirmed actually overlapping by this fix\'s own harness run', () => {
     act(() => { useCarryStore.getState().pickUp([{ id: 1, name: 'Thing' }]); });
-    render(<Toaster />);
+    renderToaster();
     const expected = { bottom: stackReserveCss({ touch: false, carrying: true, barActive: false }) };
     expect(lastProps?.offset).toEqual(expected);
     expect(lastProps?.mobileOffset).toEqual(expected);
@@ -67,7 +77,7 @@ describe('desk/sidebar chrome', () => {
 
   it('a select bar alone: overrides too — #276 made its width content-driven, so at its low (non-carrying) offset it can reach under a centered toast, also confirmed overlapping', () => {
     act(() => { useBottomBarStore.getState().register('page'); });
-    render(<Toaster />);
+    renderToaster();
     const expected = { bottom: stackReserveCss({ touch: false, carrying: false, barActive: true }) };
     expect(lastProps?.offset).toEqual(expected);
   });
@@ -77,7 +87,7 @@ describe('desk/sidebar chrome', () => {
       useCarryStore.getState().pickUp([{ id: 1, name: 'Thing' }]);
       useBottomBarStore.getState().register('page');
     });
-    render(<Toaster />);
+    renderToaster();
     const expected = { bottom: stackReserveCss({ touch: false, carrying: true, barActive: true }) };
     expect(lastProps?.offset).toEqual(expected);
   });
@@ -87,7 +97,7 @@ describe('touch chrome', () => {
   beforeEach(() => { vi.mocked(useLayoutMode).mockReturnValue('touch'); });
 
   it('plain (not carrying, no select bar): clears just the bottom nav', () => {
-    render(<Toaster />);
+    renderToaster();
     const expected = { bottom: stackReserveCss({ touch: true, carrying: false, barActive: false }) };
     expect(lastProps?.offset).toEqual(expected);
     expect(lastProps?.mobileOffset).toEqual(expected);
@@ -95,14 +105,14 @@ describe('touch chrome', () => {
 
   it('carrying only: sits above the carry banner too', () => {
     act(() => { useCarryStore.getState().pickUp([{ id: 1, name: 'Thing' }]); });
-    render(<Toaster />);
+    renderToaster();
     const expected = { bottom: stackReserveCss({ touch: true, carrying: true, barActive: false }) };
     expect(lastProps?.offset).toEqual(expected);
   });
 
   it('select bar only (a bulk action can toast without leaving select mode): sits above the bar', () => {
     act(() => { useBottomBarStore.getState().register('page'); });
-    render(<Toaster />);
+    renderToaster();
     const expected = { bottom: stackReserveCss({ touch: true, carrying: false, barActive: true }) };
     expect(lastProps?.offset).toEqual(expected);
   });
@@ -112,7 +122,7 @@ describe('touch chrome', () => {
       useCarryStore.getState().pickUp([{ id: 1, name: 'Thing' }]);
       useBottomBarStore.getState().register('page');
     });
-    render(<Toaster />);
+    renderToaster();
     const expected = { bottom: stackReserveCss({ touch: true, carrying: true, barActive: true }) };
     expect(lastProps?.offset).toEqual(expected);
     expect(lastProps?.mobileOffset).toEqual(expected);
@@ -124,8 +134,15 @@ describe('touch chrome', () => {
         lastMove: { items: [{ id: 1, name: 'Thing' }], to: { id: 2, name: 'Bin', type: 'container' } },
       });
     });
-    render(<Toaster />);
+    renderToaster();
     const expected = { bottom: stackReserveCss({ touch: true, carrying: true, barActive: false }) };
+    expect(lastProps?.offset).toEqual(expected);
+  });
+
+  it('on /move, carrying does NOT count — CarryBanner never renders there, so treating it as carrying would offset for a banner that isn\'t on screen (still gets the plain nav-clearance offset, not the carrying one)', () => {
+    act(() => { useCarryStore.getState().pickUp([{ id: 1, name: 'Thing' }]); });
+    renderToaster(['/move']);
+    const expected = { bottom: stackReserveCss({ touch: true, carrying: false, barActive: false }) };
     expect(lastProps?.offset).toEqual(expected);
   });
 });

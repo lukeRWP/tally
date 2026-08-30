@@ -274,7 +274,19 @@ export function RecycleBinList() {
             <Button
               variant={selecting ? 'default' : 'outline'}
               size="sm"
-              onClick={() => (selecting ? exitSelectMode() : setSelecting(true))}
+              onClick={(e) => {
+                if (selecting) exitSelectMode();
+                else {
+                  setSelecting(true);
+                  // #267 twin (container-detail.tsx carries the full writeup):
+                  // Space is this page's scroll key too, and a focused
+                  // <button> treats Space as a click. Blurring the toggle the
+                  // moment select mode turns on hands Space back to the page
+                  // immediately, instead of the next scroll attempt re-firing
+                  // this onClick and silently discarding the selection.
+                  (e.currentTarget as HTMLButtonElement).blur();
+                }
+              }}
               disabled={bulkRunning}
             >
               <CheckSquare className="w-4 h-4" />
