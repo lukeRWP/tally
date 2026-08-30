@@ -51,11 +51,22 @@ say() { printf '\n\033[1m== %s\033[0m\n' "$*"; }
 # --- run a mysql client inside the container ---------------------------------
 # MYSQL_PWD, not -p: -p prints a warning to stderr on every invocation, and
 # this script reads stderr to decide whether a migration failed.
+#
+# TCP, not the unix socket, and this is not a preference. The mysql image's
+# entrypoint runs a TEMPORARY server during first-time init, started with
+# --skip-networking so it is reachable only over the socket. That temp server
+# answers `mysqladmin ping` happily while the root password has not been set
+# yet, so a socket-based readiness probe returns "ready" and the very next
+# statement dies with `ERROR 1045 Access denied for user 'root'@'localhost'`.
+# Observed in CI, on the run where the image had to be pulled first. Speaking
+# TCP means we cannot see the temp server at all: a successful connection on
+# 3306 is proof the real server is up and initialised.
+TCP=(--protocol=TCP -h 127.0.0.1 -P 3306)
 mysql_in() {
-  docker exec -i -e MYSQL_PWD="$ROOT_PW" "$CONTAINER" mysql -uroot "$@"
+  docker exec -i -e MYSQL_PWD="$ROOT_PW" "$CONTAINER" mysql "${TCP[@]}" -uroot "$@"
 }
 mysqldump_in() {
-  docker exec -i -e MYSQL_PWD="$ROOT_PW" "$CONTAINER" mysqldump -uroot "$@"
+  docker exec -i -e MYSQL_PWD="$ROOT_PW" "$CONTAINER" mysqldump "${TCP[@]}" -uroot "$@"
 }
 
 # --- boot ---------------------------------------------------------------------
@@ -64,18 +75,20 @@ docker run -d --name "$CONTAINER" \
   -e MYSQL_ROOT_PASSWORD="$ROOT_PW" \
   "$MYSQL_IMAGE" >/dev/null
 
-for _ in $(seq 1 90); do
-  if docker exec -e MYSQL_PWD="$ROOT_PW" "$CONTAINER" \
-       mysqladmin ping -uroot --silent >/dev/null 2>&1; then
+# Ready means "an authenticated query over TCP succeeds", nothing weaker.
+ready=0
+for _ in $(seq 1 120); do
+  if mysql_in -N -B -e 'SELECT 1' >/dev/null 2>&1; then
+    ready=1
     break
   fi
   sleep 2
 done
-docker exec -e MYSQL_PWD="$ROOT_PW" "$CONTAINER" mysqladmin ping -uroot --silent >/dev/null 2>&1 || {
+if [ "$ready" -ne 1 ]; then
   echo "FAIL: MySQL never became ready" >&2
   docker logs "$CONTAINER" >&2 || true
   exit 1
-}
+fi
 docker exec "$CONTAINER" mysql --version
 
 # --- base schema --------------------------------------------------------------
