@@ -35,14 +35,24 @@ const ITEM_CATEGORIES = [
 
 const createMutate = vi.fn();
 
+/**
+ * What the server currently serves. A test may swap this to model a catalogue
+ * whose defaults differ, which is the whole point of the dialog reading them
+ * rather than assuming all-on.
+ */
+let served = ITEM_CATEGORIES;
+
 vi.mock('@/hooks/use-sharing', () => ({
   useMyShareLinks: () => ({ data: [LINK], isLoading: false }),
-  useShareDisclosure: () => ({ data: ITEM_CATEGORIES }),
+  useShareDisclosure: () => ({ data: served }),
   useCreateShareLink: () => ({ mutate: createMutate, isPending: false }),
   useRevokeShareLink: () => ({ mutate: vi.fn(), isPending: false }),
 }));
 
-beforeEach(() => createMutate.mockClear());
+beforeEach(() => {
+  createMutate.mockClear();
+  served = ITEM_CATEGORIES;
+});
 
 test('an existing share link is a real anchor that opens in a new tab', () => {
   render(
@@ -132,4 +142,48 @@ test('turning one category off sends the whole choice, not just the box that mov
     purchasePrice: false,
     files: true,
   });
+});
+
+// ── The tick comes from the server, not from here (#298) ────────────────────
+// Whether a category should start on is the server's declared policy
+// (sharing.disclosure.js `defaultOn`, served as `defaultValue`). If the dialog
+// assumed all-on instead, changing a default would silently show the sharer a
+// ticked box for something the server was about to withhold — or, far worse, a
+// ticked box that no longer matched what got published.
+
+test('a category the server defaults to off starts unticked, and is sent as off', () => {
+  served = ITEM_CATEGORIES.map((c) =>
+    c.key === 'purchasePrice' ? { ...c, defaultValue: false } : c,
+  );
+  open();
+
+  expect(
+    (screen.getByRole('checkbox', { name: /What you paid/ }) as HTMLInputElement).checked,
+  ).toBe(false);
+  expect(
+    (screen.getByRole('checkbox', { name: /Photos and receipts/ }) as HTMLInputElement).checked,
+  ).toBe(true);
+
+  fireEvent.click(screen.getByRole('button', { name: /generate link/i }));
+  expect(createMutate.mock.calls[0][0].disclosure).toEqual({
+    location: true,
+    purchasePrice: false,
+    files: true,
+  });
+});
+
+test('the sharer can still override a default-off category back on', () => {
+  served = ITEM_CATEGORIES.map((c) =>
+    c.key === 'purchasePrice' ? { ...c, defaultValue: false } : c,
+  );
+  open();
+
+  fireEvent.click(screen.getByRole('checkbox', { name: /What you paid/ }));
+  expect(
+    (screen.getByRole('checkbox', { name: /What you paid/ }) as HTMLInputElement).checked,
+  ).toBe(true);
+
+  fireEvent.click(screen.getByRole('button', { name: /generate link/i }));
+  // Everything is on again, so this is the all-on link — no `disclosure` at all.
+  expect(createMutate.mock.calls[0][0].disclosure).toBeUndefined();
 });

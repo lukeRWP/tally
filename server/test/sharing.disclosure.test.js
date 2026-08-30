@@ -259,3 +259,410 @@ test('the catalogue the dialog reads names only categories that apply to that ty
     }
   }
 });
+
+// ── 4. Defaults are declared per category, not implied by the enforcement ───
+//
+// Before this, "on" was simply what the absence of a decision meant: the strip
+// ran when a stored key was explicitly `false`, and nothing else. There was no
+// default to change, so changing one meant a four-part edit across server and
+// client. Each optional category now states its own, and the resolver consults
+// it — but only ever for a NEW link (see section 5).
+
+test('every optional category declares an explicit boolean default', () => {
+  for (const cat of disclosure.CATEGORIES) {
+    if (!cat.optional) {
+      assert.equal(
+        cat.defaultOn,
+        undefined,
+        `"${cat.key}" cannot be turned off, so it has no default to state`,
+      );
+      continue;
+    }
+    assert.equal(
+      typeof cat.defaultOn,
+      'boolean',
+      `"${cat.key}" must state defaultOn explicitly — an undefined default reads ` +
+        'as falsy and would ship the category OFF by accident, which is the whole ' +
+        'class of bug this module exists to prevent',
+    );
+  }
+});
+
+test('every default is still ON — this PR decides nothing on #298', () => {
+  for (const type of disclosure.ENTITY_TYPES) {
+    for (const [key, on] of Object.entries(disclosure.defaultChoice(type))) {
+      assert.equal(
+        on,
+        true,
+        `${type}.${key} must still default to on — turning one off is a separate, ` +
+          'deliberate decision that is Luke\'s to make',
+      );
+    }
+  }
+});
+
+test('the catalogue the dialog pre-ticks from reports the server\'s actual default', async () => {
+  await withDefaults({ address: false }, () => {
+    const cat = disclosure.catalogue();
+    assert.equal(
+      cat.property.find((c) => c.key === 'address').defaultValue,
+      false,
+      'a changed default must reach the dialog, or the sharer sees a tick that lies ' +
+        'about what the server is going to publish',
+    );
+    assert.equal(
+      cat.item.find((c) => c.key === 'files').defaultValue,
+      true,
+      'and only that one moves',
+    );
+  });
+});
+
+// ── 5. THE INVARIANT: a default change never reaches a link that exists ─────
+//
+// Share URLs are in other people's hands. A link issued as "here is the
+// address" must not silently become one that is not — and, far worse, a link
+// issued while a category was off must never start publishing it. So a default
+// applies at CREATE time only: resolve() never consults one, which makes a
+// stored NULL (every link from before the column existed) permanently mean
+// "everything".
+//
+// These tests flip every default to false — the most aggressive answer #298
+// could give — and require that nothing already issued moves. They are what
+// makes the eventual decision safe to take.
+
+/** Runs `fn` with the named categories' defaults overridden, then restores. */
+async function withDefaults(overrides, fn) {
+  const saved = new Map();
+  for (const cat of disclosure.CATEGORIES) {
+    if (cat.optional && overrides[cat.key] !== undefined) {
+      saved.set(cat, cat.defaultOn);
+      cat.defaultOn = overrides[cat.key];
+    }
+  }
+  try {
+    return await fn();
+  } finally {
+    for (const [cat, was] of saved) cat.defaultOn = was;
+  }
+}
+
+/** Every optional category off. */
+function allDefaultsOff() {
+  return Object.fromEntries(
+    disclosure.CATEGORIES.filter((c) => c.optional).map((c) => [c.key, false]),
+  );
+}
+
+/** Every shape a DISCLOSURE column can already hold on a link that is live. */
+const EXISTING_LINKS = [
+  ['a pre-#298 row, DISCLOSURE NULL', null],
+  ['a column that was never written', undefined],
+  ['an empty string', ''],
+  ['an unreadable value', 'not json'],
+  ['a JSON array', '[]'],
+  ['an empty JSON object', '{}'],
+  ['a parsed object with no keys', {}],
+  ['a sharer who turned receipts off', { files: false }],
+  ['a sharer who turned the location off', { location: false }],
+];
+
+test('resolve() never consults a default — absence is a settled yes, forever', async () => {
+  await withDefaults(allDefaultsOff(), () => {
+    assert.ok(
+      Object.values(disclosure.defaultChoice('item')).every((v) => v === false),
+      'the override did not apply — everything below would pass for the wrong reason',
+    );
+
+    for (const [label, stored] of EXISTING_LINKS.slice(0, 7)) {
+      const resolved = disclosure.resolve(stored, 'item');
+      assert.ok(Object.keys(resolved).length, 'item shares have optional categories');
+      assert.ok(
+        Object.values(resolved).every((v) => v === true),
+        `${label}: must still publish everything with every default off`,
+      );
+    }
+
+    const partial = disclosure.resolve({ files: false }, 'item');
+    assert.equal(partial.files, false, 'the sharer\'s explicit no is still honoured');
+    assert.equal(
+      partial.purchasePrice,
+      true,
+      'a key absent from a stored object stays ON even though its default is now OFF — ' +
+        'that link was issued under a catalogue where it was on',
+    );
+  });
+});
+
+test('flipping every default cannot change what an already-issued link publishes', async (t) => {
+  const [Sharing] = serviceWith(t);
+  const idFor = (type) => (type === 'item' ? 9 : 1);
+
+  // What each of those links publishes today, with defaults as shipped.
+  const before = [];
+  for (const type of disclosure.ENTITY_TYPES) {
+    for (const [, stored] of EXISTING_LINKS) {
+      before.push(JSON.stringify(await Sharing.getEntityForShare(type, idFor(type), stored)));
+    }
+  }
+
+  await withDefaults(allDefaultsOff(), async () => {
+    assert.ok(
+      Object.values(disclosure.defaultChoice('property')).every((v) => v === false),
+      'the override did not apply — everything below would pass for the wrong reason',
+    );
+
+    let n = 0;
+    for (const type of disclosure.ENTITY_TYPES) {
+      for (const [label, stored] of EXISTING_LINKS) {
+        const after = JSON.stringify(await Sharing.getEntityForShare(type, idFor(type), stored));
+        assert.equal(
+          after,
+          before[n++],
+          `${type} share, ${label}: a default change leaked backwards into a link that ` +
+            'already exists. Whoever holds that URL agreed to nothing of the sort.',
+        );
+      }
+    }
+  });
+});
+
+test('a NEW link does follow the default, even when the client sends nothing', async () => {
+  await withDefaults({ address: false }, () => {
+    assert.deepEqual(
+      disclosure.normalizeChoice(null, 'property'),
+      { address: false },
+      'a create carrying no disclosure at all must still record the default — storing ' +
+        'NULL would mean "publish everything", permanently, and quietly bypass the policy',
+    );
+    assert.deepEqual(
+      disclosure.normalizeChoice({ address: true }, 'property'),
+      { address: true },
+      'a sharer who deliberately re-ticks it is recorded as having said yes',
+    );
+  });
+
+  await withDefaults({ purchasePrice: false }, () => {
+    assert.deepEqual(
+      disclosure.normalizeChoice({ files: false }, 'item'),
+      { purchasePrice: false, files: false },
+      'a default the client never mentioned is still applied alongside the choice it did send',
+    );
+  });
+});
+
+// ── 6. Nothing a recipient can see has moved ───────────────────────────────
+
+/**
+ * The exact public payload this branch built for each entity type BEFORE
+ * per-category defaults existed, captured from the same fake rows above and
+ * checked in verbatim.
+ *
+ * Its whole job is to be boring: any change to what a share link publishes has
+ * to surface here, as a diff a reviewer reads, instead of in a stranger's
+ * browser. If a future PR does deliberately change the payload, this is the
+ * fixture to update — in that PR, on purpose, not as a drive-by.
+ */
+const GOLDEN_PUBLIC_PAYLOAD = {
+    "property": {
+      "type": "property",
+      "property": {
+        "id": 1,
+        "name": "Home",
+        "address": "221B Baker Street",
+        "description": "the house"
+      },
+      "areas": [
+        {
+          "id": 7,
+          "name": "Garage",
+          "description": null,
+          "qrCode": "TLY-A-1"
+        }
+      ],
+      "containers": [
+        {
+          "id": 3,
+          "areaId": 7,
+          "parentContainerId": null,
+          "name": "Tote",
+          "type": "tote",
+          "description": null,
+          "qrCode": "TLY-C-1"
+        }
+      ],
+      "items": [
+        {
+          "id": 9,
+          "containerId": 3,
+          "name": "Drill",
+          "description": "cordless",
+          "quantity": 1,
+          "condition": "good",
+          "status": "active",
+          "qrCode": "TLY-I-ABC123",
+          "createdAt": "2026-08-01T00:00:00.000Z",
+          "productName": "DCD777",
+          "productBrand": "DeWalt",
+          "productImageUrl": "https://example/img.png"
+        }
+      ]
+    },
+    "area": {
+      "type": "area",
+      "area": {
+        "id": 7,
+        "propertyId": 1,
+        "propertyName": "Home",
+        "name": "Garage",
+        "description": null,
+        "qrCode": "TLY-A-1"
+      },
+      "containers": [
+        {
+          "id": 3,
+          "parentContainerId": null,
+          "name": "Tote",
+          "type": "tote",
+          "description": null,
+          "qrCode": "TLY-C-1"
+        }
+      ],
+      "items": [
+        {
+          "id": 9,
+          "containerId": 3,
+          "name": "Drill",
+          "description": "cordless",
+          "quantity": 1,
+          "condition": "good",
+          "status": "active",
+          "qrCode": "TLY-I-ABC123",
+          "createdAt": "2026-08-01T00:00:00.000Z",
+          "productName": "DCD777",
+          "productBrand": "DeWalt",
+          "productImageUrl": "https://example/img.png"
+        }
+      ]
+    },
+    "container": {
+      "type": "container",
+      "container": {
+        "id": 3,
+        "areaId": 7,
+        "areaName": "Garage",
+        "propertyId": 1,
+        "propertyName": "Home",
+        "parentContainerId": null,
+        "name": "Tote",
+        "type": "tote",
+        "description": null,
+        "qrCode": "TLY-C-1"
+      },
+      "nestedContainers": [
+        {
+          "id": 4,
+          "areaId": 7,
+          "parentContainerId": 3,
+          "name": "Small box",
+          "type": "box",
+          "description": null,
+          "qrCode": null,
+          "depth": 1
+        }
+      ],
+      "items": [
+        {
+          "id": 9,
+          "containerId": 3,
+          "name": "Drill",
+          "description": "cordless",
+          "quantity": 1,
+          "condition": "good",
+          "status": "active",
+          "qrCode": "TLY-I-ABC123",
+          "createdAt": "2026-08-01T00:00:00.000Z",
+          "productName": "DCD777",
+          "productBrand": "DeWalt",
+          "productImageUrl": "https://example/img.png"
+        }
+      ]
+    },
+    "item": {
+      "type": "item",
+      "item": {
+        "id": 9,
+        "name": "Drill",
+        "description": "cordless",
+        "quantity": 1,
+        "purchasePrice": 149.99,
+        "condition": "good",
+        "status": "active",
+        "qrCode": "TLY-I-ABC123",
+        "createdAt": "2026-08-01T00:00:00.000Z",
+        "updatedAt": "2026-08-02T00:00:00.000Z",
+        "productName": "DCD777",
+        "productBrand": "DeWalt",
+        "productImageUrl": "https://example/img.png",
+        "productDescription": "20V drill",
+        "breadcrumb": [
+          {
+            "id": 1,
+            "name": "Home",
+            "type": "property"
+          },
+          {
+            "id": 7,
+            "name": "Garage",
+            "type": "area"
+          },
+          {
+            "id": 3,
+            "name": "Tote",
+            "type": "container"
+          }
+        ]
+      },
+      "conditionSnapshots": [
+        {
+          "id": 5,
+          "condition": "good",
+          "notes": "small scuff on the lid",
+          "createdAt": "2026-08-01T00:00:00.000Z",
+          "photoUrl": "https://signed.example/object"
+        }
+      ],
+      "files": [
+        {
+          "id": 3,
+          "fileType": "receipt",
+          "fileName": "receipt.pdf",
+          "mimeType": "application/pdf",
+          "fileSize": 12,
+          "createdAt": "2026-08-01T00:00:00.000Z",
+          "url": "https://signed.example/object"
+        }
+      ],
+      "dates": [
+        {
+          "id": 2,
+          "dateType": "Warranty expiry",
+          "dateValue": "2027-01-01",
+          "notes": "boxed receipt"
+        }
+      ]
+    }
+  };
+
+test('with every default ON the public payload is byte-identical to the pre-defaults branch', async (t) => {
+  const [Sharing] = serviceWith(t);
+
+  for (const type of disclosure.ENTITY_TYPES) {
+    const envelope = await Sharing.getEntityForShare(type, type === 'item' ? 9 : 1);
+    assert.equal(
+      JSON.stringify(envelope, null, 2),
+      JSON.stringify(GOLDEN_PUBLIC_PAYLOAD[type], null, 2),
+      `the ${type} share payload changed — this PR must alter nothing a recipient sees`,
+    );
+  }
+});
