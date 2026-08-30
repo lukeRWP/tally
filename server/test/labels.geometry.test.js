@@ -5,8 +5,10 @@
  * never been checked by anything:
  *
  *   1. `generateQrImage` renders the QR so that every MODULE is a whole number
- *      of printer dots at 203 dpi (the ITPP941 head). Its comment says the
- *      first printed QR would not scan otherwise.
+ *      of printer dots at 203 dpi (the ITPP941 head), and `_drawQr` places that
+ *      bitmap so the whole-dot grid survives rasterisation. Both halves matter:
+ *      until #326 only the first was true, and a dot-exact bitmap dropped at a
+ *      fractional dot origin came back one dot over on both axes.
  *   2. `_drawBarcode` snaps every Code 128 module to a whole dot, "the same
  *      failure that killed the QR".
  *
@@ -52,6 +54,28 @@ Labels.init({ db: { query: async () => [] }, logger, config: { clientUrl: CLIENT
 // in. 72 pt = 1 inch.
 const DPI = 203;
 const dots = (pt) => (pt / 72) * DPI;
+
+// How far inside its own printer dot each edge of a placed QR must sit, in
+// dots. This is the invariant `_drawQr` is built to satisfy, not a copy of its
+// DOT_INSET constant — deliberately a floor rather than the value itself, so
+// the bound keeps meaning something if that constant is retuned, while still
+// failing loudly for the one "simplification" that would break the raster:
+// snapping the origin to a whole dot and calling it done.
+//
+// The number to beat is pdfkit's coordinate rounding. It writes the image `cm`
+// matrix in POINTS to 6 decimal places, so an edge can land up to 0.5e-6 pt =
+// 1.4e-6 dots either side of where the renderer asked for it. 1e-4 dots clears
+// that by 70x and is still a ten-thousandth of a printer dot, so no sane inset
+// fails it.
+const MIN_EDGE_MARGIN = 1e-4;
+
+// Tolerance on the DRAWN extent being a whole number of dots. It has to absorb
+// two deliberate, known effects: the 2 x DOT_INSET = 0.002 dots `_drawQr`
+// shaves off, and the coordinate rounding above. It is not a geometric fudge —
+// a genuinely fractional module pitch (the original bug: 155 dots of symbol
+// stretched over dots(60) = 169) is out by 0.17 dots or more, 16x this bound,
+// which the negative controls at the bottom of this file prove.
+const EXTENT_TOL = 0.01;
 
 // ── poppler ────────────────────────────────────────────────────────────────
 // Skip LOUDLY rather than silently: a geometry test that quietly evaporates is
@@ -228,16 +252,17 @@ function checkQr(img, placement, code, label) {
 
   // ── Claim 1, as written: the drawn symbol is a whole number of printer dots,
   // and that number divides evenly by the module count. Read off the PDF, so it
-  // is the geometry the rasteriser is actually given.
-  //
-  // The 1e-3 is PDF coordinate precision, not a geometric tolerance: pdfkit
-  // writes the `cm` matrix to 6 decimal places, so a width of exactly 155 dots
-  // round-trips as 154.9999987 dots. Nothing about the symbol is being fudged —
-  // a genuinely fractional module count is out by 0.5 dots or more.
+  // is the geometry the rasteriser is actually given. EXTENT_TOL is PDF
+  // coordinate precision plus `_drawQr`'s deliberate sub-dot inset, not a
+  // geometric tolerance — see its definition.
   const drawnDots = dots(placement.wPt);
-  assert.ok(Math.abs(drawnDots - Math.round(drawnDots)) < 1e-3,
-    `${label}: the QR is drawn ${drawnDots} dots wide — not a whole number of printer dots`);
+  const drawnDotsY = dots(placement.hPt);
+  for (const [axis, measured] of [['wide', drawnDots], ['tall', drawnDotsY]]) {
+    assert.ok(Math.abs(measured - Math.round(measured)) < EXTENT_TOL,
+      `${label}: the QR is drawn ${measured} dots ${axis} — not a whole number of printer dots`);
+  }
   const wholeDots = Math.round(drawnDots);
+  assert.equal(Math.round(drawnDotsY), wholeDots, `${label}: the drawn QR is not square`);
   assert.equal(wholeDots % (n + MARGIN * 2), 0,
     `${label}: ${wholeDots} dots does not divide evenly into ${n + MARGIN * 2} module slots — `
     + 'the modules land on fractional dot boundaries');
@@ -248,36 +273,54 @@ function checkQr(img, placement, code, label) {
   assert.ok(dotsPerModule >= 2,
     `${label}: ${dotsPerModule} dot(s) per module is too fine for a 203 dpi head`);
 
-  // ── Locate the symbol in the raster, inside the image's own placement box.
+  // ── Claim 1's OTHER half, and the whole of issue #326: the PLACEMENT.
+  //
+  // poppler maps an image onto the ENCLOSING whole-pixel box, floor(left) to
+  // ceil(right). With right - left a whole number of dots, that box is the
+  // bitmap's own size only while `left` sits strictly inside its dot and
+  // `right` strictly inside its own. Land either edge ON an integer and the
+  // coordinate rounding above decides — per axis, per run — whether the symbol
+  // gains a dot; that is why the pre-fix `small` preset sat at y = 24.000002
+  // dots, arithmetically aligned, and still took the +1.
+  //
+  // So this is deliberately NOT "the origin is a whole dot". It is "every edge
+  // is far enough inside its dot that the rounding cannot reach the boundary",
+  // which is the property the exact extents below actually rest on. Anyone who
+  // later "simplifies" `_drawQr`'s inset back to a plain snap fails here, with
+  // a message saying why, instead of quietly reprinting smeared symbols.
   const left = dots(placement.xPt);
   const top = dots(placement.yPt);
+  for (const [axis, lo, len] of [['x', left, drawnDots], ['y', top, drawnDotsY]]) {
+    const hi = lo + len;
+    const inLo = lo - Math.floor(lo), inHi = Math.ceil(hi) - hi;
+    assert.ok(inLo >= MIN_EDGE_MARGIN,
+      `${label}: the QR's ${axis} origin is ${lo} dots — only ${inLo.toExponential(2)} dots inside its `
+      + `printer dot, so coordinate rounding can cross the boundary and stretch the symbol `
+      + `(needs >= ${MIN_EDGE_MARGIN})`);
+    assert.ok(inHi >= MIN_EDGE_MARGIN,
+      `${label}: the QR's far ${axis} edge is ${hi} dots — only ${inHi.toExponential(2)} dots inside its `
+      + `printer dot (needs >= ${MIN_EDGE_MARGIN})`);
+    assert.equal(Math.ceil(hi) - Math.floor(lo), wholeDots,
+      `${label}: poppler maps the QR onto ${Math.ceil(hi) - Math.floor(lo)} dots on ${axis}, `
+      + `not the bitmap's own ${wholeDots} — it will be resampled`);
+  }
+
+  // ── Locate the symbol in the raster, inside the image's own placement box.
   const box = darkBox(img,
     Math.floor(left) - 1, Math.floor(top) - 1,
     Math.ceil(left + drawnDots) + 1, Math.ceil(top + drawnDots) + 1);
 
-  // ── Claim 1, as rasterised: the symbol occupies n x dotsPerModule dots.
-  //
-  // THE +1 IS REAL AND IT IS A FINDING, NOT A FUDGE. poppler maps an image onto
-  // the ENCLOSING whole-pixel box, so an image whose origin lands mid-dot is
-  // stretched across exactly one extra dot (never more: the box is
-  // ceil(right) - floor(left), and right - left is a whole number of dots here,
-  // so the width is either n*dpm or n*dpm + 1). Every preset places its QR at a
-  // whole POINT offset — 6pt on the 2x1, 46pt on the manifest, centred on the
-  // 3x3 — and a whole point is not a whole dot at 203 dpi, so today every
-  // preset takes the +1. Module CENTRES are unaffected, which is why the
-  // symbols still read (asserted below, bit for bit); the outer edge gains one
-  // antialiased dot.
-  //
-  // That is issue #326: the bitmap is dot-exact, its ORIGIN is not. When #326
-  // lands, tighten this to an exact equality and delete the allowance. Until
-  // then the bound stays at exactly 1, so a genuinely fractional module pitch —
-  // the original bug, ~5.45 dots per module — still fails here by tens of dots,
-  // which the negative-control test below proves.
+  // ── Claim 1, as rasterised: the symbol occupies EXACTLY n x dotsPerModule
+  // dots on both axes. No allowance, and there must never be one again — the
+  // placement invariant above is what earns the "exactly". Before #326 every
+  // preset measured one dot over on both axes (145 -> 146, 290 -> 291) and this
+  // bound read `expected || expected + 1`; that slack is the bug, not a fudge
+  // for one, so widening it back is a regression however tempting it looks.
   const expected = n * dotsPerModule;
   for (const [axis, measured] of [['width', box.w], ['height', box.h]]) {
-    assert.ok(measured === expected || measured === expected + 1,
-      `${label}: symbol ${axis} is ${measured} dots, expected ${expected} `
-      + `(${n} modules x ${dotsPerModule} dots) or ${expected + 1} from whole-dot snapping`);
+    assert.equal(measured, expected,
+      `${label}: symbol ${axis} is ${measured} dots, expected exactly ${expected} `
+      + `(${n} modules x ${dotsPerModule} dots)`);
   }
   const pitch = box.w / n;
   assert.equal(Math.round(pitch), dotsPerModule,
@@ -423,12 +466,13 @@ test('large (4x6 manifest): every Code 128 bar and space is a whole number of pr
 });
 
 test('the geometry check has teeth: a QR drawn at its nominal preset size fails it', { skip: SKIP }, async () => {
-  // NEGATIVE CONTROL. This is the pre-fix behaviour `generateQrImage`'s comment
-  // describes: draw the QR bitmap at the preset's nominal `qrPt` instead of at
-  // the whole-dot size the generator computed. 155 dots of symbol get stretched
-  // over dots(60) = 169, so the module pitch becomes 5.45 dots and module edges
-  // land mid-dot. If the +1-dot allowance in checkQr were papering over
-  // anything, this would sail through it.
+  // NEGATIVE CONTROL for the SIZING half. This is the pre-fix behaviour
+  // `generateQrImage`'s comment describes: draw the QR bitmap at the preset's
+  // nominal `qrPt` instead of at the whole-dot size the generator computed. 155
+  // dots of symbol get stretched over dots(60) = 169, so the module pitch
+  // becomes 5.45 dots and module edges land mid-dot. That is out by 0.17 dots
+  // at the extent alone — 16x EXTENT_TOL — so the tolerances in checkQr are
+  // nowhere near wide enough to hide it.
   const qr = await Labels.generateQrImage(SMALL.qrCode, 60);
   assert.notEqual(qr.sizePt, 60, 'the generator does not draw at the nominal size (that is the point)');
 
@@ -441,6 +485,56 @@ test('the geometry check has teeth: a QR drawn at its nominal preset size fails 
     /not a whole number of printer dots|does not divide evenly|symbol width|module pitch|disagree with the canonical matrix/,
     'a fractional module pitch must be rejected',
   );
+});
+
+test('the geometry check has teeth: a dot-exact QR at a fractional dot origin fails it', { skip: SKIP }, async () => {
+  // NEGATIVE CONTROL for the PLACEMENT half (#326), and the one that keeps the
+  // exact-extent assertion honest now that its +1 allowance is gone.
+  //
+  // Everything about the bitmap here is beyond reproach — it is the renderer's
+  // own buffer, drawn at the renderer's own whole-dot size — so every check
+  // that guards the BITMAP passes and only the origin is wrong. 6pt is 16.9167
+  // dots, which is exactly what the presets did before #326. If the tightened
+  // equality were slack, or if `_drawQr` were reduced to a plain doc.image(),
+  // this test is what notices.
+  const qr = await Labels.generateQrImage(SMALL.qrCode, 60);
+  const doc = new PDFDocument({ size: [144, 72], margin: 0 });
+  const pdf = await collectPdf(doc, () => { doc.image(qr.buf, 6, 6, { width: qr.sizePt }); });
+  const { img, placement } = await renderOnePage(pdf, 'offset-control');
+
+  // The bitmap really is dot-exact: whole dots, evenly divided into modules.
+  const slots = QRCode.create(`${CLIENT_URL}/s/${SMALL.qrCode}`).modules.size + 2;
+  const drawn = dots(placement.wPt);
+  assert.ok(Math.abs(drawn - Math.round(drawn)) < EXTENT_TOL,
+    `the control bitmap is drawn ${drawn} dots wide — the control is meant to be sizing-clean`);
+  assert.equal(Math.round(drawn) % slots, 0,
+    'the control bitmap does not divide evenly into module slots — the control is meant to be sizing-clean');
+
+  assert.throws(
+    () => checkQr(img, placement, SMALL.qrCode, 'fractional-origin control'),
+    /inside its printer dot|poppler maps the QR onto|symbol (width|height) is/,
+    'a dot-exact bitmap at a fractional dot origin must be rejected',
+  );
+});
+
+test('every thermal QR is placed through _drawQr — the coverage above is complete', () => {
+  // The QR is drawn in three places (both `_drawTag` branches and the manifest
+  // header) and the placement fix only holds where it is applied, so pin that
+  // none of them is a bare doc.image(). The Avery sheet's doc.image() is
+  // deliberately outside this slice: it goes to a laser, where dot alignment is
+  // moot and `generateQrBuffer` does not produce a dot-exact bitmap anyway.
+  const src = fs.readFileSync(require.resolve('../src/modules/labels/labels.service'), 'utf8');
+  const start = src.indexOf('_drawTag(doc, e, qr, P, presetKey)');
+  const end = src.indexOf('async renderManifestBundle', start);
+  assert.ok(start > 0 && end > start, 'could not locate the thermal renderers — this pin has rotted');
+  const thermal = src.slice(start, end);
+
+  assert.deepEqual([...thermal.matchAll(/doc\.image\(/g)].map(m => m.index), [],
+    'a thermal preset places a QR with a bare doc.image() — it will be resampled onto an extra '
+    + 'dot on both axes (#326). Place it with _drawQr.');
+  assert.equal([...thermal.matchAll(/_drawQr\(/g)].length, 3,
+    'expected three QR placements across the thermal presets (2x1, 3x3, manifest header) — '
+    + 'if one was added or removed, extend or trim the rasterised checks above to match');
 });
 
 test('only the manifest draws a barcode — the coverage above is complete', () => {

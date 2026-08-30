@@ -21,6 +21,19 @@ const PRESETS = {
   large:  { widthPt: 288, heightPt: 432, qrPt: 60,  banner: 36, bannerFont: 21, bannerTrack: 7, title: 13, code: 8, row: 11, rowGap: 3, qtyW: 44 },
 };
 
+// The ITPP941 thermal head. Every dot-exactness claim in this file is at this
+// resolution and nowhere else — the Avery sheet goes to a laser.
+const DPI = 203;
+const PT_PER_DOT = 72 / DPI;
+
+// How far inside its own printer dot a placed bitmap's edges are pulled, in
+// dots, so that poppler's floor(left)/ceil(right) box lands on the bitmap's
+// exact pixel count instead of one dot more. See `_drawQr` for the arithmetic.
+// It has to beat pdfkit's coordinate rounding (~1.4e-6 dots) by a wide margin
+// and stay far below anything that could move a module centre; 1/1000 of a dot
+// sits about three orders of magnitude clear of both.
+const DOT_INSET = 0.001;
+
 let _db = null;
 let _logger = null;
 let _baseUrl = null;
@@ -37,10 +50,11 @@ const LabelsService = {
   // ── QR Code Generation ──────────────────────────────────────────────────────
 
   // 203 dpi is the ITPP941 head.
-  _qrDots(pt) { return Math.round((pt / 72) * 203); },
+  _qrDots(pt) { return Math.round(pt / PT_PER_DOT); },
 
   /**
-   * Render a QR sized so every MODULE is a whole number of printer dots.
+   * Render a QR whose bitmap is dot-exact: every MODULE is a whole number of
+   * printer dots at 203 dpi.
    *
    * Sizing only the overall image to whole dots is not enough — the modules
    * inside it still land on fractional boundaries and the rasteriser smears
@@ -49,7 +63,15 @@ const LabelsService = {
    * flooring it makes the grid exact; the drawn width must then follow the
    * real pixel size rather than the nominal preset value.
    *
-   * Returns { buf, sizePt } — draw with { width: sizePt } for 1 pixel : 1 dot.
+   * A dot-exact bitmap is only half of it. The invariant that reaches the
+   * printer is the one in the RASTER, and that also depends on where the
+   * bitmap is placed — a dot-exact bitmap at a fractional dot origin is
+   * resampled across one extra dot on each axis (issue #326). `_drawQr` is
+   * what carries the invariant across that step, so draw through it; drawing
+   * this buffer with a bare doc.image() gives up half the guarantee.
+   *
+   * Returns { buf, dots, sizePt } — `dots` is the bitmap's edge in whole
+   * printer dots, `sizePt` the same length in points, for layout.
    */
   async generateQrImage(code, targetPt) {
     const url = `${_baseUrl}/s/${code}`;
@@ -59,7 +81,45 @@ const LabelsService = {
     const dotsPerModule = Math.max(1, Math.floor(targetDots / symbolModules));
     const buf = await QRCode.toBuffer(url, { scale: dotsPerModule, margin });
     const actualDots = symbolModules * dotsPerModule;
-    return { buf, sizePt: (actualDots / 203) * 72 };
+    return { buf, dots: actualDots, sizePt: actualDots * PT_PER_DOT };
+  },
+
+  /**
+   * Place a dot-exact QR bitmap so that it rasterises to exactly its own pixel
+   * count — no resampling, one source pixel per printer dot (issue #326).
+   *
+   * `xPt`/`yPt` are the ABSOLUTE position on the page, which is what has to be
+   * dot-aligned. An offset within a label means nothing on its own: the medium
+   * and large presets shift their content right by the location banner's width
+   * (`cx`), and it is the sum that the rasteriser sees.
+   *
+   * WHY THE INSET, AND WHY NOT JUST SNAP TO A WHOLE DOT. poppler maps an image
+   * onto the ENCLOSING whole-pixel box, floor(left) to ceil(right). For a
+   * bitmap N dots wide with right = left + N, that box is N wide only when
+   * `left` is EXACTLY the integer k: any more and ceil(right) goes to k+N+1,
+   * any less and floor(left) drops to k-1. Both give N+1. Exact-integer
+   * placement is a knife edge — and pdfkit writes the image matrix in POINTS
+   * rounded to 6 decimal places, which moves an edge by up to 1.4e-6 dots in
+   * either direction, so it falls off that edge routinely. (Measured: snapping
+   * exactly held N on 17 of 120 sampled positions; this construction held it on
+   * 120 of 120. It is also why the pre-fix `small` preset was already at
+   * y = 24.000002 dots and still took the +1.)
+   *
+   * So instead of balancing on the boundary, sit both edges a hair INSIDE their
+   * dot: origin k + DOT_INSET, extent N - 2 x DOT_INSET. Then floor(left) = k
+   * and ceil(right) = k + N for any rounding within +/- DOT_INSET, which is
+   * ~700x the rounding that can actually occur.
+   *
+   * The cost is scaling the bitmap by (N - 2e)/N. At the largest preset that is
+   * 0.9999935, and NO point in the image moves by more than DOT_INSET = 1/1000
+   * of a dot — a five-thousandth of a 5-dot module. Module centres cannot move.
+   */
+  _drawQr(doc, qr, xPt, yPt) {
+    const x = Math.round(xPt / PT_PER_DOT);   // nearest whole dot on the page
+    const y = Math.round(yPt / PT_PER_DOT);
+    const extentPt = (qr.dots - 2 * DOT_INSET) * PT_PER_DOT;
+    doc.image(qr.buf, (x + DOT_INSET) * PT_PER_DOT, (y + DOT_INSET) * PT_PER_DOT,
+      { width: extentPt, height: extentPt });
   },
 
   // Kept for the Avery sheet, which goes to a laser where dot alignment is moot.
@@ -220,8 +280,12 @@ const LabelsService = {
     const cx = bannerW, cw = W - bannerW;
 
     if (presetKey === 'small') {
-      const size = Math.min(qr.sizePt, H - pad * 2);
-      doc.image(qr.buf, cx + pad, (H - size) / 2, { width: size });
+      // Drawn at the generated size, never a fitted one: shrinking the bitmap
+      // to fit would put the modules back on fractional dot boundaries, which
+      // is the failure the whole-dot sizing exists to prevent. `qrPt` in
+      // PRESETS is what has to leave room (60pt against 60pt of height here).
+      const size = qr.sizePt;
+      LabelsService._drawQr(doc, qr, cx + pad, (H - size) / 2);
       const tx = cx + pad + size + pad, tw = W - tx - pad;
       // Two lines: at 11pt bold the 56pt of usable width fits ~6 characters, so
       // most real item names printed truncated on a single line.
@@ -239,7 +303,7 @@ const LabelsService = {
       // Sit the QR below whatever the title actually took, rather than assuming
       // a single line's worth of offset.
       const qrX = cx + (cw - qr.sizePt) / 2, qrY = pad + titleH + 10;
-      doc.image(qr.buf, qrX, qrY, { width: qr.sizePt });
+      LabelsService._drawQr(doc, qr, qrX, qrY);
       LabelsService._drawChips(doc, e.tags, cx + pad, qrY + qr.sizePt + 6, cw - pad * 2, 7);
       // Footer: TLY code left, entity type right. The code's box stops short of
       // typeW so a long code can never run under the type.
@@ -354,7 +418,7 @@ const LabelsService = {
       const cx = bannerW;
 
       // Header: QR + inverted title + breadcrumb + code, bottom-bordered.
-      doc.image(qr.buf, cx + L.pad, L.pad, { width: qr.sizePt });
+      LabelsService._drawQr(doc, qr, cx + L.pad, L.pad);
       const hx = cx + L.pad + qr.sizePt + 8, hw = W - hx - L.pad;
       // Centered, matching the medium tag. Two lines so a long container name
       // is not clipped; the breadcrumb and code follow the measured height.
