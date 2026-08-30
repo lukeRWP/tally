@@ -71,7 +71,17 @@ export function RuledRow({
         'group flex w-full items-center gap-3 border-b border-[var(--color-rule)] last:border-b-0 py-3 text-left',
         'animate-fade-up transition-colors',
         interactive &&
-          'active:bg-[var(--color-elevated)] hover:bg-[var(--color-elevated)]/60 focus-visible:outline-none focus-visible:bg-[var(--color-elevated)]',
+          // Keyboard focus gets its own indicator, not the pressed/cursor
+          // tint (#315): `bg-[var(--color-elevated)]` here used to double as
+          // BOTH the active(press) feedback AND the focus-visible state, and
+          // it sits only 0.027 lightness above the page — a Tab-focused row
+          // read as indistinguishable from one being pressed. This borrows
+          // button.tsx's own focus ring (ring-2 ring-primary) rather than
+          // inventing a new one, but INSET rather than offset: rows are
+          // stacked edge to edge with no gap between them, and an outside
+          // ring (button's ring-offset-2) would bleed 2-4px into the row
+          // above/below instead of framing the one that is actually focused.
+          'active:bg-[var(--color-elevated)] hover:bg-[var(--color-elevated)]/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--color-primary)]',
         selected && 'bg-[var(--color-primary-bg)]',
       )}
       style={animationDelay ? { animationDelay } : undefined}
