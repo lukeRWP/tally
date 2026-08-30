@@ -4,49 +4,37 @@
  *
  * Six ringed surfaces support j/k, Enter, `/` and Esc, and nothing in the
  * app ever said so. ColHead's opt-in `hint` prop is the fix — but only when
- * there's a keyboard to serve. These tests are the gate itself: `hint` says
- * "this ColHead's rows are ringed", `useCoarsePointer` says "and there's a
- * keyboard here", and only both together may render anything.
+ * there's a keyboard to serve.
  *
- * No matchMedia stub = jsdom's default = useCoarsePointer reads fine-pointer
- * (see use-coarse-pointer.ts and destination-picker.coarse.test.tsx), so the
- * "fine pointer" cases below run with no stubbing at all.
+ * Until #313, this component ran its own `useCoarsePointer()` check
+ * alongside `hint`, because a caller's flag was only ever a layout signal
+ * (`wide`/`split`). Now that useKeyboardNav folds the pointer check in at
+ * the source and hands callers back its real, pointer-aware state (see
+ * use-keyboard-nav.dom.test.tsx and matches.hint.test.tsx, which cover that
+ * pointer-awareness end to end through a real ringed page), `hint` IS that
+ * state — ColHead trusts it alone, with no pointer check of its own. These
+ * tests cover exactly that: `hint` is the single source of truth.
  *
  * No @testing-library/jest-dom in this repo (not installed, no other test
  * uses it), so assertions read raw DOM instead of toBeInTheDocument/etc.
  */
 import { render, screen } from '@testing-library/react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { ColHead, KeyCap } from './col-head';
 
-function stubPointer(coarse: boolean) {
-  vi.stubGlobal('matchMedia', vi.fn().mockReturnValue({
-    matches: coarse,
-    media: '(pointer: coarse)',
-    addEventListener: vi.fn(),
-    removeEventListener: vi.fn(),
-  }));
-}
-
-afterEach(() => {
-  vi.unstubAllGlobals();
-  vi.restoreAllMocks();
-});
-
 describe('ColHead hint', () => {
-  it('shows the hint on a fine pointer when opted in', () => {
+  it('shows the hint when opted in', () => {
     render(<ColHead hint>3 results</ColHead>);
     expect(screen.getByText('j k ↵')).toBeTruthy();
   });
 
-  it('stays silent on a coarse pointer even when opted in', () => {
-    stubPointer(true);
-    render(<ColHead hint>3 results</ColHead>);
+  it('stays silent when not opted in', () => {
+    render(<ColHead>3 results</ColHead>);
     expect(screen.queryByText('j k ↵')).toBeNull();
   });
 
-  it('stays silent on a fine pointer when the surface does not opt in', () => {
-    render(<ColHead>3 results</ColHead>);
+  it('stays silent when the caller passes hint={false} — e.g. the ring is live but the pointer is coarse', () => {
+    render(<ColHead hint={false}>3 results</ColHead>);
     expect(screen.queryByText('j k ↵')).toBeNull();
   });
 

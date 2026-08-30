@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef } from 'react';
 import { useSearchParams } from 'react-router';
+import { useCoarsePointer } from './use-coarse-pointer';
 
 /**
  * Desktop keyboard navigation.
@@ -99,7 +100,25 @@ export interface KeyboardNavOptions {
    * scrolling the page under the panel.
    */
   onAction?: (key: string) => void;
-  /** Off in touch chrome, where there is no keyboard to serve. */
+  /**
+   * The caller's OWN gate — layout chrome, an open dialog, whatever else
+   * decides this surface wants a ring at all. Defaults to true.
+   *
+   * This is deliberately not the whole story (#313). The hook itself ANDs
+   * this with `!useCoarsePointer()` before it means anything, because
+   * "the ring is enabled" has to mean "a keyboard exists" — a pointer
+   * question — not "this chrome is wide enough for a sidebar" — a layout
+   * question. A landscape iPad satisfies every layout gate every surface
+   * passes here (`wide`/`split`) and has no keyboard at all; without the
+   * pointer term the ring would mount real `keydown`/`focusin` listeners on
+   * a device that can never fire them. One place to get this right, so
+   * none of the six ringed surfaces has to re-derive it.
+   *
+   * See the return value below for surfaces that need to know whether the
+   * ring ended up ACTUALLY active (a keyboard hint, a highlight style) —
+   * read that back rather than re-checking `useCoarsePointer()` alongside
+   * this flag, which is exactly the belt-and-braces gate #313 removed.
+   */
   enabled?: boolean;
 }
 
@@ -294,7 +313,23 @@ export function isTyping(target: EventTarget | null): boolean {
 
 export function useKeyboardNav({
   onMove, onOpen, onEscape, onSearch, onFocusRow, onAction, enabled = true,
-}: KeyboardNavOptions) {
+}: KeyboardNavOptions): boolean {
+  /**
+   * "Enabled" is layout's word for CHROME, not a keyboard's word for itself
+   * (#313). `enabled` above is every caller's own layout/dialog gate — it
+   * says the surface is wide enough (or otherwise willing) to run a ring —
+   * but a landscape iPad clears that bar with no keyboard attached. `active`
+   * is what actually decides whether this hook does anything: the caller's
+   * gate AND a fine pointer, checked here ONCE so none of the six ringed
+   * surfaces has to pair its own `useCoarsePointer()` alongside `enabled`.
+   * Returned so a caller that shows a keyboard hint (or styles a live
+   * cursor) elsewhere can read the ring's REAL state back instead of
+   * re-deriving it — that second derivation is the belt-and-braces gate
+   * #313 closed out in ColHead's callers.
+   */
+  const coarsePointer = useCoarsePointer();
+  const active = enabled && !coarsePointer;
+
   /**
    * The armed-but-not-yet-fired action key, and when the last key arrived.
    *
@@ -325,7 +360,7 @@ export function useKeyboardNav({
    * scrolled the newly focused row into view anyway.
    */
   useEffect(() => {
-    if (!enabled || !onFocusRow) return;
+    if (!active || !onFocusRow) return;
     const onFocusIn = (e: FocusEvent) => {
       if (closestMatch(e.target, NAV_IGNORE)) return;
       const navId = closestMatch(e.target, '[data-nav-id]')?.getAttribute('data-nav-id');
@@ -333,10 +368,10 @@ export function useKeyboardNav({
     };
     window.addEventListener('focusin', onFocusIn);
     return () => window.removeEventListener('focusin', onFocusIn);
-  }, [enabled, onFocusRow]);
+  }, [active, onFocusRow]);
 
   useEffect(() => {
-    if (!enabled) return;
+    if (!active) return;
 
     const onKeyDown = (e: KeyboardEvent) => {
       // Burst bookkeeping, before any of the early returns so that EVERY key
@@ -422,5 +457,7 @@ export function useKeyboardNav({
 
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [onMove, onOpen, onEscape, onSearch, onAction, enabled]);
+  }, [onMove, onOpen, onEscape, onSearch, onAction, active]);
+
+  return active;
 }

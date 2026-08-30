@@ -3,7 +3,6 @@ import { X, MapPin, Plus } from 'lucide-react';
 import { api } from '@/lib/api';
 import { useProperties, useAreas, useContainers } from '@/hooks/use-inventory';
 import { useKeyboardNav, useNavScrollIntoView } from '@/hooks/use-keyboard-nav';
-import { useCoarsePointer } from '@/hooks/use-coarse-pointer';
 import { CreateContainerDialog } from '@/components/inventory/create-container-dialog';
 import { cn } from '@/lib/utils';
 
@@ -106,13 +105,11 @@ export function DestinationPicker({
       : Math.min(containerList.length - 1, Math.max(0, at + delta))));
   }, [containerList.length]);
 
-  // Gate on the pointer, like every page surface gates on its chrome (#235):
-  // a coarse-only tablet fires no j/k, but leaving the ring live there was
-  // half a pattern — this component has no layout mode of its own, so the
-  // pointer IS its "is there a keyboard to serve" signal.
-  const coarse = useCoarsePointer();
+  // No `enabled` to pass: this component has no layout mode of its own (no
+  // wide/split chrome to gate on), and useKeyboardNav's own pointer check
+  // (#313) is now this ring's ENTIRE "is there a keyboard to serve" signal —
+  // exactly the coarse-pointer gate this used to compute by hand.
   useKeyboardNav({
-    enabled: !coarse,
     onMove: moveHighlight,
     onOpen: () => {
       const bin = containerList[highlightIdx];

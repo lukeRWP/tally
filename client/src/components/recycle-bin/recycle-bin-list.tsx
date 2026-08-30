@@ -228,9 +228,11 @@ export function RecycleBinList() {
   // `dialogOpen` (there, several dialogs; here, just the one).
   const dialogOpen = purgeOpen;
 
-  useKeyboardNav({
-    // Off on touch chrome, where there is no keyboard to serve — matches
-    // every other ringed surface.
+  // ringOn is `wide && !dialogOpen` further gated on the pointer inside the
+  // hook (#313) — pass THIS to anything advertising the keys, not `wide`.
+  const ringOn = useKeyboardNav({
+    // Off on touch chrome, or with the purge dialog up — matches every
+    // other ringed surface. The pointer half of the gate lives in the hook.
     enabled: wide && !dialogOpen,
     onMove: moveHighlight,
     onOpen: () => {
@@ -421,7 +423,7 @@ export function RecycleBinList() {
 
       {!isLoading && list.length > 0 && (
         <div className="flex flex-col">
-          <ColHead hint={wide}>Deletions</ColHead>
+          <ColHead hint={ringOn}>Deletions</ColHead>
           {/* Two columns at a desk. A deletion batch is a receipt line, and 30
               days of them is a long scroll at one per row. */}
           <div className={cn(wide && 'grid grid-cols-2 gap-x-6 items-start')}>

@@ -154,7 +154,9 @@ export function SearchPage() {
   }, [setSearchParams]);
 
   const ids = React.useMemo(() => (results ?? []).map((r) => r.id), [results]);
-  useKeyboardNav({
+  // ringOn is `split` further gated on the pointer inside the hook (#313) —
+  // pass THIS to anything advertising the keys, not `split` itself.
+  const ringOn = useKeyboardNav({
     enabled: split,
     onMove: (delta) => {
       if (ids.length === 0) return;
@@ -283,7 +285,7 @@ export function SearchPage() {
           // is a full-width rule above the split, as it is on every other list
           // in the app, rather than a caption on the left column only.
           <>
-            <ColHead hint={split}>{results.length} result{results.length === 1 ? '' : 's'}</ColHead>
+            <ColHead hint={ringOn}>{results.length} result{results.length === 1 ? '' : 's'}</ColHead>
             <SearchResults
               items={results}
               split={split}
