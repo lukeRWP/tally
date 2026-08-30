@@ -421,7 +421,7 @@ export function RecycleBinList() {
 
       {!isLoading && list.length > 0 && (
         <div className="flex flex-col">
-          <ColHead>Deletions</ColHead>
+          <ColHead hint={wide}>Deletions</ColHead>
           {/* Two columns at a desk. A deletion batch is a receipt line, and 30
               days of them is a long scroll at one per row. */}
           <div className={cn(wide && 'grid grid-cols-2 gap-x-6 items-start')}>
