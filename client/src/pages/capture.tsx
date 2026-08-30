@@ -1851,6 +1851,7 @@ function ManualCreate({
    *  draft the lookup is about to rewrite underneath it. */
   const [lookingUp, setLookingUp] = React.useState(false);
   const nameRef = React.useRef<HTMLInputElement>(null);
+  const barcodeRef = React.useRef<HTMLInputElement>(null);
   /**
    * The last barcode a lookup actually ran for. A USB scanner is a keyboard
    * that types the code and sends Enter, and the field blurs a moment later
@@ -1859,11 +1860,32 @@ function ManualCreate({
    * state: the blur can land before React re-renders the Enter's setState.
    */
   const lastLookedUp = React.useRef<string | null>(null);
+  /**
+   * #264: did the item currently being built get its identity through the
+   * BARCODE field?
+   *
+   * The two halves of #230 are each correct and each assume the other's user.
+   * The post-commit focus return exists for a typist, whose next gesture is
+   * typing a name; the barcode field's Enter lookup exists for a USB reader,
+   * whose next gesture is pulling the trigger again. Sending a scanner
+   * operator's caret to Name means the next scan TYPES the barcode into the
+   * name field and its terminating Enter submits it — an item literally named
+   * `098765432109`, with no catalogue lookup, no productId and no duplicate
+   * check.
+   *
+   * So focus goes back to the field the finished item came FROM. A ref, not
+   * state: it is written inside an async handler and read by the effect
+   * below, both of which must see the value as of NOW.
+   */
+  const cameFromBarcode = React.useRef(false);
   React.useEffect(() => {
     // Mount, and again each time a submit completes (= its receipt appends;
     // the commit is optimistic so that is synchronous with the submit): the
-    // next item starts at Name, without a mouse trip back to the field.
-    nameRef.current?.focus();
+    // next item starts where the last one started — Name for a typist,
+    // the barcode field for a scanner (#264).
+    const fromBarcode = cameFromBarcode.current;
+    cameFromBarcode.current = false;
+    (fromBarcode ? barcodeRef.current : nameRef.current)?.focus();
     // New item, clean guard: the next unit of the SAME product re-scans the
     // same code, and the dedupe above must not swallow that lookup.
     lastLookedUp.current = null;
@@ -1874,6 +1896,9 @@ function ManualCreate({
     const code = raw.trim();
     if (!code || lookingUp || code === lastLookedUp.current) return;
     lastLookedUp.current = code;
+    // This item was identified through the barcode field, so the NEXT one
+    // starts there too — see cameFromBarcode.
+    cameFromBarcode.current = true;
     setLookingUp(true);
     const outcome = await onLookupBarcode(code);
     setLookingUp(false);
@@ -1969,6 +1994,7 @@ function ManualCreate({
                 from running twice for one unchanged value. */}
             <Input
               id="mc-barcode"
+              ref={barcodeRef}
               value={draft.barcode ?? ''}
               placeholder="Type or scan"
               onChange={(e) => setDraft((d) => ({ ...d, barcode: e.target.value || undefined }))}
