@@ -81,6 +81,25 @@ const PARTIAL_OPTIONS = [
   { value: 'accessories_only' as const, label: 'spares only' },
 ];
 
+/**
+ * A value that is a barcode and nothing else: 8–14 digits, the length range
+ * every retail symbology this app scans lives in (EAN-8 through GTIN-14).
+ *
+ * Used on the desk form's submit to catch a scan that landed in the NAME
+ * field. #264 fixed where focus goes between items, which is the loop's
+ * steady state — but the FIRST scan of a page load (or a remount, or a tablet
+ * switching into typed mode) starts with the caret in Name by design, and a
+ * USB reader is a keyboard: it types the code there and its terminating Enter
+ * submits it. A guard on the submit itself is the version that does not care
+ * where focus happened to be, so it also covers a pasted code and the caret
+ * being moved by hand.
+ *
+ * Deliberately anchored and digits-only: a name that is nothing but a GTIN's
+ * worth of digits is not a name anyone typed on purpose, and anything with a
+ * letter or a space in it is left alone.
+ */
+const BARE_BARCODE = /^\d{8,14}$/;
+
 const DEST_KEY = 'tally-last-container';
 /** How many recent bins to offer at step 3. Three fits one row at 390px. */
 const RECENTS = 3;
@@ -933,14 +952,26 @@ export function Capture() {
    * back to. The outcome goes back to the FIELD, which owns focus and the
    * lookup-guard re-arm; the shared network + parsing is lookupBarcode.
    */
-  async function applyBarcodeLookup(code: string): Promise<'hit' | 'miss' | 'failed'> {
+  async function applyBarcodeLookup(
+    code: string,
+    opts?: { fromNameField?: boolean },
+  ): Promise<'hit' | 'miss' | 'failed'> {
     try {
       const { product, dupes: existing } = await lookupBarcode(code);
       setDupes(existing);
       // Read the draft fresh, exactly like handleCode: the lookup round trip
       // is long enough for the user to have typed a description, and spreading
       // a pre-await snapshot would silently discard it.
-      const live = stateRef.current.draft;
+      //
+      // `fromNameField` is the rescue path (see BARE_BARCODE): the code was
+      // typed into Name by a scanner, so whatever the ref still holds there
+      // is the code, not a name. Blanking it here rather than trusting the
+      // caller's setDraft to have landed keeps this independent of React's
+      // flush timing — the answer must not depend on whether the mirroring
+      // effect ran before the network did.
+      const live = opts?.fromNameField
+        ? { ...stateRef.current.draft, name: '' }
+        : stateRef.current.draft;
       const title = product?.shortName || product?.name || '';
       /**
        * #266: whether the name in the field is one a PERSON put there.
@@ -2056,8 +2087,13 @@ function ManualCreate({
   pending: boolean;
   /** The page's reaction to a barcode (#230) — lookup + dupe check + draft
    *  and vision writes. This component owns only the FIELD's behaviour:
-   *  when to fire, when not to fire twice, and where focus goes after. */
-  onLookupBarcode: (code: string) => Promise<'hit' | 'miss' | 'failed'>;
+   *  when to fire, when not to fire twice, and where focus goes after.
+   *  `fromNameField` marks the rescue path — a code a scanner typed into
+   *  Name, which must not be read back as a hand-typed name. */
+  onLookupBarcode: (
+    code: string,
+    opts?: { fromNameField?: boolean },
+  ) => Promise<'hit' | 'miss' | 'failed'>;
   /** Ticks up when a commit appends its receipt — the submit is optimistic,
    *  so this is the only transition a completed submit is visible in here. */
   receiptCount: number;
@@ -2148,15 +2184,17 @@ function ManualCreate({
   }, [receiptCount]);
 
   /** Fire the lookup once per distinct value — see lastLookedUp. */
-  async function lookupIfNew(raw: string) {
+  async function lookupIfNew(raw: string, opts?: { fromNameField?: boolean }) {
     const code = raw.trim();
     if (!code || lookingUp || code === lastLookedUp.current) return;
     lastLookedUp.current = code;
     // This item was identified through the barcode field, so the NEXT one
-    // starts there too — see cameFromBarcode.
+    // starts there too — see cameFromBarcode. True for the rescue path as
+    // well: a code that arrived in Name came off a trigger pull, and the
+    // operator's next gesture is another one.
     cameFromBarcode.current = true;
     setLookingUp(true);
-    const outcome = await onLookupBarcode(code);
+    const outcome = await onLookupBarcode(code, opts);
     setLookingUp(false);
     if (outcome === 'failed') {
       // Re-arm: pressing Enter again on the unchanged code is a retry, not
@@ -2171,6 +2209,35 @@ function ManualCreate({
   }
 
   const ready = draft.name.trim().length > 0 && dest != null;
+
+  /**
+   * The submit's last check: is this "name" actually a barcode? (#264
+   * follow-up.)
+   *
+   * #264 fixed where focus goes BETWEEN items. The first scan of a session
+   * still starts with the caret in Name — that is the correct place for it to
+   * start, and a typist would be wrong-footed by anything else — so a USB
+   * reader's first trigger pull types the code there and its Enter submits
+   * it. Guarding the submit instead of the focus covers that, plus the paste,
+   * plus anyone who clicked into Name by hand.
+   *
+   * The code is moved into the field it belongs in and run through the SAME
+   * lookup a scan into that field would have got, so the item still gets its
+   * catalogue name, its productId and its duplicate check. Returns true when
+   * it took the submit over.
+   */
+  function rescuedBarcodeInName(): boolean {
+    const typed = draft.name.trim();
+    // Only when the barcode field is empty: a code already sitting there
+    // means these digits are something else (a model number, a serial), and
+    // guessing at that point would be the same sin in the other direction.
+    if (!BARE_BARCODE.test(typed) || (draft.barcode ?? '').trim()) return false;
+    setDraft((d) => ({ ...d, name: '', barcode: typed }));
+    // fromNameField: the lookup must not read those digits back out of the
+    // draft as a hand-typed name and "protect" them under #266.
+    void lookupIfNew(typed, { fromNameField: true });
+    return true;
+  }
 
   return (
     <div className="flex flex-col gap-3">
@@ -2192,7 +2259,15 @@ function ManualCreate({
     <div className="grid grid-cols-[minmax(0,1fr)_minmax(260px,320px)] items-start gap-6">
       <form
         className="flex flex-col gap-4"
-        onSubmit={(e) => { e.preventDefault(); if (ready && !pending && !lookingUp) onSubmit(); }}
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (pending || lookingUp) return;
+          // Before the ready gate, and before anything is written: a bare
+          // code in Name is a mis-fielded scan whichever control fired this
+          // submit — the button, or the reader's own Enter.
+          if (rescuedBarcodeInName()) return;
+          if (ready) onSubmit();
+        }}
       >
         <div className="flex flex-col gap-1">
           <label htmlFor="mc-name" className="font-mono text-[10px] uppercase tracking-[0.1em] text-[var(--color-text-muted)]">
