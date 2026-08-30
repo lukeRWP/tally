@@ -118,15 +118,25 @@ export function Scan() {
       ) : (
         <>
           {/* html5-qrcode sizes its video by width only, so on a wide
-              landscape tablet the stream would otherwise take over the page —
-              the cap is tablet-only; the phone wrapper is unstyled. The base
-              classes (flex flex-col flex-1 min-h-0) are NOT decoration — this
-              wrapper is a flex item of the page column above, which needs
-              them at every level for TagScanner's own flex-1 to actually grow
-              (a classless-on-phone wrapper collapses it — see put-down.tsx /
-              capture.tsx for the ~200px regression this idiom exists to
-              avoid). The clamp binds on tablets only. */}
-          <div className={cn('flex flex-col flex-1 min-h-0', atDesk && coarse && 'max-h-[clamp(230px,36vh,280px)] overflow-hidden')}>
+              landscape tablet the stream would otherwise take over the page.
+              The base classes (flex flex-col flex-1 min-h-0) are NOT
+              decoration — this wrapper is a flex item of the page column
+              above, which needs them at every level for TagScanner's own
+              flex-1 to actually grow (a classless-on-phone wrapper collapses
+              it — see put-down.tsx / capture.tsx for the ~200px regression
+              this idiom exists to avoid). Only the CLAMP is conditional.
+
+              The clamp used to be `atDesk && coarse`, i.e. landscape only,
+              which left an iPad in PORTRAIT uncapped: measured at 820x1180
+              this wrapper was 851px tall around a frame that stops at its own
+              420px, and the typed-code field and Go landed at y=1020 — 418px
+              below the scanner's controls and 91px above the bottom nav.
+              --scanner-max is that column's natural maximum, and resolves to
+              `none` below 768px, so the phone is untouched. */}
+          <div className={cn(
+            'flex flex-col flex-1 min-h-0',
+            coarse && (atDesk ? 'max-h-[clamp(230px,36vh,280px)] overflow-hidden' : 'max-h-[var(--scanner-max)] overflow-hidden'),
+          )}>
             {/* #268: no Close beside Stop on a finger-driven screen. The two
                 are identical 32px controls 8px apart in the scanner's own
                 control row, and one of them leaves the page — a mis-tap

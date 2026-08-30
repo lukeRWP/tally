@@ -108,6 +108,7 @@ export function PutDown() {
   const clearPin = useCarryStore((s) => s.clearPin);
   const addToCarry = useCarryStore((s) => s.addToCarry);
   const clear = useCarryStore((s) => s.clear);
+  const drop = useCarryStore((s) => s.drop);
   const clearLastMove = useCarryStore((s) => s.clearLastMove);
   const { putDown, progress } = usePutDown();
   const moveItem = useMoveItem();
@@ -672,6 +673,52 @@ export function PutDown() {
           </div>
         )}
 
+        {/*
+          What is actually in hand, itemised.
+
+          `summary` above collapses anything past one entry to a count —
+          "2 bins + 3 items" — which is forced on a phone, where the banner is
+          stacked on top of a scanner that needs every row it can get. It is
+          not forced at a desk: the two-column layout above exists precisely so
+          the load and the destination can be read at once, and measured at
+          1180x820 the left column resolved to 360px wide holding one ~90px
+          banner and nothing else — ~700px of a column sized to answer "what am
+          I holding" sitting blank while the question went unanswered.
+
+          Only when there is more than one thing: at N=1 the banner already
+          names it and its origin, and repeating that would be noise.
+
+          Each row can be put back. This is the cure for the failure mode the
+          banner hides — gather adds a mis-scanned item silently (the only
+          feedback is the count in `toast("Carrying N")`), and until now the
+          only correction was `clear()`, which drops the whole load. The store
+          has had a per-entity `drop` since it was written; this is its first
+          caller.
+        */}
+        {atDesk && carried.length > 1 && (
+          <ul className="flex flex-col border border-[var(--color-rule)] rounded-[var(--radius-sm)] divide-y divide-[var(--color-rule)]">
+            {carried.map((c) => (
+              <li key={`${c.kind ?? 'item'}-${c.id}`} className="flex items-center gap-2 px-3 py-2">
+                <span className="min-w-0 flex-1">
+                  <span className="block text-sm truncate">{c.name}</span>
+                  <span className="block font-mono text-[10px] uppercase tracking-[0.06em] text-[var(--color-text-muted)] truncate">
+                    {c.kind === 'container' ? 'bin' : 'item'}
+                    {c.fromContainerName ? ` · from ${c.fromContainerName}` : ''}
+                  </span>
+                </span>
+                <button
+                  type="button"
+                  aria-label={`Put ${c.name} back`}
+                  onClick={() => { drop(c.id); toast(`Put ${c.name} back`); }}
+                  className="shrink-0 min-w-[max(32px,var(--tap-min))] min-h-[max(32px,var(--tap-min))] flex items-center justify-center text-[var(--color-text-muted)]"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+
         {pinnedDest && (
           <div className="flex items-center gap-2 border-2 border-[var(--color-text)] bg-[var(--color-bg)] rounded-[var(--radius-sm)] px-3 py-2">
             <span className="min-w-0 flex-1">
@@ -729,6 +776,43 @@ export function PutDown() {
             onClose={() => setPicking(false)}
           />
         )
+      ) : distributing && picking && coarse ? (
+        /*
+         * Re-pinning from the list, for a finger.
+         *
+         * DISTRIBUTE's only two ways to change the destination were scanning a
+         * bin's label and typing its TLY code. The typed field is the FINE
+         * desk's designed primary (it has no camera at all in this mode — see
+         * the comment on typedCodeForm below), but on a touch tablet it is the
+         * fallback for a label that cannot be read, offered on a glass keyboard
+         * that covers half the screen. Driven on tablet landscape after landing
+         * a carry, `buttons matching "Pick a bin from the list"` was 0: at the
+         * shelf, a peeled, smudged or not-yet-printed label left no way at all
+         * to move the pin — in the mode you spend the whole session in.
+         *
+         * The picker GATHER already uses, wired to pin() instead of land():
+         * distribute's contract is that scanning a bin re-pins and moves
+         * nothing, so choosing one from a list must do exactly that too.
+         *
+         * Coarse only, and `picking` cannot be true here without the button
+         * below: it initialises to `atDesk && !coarse`, so a fine desk keeps
+         * its typed-field-only distribute screen unchanged.
+         */
+        <DestinationPicker
+          // There is no carry to take an origin from in this mode, so the seed
+          // is the pin itself when the pin is an area — which is where the
+          // next bin almost always is. A pinned CONTAINER carries no areaId
+          // (PinnedTarget is deliberately just {id, name, type}), so that case
+          // opens on the area step, exactly as GATHER does for a load with no
+          // known origin. No extra round trip to save one tap.
+          seedAreaId={pinnedDest?.type === 'area' ? pinnedDest.id : undefined}
+          onPick={(bin) => {
+            setPicking(false);
+            pin({ type: 'container', id: bin.id, name: bin.name });
+            toast(`Now moving to ${bin.name}`);
+          }}
+          onClose={() => setPicking(false)}
+        />
       ) : gathering ? (
         <>
           {/* Scanner-first wherever a rear camera plausibly exists: phones,
@@ -785,6 +869,14 @@ export function PutDown() {
               GATHER's desk flow (unchanged, picker-only), because
               DISTRIBUTE never had a desk story before this feature. */}
           {typedCodeForm}
+          {/* Coarse only — see the picker branch above for why the fine desk
+              is deliberately left with the typed field as its one control. */}
+          {coarse && (
+            <Button variant="outline" size="sm" className="shrink-0" onClick={() => setPicking(true)}>
+              <List className="w-4 h-4" />
+              Pick a bin from the list
+            </Button>
+          )}
         </>
       ) : null}
       </div>
