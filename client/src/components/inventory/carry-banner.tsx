@@ -1,8 +1,9 @@
-import { useNavigate, useLocation } from 'react-router';
+import { useNavigate } from 'react-router';
 import { X, ScanLine, Undo2 } from 'lucide-react';
 import { useCarryStore, type CarriedItem } from '@/store/carry-store';
 import { useMoveItem, useMoveContainer } from '@/hooks/use-inventory';
 import { useLayoutMode } from '@/hooks/use-layout-mode';
+import { carryBannerOffsetCss, useCarryBannerShowing } from '@/hooks/use-bottom-stack';
 import { toast } from '@/components/ui/toast';
 import { cn } from '@/lib/utils';
 
@@ -28,11 +29,18 @@ function describeLoad(load: CarriedItem[]): string {
 export function CarryBanner() {
   const navigate = useNavigate();
   // Docks bottom-right as a panel when there is no bottom nav to sit above,
-  // and spans the width above the bar when there is.
-  const dock = useLayoutMode() === 'sidebar'
-    ? 'bottom-6 right-6 w-[26rem]'
-    : 'bottom-[calc(4.6rem+env(safe-area-inset-bottom))] left-3 right-3';
-  const { pathname } = useLocation();
+  // and spans the width above the bar when there is. The `bottom` offset
+  // itself comes from the shared stack model (use-bottom-stack.ts) — an
+  // inline style, not a class, since that model computes a runtime value
+  // Tailwind's build-time class scanner cannot see.
+  const touch = useLayoutMode() !== 'sidebar';
+  const dockClassName = touch ? 'left-3 right-3' : 'right-6 w-[26rem]';
+  const dockOffset = carryBannerOffsetCss(touch);
+  // Whether THIS banner should render at all — shared with root-layout.tsx's
+  // own `<main>` reserve and the toast layer (use-bottom-stack.ts) so the
+  // /move exception (below) can't drift into a second, independent copy of
+  // the same condition the way the offset arithmetic once did.
+  const showing = useCarryBannerShowing();
   const carried = useCarryStore((s) => s.carried);
   const lastMove = useCarryStore((s) => s.lastMove);
   const clear = useCarryStore((s) => s.clear);
@@ -76,14 +84,19 @@ export function CarryBanner() {
   }
 
   // /move asks "where does this go?" and owns both the carrying state and the
-  // undo for what it just did. The guard has to come BEFORE the lastMove
-  // branch or that banner still renders there, giving one move two Undos.
-  if (pathname === '/move') return null;
+  // undo for what it just did — `showing` is already false there (see
+  // useCarryBannerShowing's own doc comment). The guard has to come BEFORE
+  // the lastMove branch or that banner still renders there, giving one move
+  // two Undos.
+  if (!showing) return null;
 
   if (lastMove) {
     return (
-      <div className={cn('fixed z-40', dock,
-        'border-2 border-[var(--color-text)] bg-[var(--color-bg)] rounded-[var(--radius-sm)] px-3 py-2 flex items-center gap-2')}>
+      <div
+        className={cn('fixed z-40', dockClassName,
+          'border-2 border-[var(--color-text)] bg-[var(--color-bg)] rounded-[var(--radius-sm)] px-3 py-2 flex items-center gap-2')}
+        style={{ bottom: dockOffset }}
+      >
         <span className="min-w-0 flex-1">
           <span className="block font-mono text-[10px] uppercase tracking-[0.1em] text-[var(--color-text-muted)]">
             moved to {lastMove.to.name}
@@ -115,15 +128,19 @@ export function CarryBanner() {
     );
   }
 
-  if (carried.length === 0) return null;
-
+  // Reaching here means `showing` was true and `lastMove` was falsy, so
+  // `useCarryBannerShowing`'s own `||` guarantees carried.length > 0 —
+  // no separate empty-check needed.
   return (
-    <div className={cn('fixed z-40', dock,
-      // --color-primary-bg is an 8%-alpha tint meant for chips on solid
-      // surfaces; this banner floats over page content, so the tint is
-      // layered on an opaque base or the page bleeds through it.
-      '[background:linear-gradient(var(--color-primary-bg),var(--color-primary-bg)),var(--color-bg)]',
-      'border-2 border-[var(--color-primary)] rounded-[var(--radius-sm)] px-3 py-2 flex items-center gap-2')}>
+    <div
+      className={cn('fixed z-40', dockClassName,
+        // --color-primary-bg is an 8%-alpha tint meant for chips on solid
+        // surfaces; this banner floats over page content, so the tint is
+        // layered on an opaque base or the page bleeds through it.
+        '[background:linear-gradient(var(--color-primary-bg),var(--color-primary-bg)),var(--color-bg)]',
+        'border-2 border-[var(--color-primary)] rounded-[var(--radius-sm)] px-3 py-2 flex items-center gap-2')}
+      style={{ bottom: dockOffset }}
+    >
       <span className="min-w-0 flex-1">
         <span className="block font-mono text-[10px] uppercase tracking-[0.1em] text-[var(--color-primary)] font-bold">
           carrying {carried.length > 1 ? `· ${carried.length}` : ''}

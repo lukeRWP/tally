@@ -17,12 +17,15 @@
  * No @testing-library/jest-dom in this repo (see container-detail.bulk.test.tsx),
  * so assertions read raw DOM properties/attributes.
  */
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { toast } from '@/components/ui/toast';
 import { useLayoutMode } from '@/hooks/use-layout-mode';
+import { barOffsetCss } from '@/hooks/use-bottom-stack';
+import { useBottomBarStore } from '@/store/bottom-bar-store';
+import { useCarryStore } from '@/store/carry-store';
 import { RecycleBinList } from './recycle-bin-list';
 
 vi.mock('@/hooks/use-layout-mode', () => ({ useLayoutMode: vi.fn() }));
@@ -96,16 +99,28 @@ async function findRow(name: string): Promise<HTMLElement> {
   return p.closest('div')!.parentElement as HTMLElement;
 }
 
+function resetStores() {
+  useBottomBarStore.setState({ bars: {} });
+  useCarryStore.setState({ carried: [], lastMove: null, pinnedDest: null, lastDest: null });
+}
+
 beforeEach(() => {
   vi.mocked(useLayoutMode).mockReturnValue('touch');
   vi.mocked(toast).mockClear();
   vi.mocked(toast.success).mockClear();
+  resetStores();
 });
 
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
+  resetStores();
 });
+
+/** The select-mode action bar (same helper shape as container-detail's own tests). */
+function selectBar(): HTMLElement {
+  return screen.getByText(/^\d+ selected$/).closest('div') as HTMLElement;
+}
 
 test('Select turns on checkboxes; a row toggles selection and the bar tracks the count', async () => {
   vi.stubGlobal('fetch', makeFetchMock({}).fetchMock);
@@ -264,4 +279,67 @@ test('#239: a row toggle is inert while the restore loop runs, so a mid-loop cli
   expect(screen.getByRole('button', { name: 'Select Level' }).getAttribute('aria-pressed')).toBe('false');
   expect(screen.getByRole('button', { name: 'Select Drill' }).getAttribute('aria-pressed')).toBe('false');
   expect(screen.getByRole('button', { name: 'Select Sander' }).getAttribute('aria-pressed')).toBe('false');
+});
+
+// ── The shared bottom-stack model (use-bottom-stack.ts) ────────────────────
+// This bar is the SECOND copy the review found still computing its own
+// bottom offset in isolation from the carry banner. It now consumes the
+// same shared functions container-detail.tsx's select bar does — pinned
+// here the same way: registration in the shared store (so global chrome
+// like the toast layer and root-layout.tsx's <main> reserve can see this
+// page-local bar too) and an exact `style.bottom` match against
+// `barOffsetCss`, not a substring guess.
+
+test('the bar registers itself in the shared bottom-bar store while selecting, and unregisters on exit', async () => {
+  vi.stubGlobal('fetch', makeFetchMock({}).fetchMock);
+  renderList();
+  await screen.findByText('Drill');
+  expect(Object.keys(useBottomBarStore.getState().bars)).toHaveLength(0);
+
+  fireEvent.click(screen.getByRole('button', { name: 'Select' }));
+  expect(Object.keys(useBottomBarStore.getState().bars)).toHaveLength(1);
+
+  fireEvent.click(screen.getByRole('button', { name: 'Select' })); // exit (Cancel-equivalent)
+  expect(Object.keys(useBottomBarStore.getState().bars)).toHaveLength(0);
+});
+
+test('the bar\'s own offset matches the shared model, and moves once the carry banner is also showing', async () => {
+  vi.mocked(useLayoutMode).mockReturnValue('sidebar');
+  vi.stubGlobal('fetch', makeFetchMock({}).fetchMock);
+  renderList();
+  await screen.findByText('Drill');
+
+  fireEvent.click(screen.getByRole('button', { name: 'Select' }));
+  expect(selectBar().style.bottom).toBe(barOffsetCss({ touch: false, carrying: false }));
+
+  // CarryBanner (root-layout.tsx) renders whenever the store holds a carry —
+  // not mocked here, so setting real store state exercises the exact same
+  // `useCarryBannerShowing` (use-bottom-stack.ts) this bar reads.
+  act(() => { useCarryStore.getState().pickUp([{ id: 99, name: 'Something' }]); });
+
+  const carryingOffset = barOffsetCss({ touch: false, carrying: true });
+  expect(selectBar().style.bottom).toBe(carryingOffset);
+  expect(selectBar().style.bottom).not.toBe(barOffsetCss({ touch: false, carrying: false }));
+});
+
+// ── #267 twin: this page has the same toggle, the same scroll-key overlap ──
+
+test('#267 twin: activating select mode blurs the toggle, so the very next Space is not swallowed by it', async () => {
+  vi.stubGlobal('fetch', makeFetchMock({}).fetchMock);
+  renderList();
+  await screen.findByText('Drill');
+
+  const toggle = screen.getByRole('button', { name: 'Select' });
+  toggle.focus();
+  expect(document.activeElement).toBe(toggle);
+
+  fireEvent.click(toggle);
+
+  // Select mode is genuinely on (the bar is up)...
+  expect(screen.getByText('0 selected')).toBeTruthy();
+  // ...but the toggle no longer holds focus. A focused <button> treats Space
+  // as a click; left focused here, the next "scroll the list" Space keypress
+  // would re-fire this exact onClick and silently empty the selection.
+  expect(document.activeElement).not.toBe(toggle);
+  expect(document.activeElement).toBe(document.body);
 });
