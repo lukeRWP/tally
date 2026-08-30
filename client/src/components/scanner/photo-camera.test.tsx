@@ -67,6 +67,36 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+/*
+ * #280 — the shutter is on the thumb side of a tablet, not in the middle of
+ * the glass.
+ *
+ * A tablet is gripped at its two side bezels, so the thumbs land near the left
+ * and right EDGES. Measured with the shutter centred: at 1180x820 it sat 318px
+ * inside the right-hand thumb zone (and 542px inside the left's), at 820x1180
+ * 250px — on the one control you press WHILE aiming the device at a shelf, so
+ * pressing it means letting go with one hand.
+ *
+ * The placement is a token rather than a hard-coded side, because the answer
+ * differs by device and only CSS knows which one is rendering: --shutter-x is
+ * 50% everywhere (the phone's answer, and every native camera app's) and
+ * shifts right only under `(pointer: coarse) and (min-width: 768px)`. So the
+ * class is identical on every surface and jsdom cannot see the difference —
+ * the class IS the fix, and a hard-coded `left-1/2` is what regressing it
+ * looks like.
+ */
+test('#280 the shutter reads its x-position from --shutter-x, not a fixed centre', async () => {
+  const getUserMedia = vi.fn().mockResolvedValue(makeStream([makeTrack()]));
+  stubMediaDevices(getUserMedia);
+  render(<PhotoCamera onCapture={vi.fn()} onFallback={vi.fn()} />);
+  const shutter = await screen.findByRole('button', { name: /take photo/i });
+
+  expect(shutter.className).toContain('left-[var(--shutter-x)]');
+  expect(shutter.className.split(/\s+/)).not.toContain('left-1/2');
+  // The token is the button's CENTRE, so one translate serves both cases.
+  expect(shutter.className.split(/\s+/)).toContain('-translate-x-1/2');
+});
+
 test('(a) stream up → shutter draws the frame and hands a JPEG File to onCapture', async () => {
   const tracks = [makeTrack()];
   const getUserMedia = vi.fn().mockResolvedValue(makeStream(tracks));

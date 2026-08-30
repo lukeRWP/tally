@@ -79,6 +79,71 @@
   }
 }
 
+/* ── Where the shutter sits ──────────────────────────────────────────────
+ *
+ * The CENTRE of capture's shutter button, as an offset inside the viewfinder
+ * frame. Same shape as the tap tokens above: a hand-written media query
+ * (`pointer-coarse:` still emits nothing in this build), a value the call site
+ * reads back, and a default that leaves every existing surface alone.
+ *
+ *   50%  — the phone's answer, and every fine-pointer surface. A 390px-wide
+ *          phone held one-handed puts frame-centre inside the thumb's arc, and
+ *          it is where iOS/Android camera apps put it. Unchanged.
+ *
+ *   right — a COARSE pointer on a viewport wide enough that centre is not
+ *          reachable. A tablet is gripped at its two side bezels, so the thumbs
+ *          land near the left and right EDGES, not the middle: measured at
+ *          1180x820 the centred shutter sat 318px inside the right-hand thumb
+ *          zone and 542px inside the left's; at 820x1180, 250px. Those are not
+ *          near-misses, they are "put the tablet down and use the other hand"
+ *          — on the one control you press WHILE aiming the device at a shelf.
+ *
+ * 768px is the gate because it is the iPad's short edge: every phone in
+ * portrait is below it and stays centred, every tablet in either orientation
+ * is above it. calc(100% - 3.5rem) with the button's own -translate-x-1/2
+ * (w-16, so 32px back) lands its right edge at 100% - 24px, i.e. the frame's
+ * `right-6` — the same inset the rest of the flow's edge controls use.
+ */
+:root {
+  --shutter-x: 50%;
+}
+
+/* ── The scanner column's ceiling, off the landscape axis ────────────────
+ *
+ * A scanner wrapper is `flex flex-col flex-1 min-h-0` at every level — that
+ * chain is what lets CameraScanner's own frame grow, and it is not optional.
+ * What IS optional is a cap on top of it, and the two existing caps
+ * (capture step 2/3, /scan) were written as vh clamps gated on the LANDSCAPE
+ * tablet, because that is where a width-sized video stream runs away.
+ *
+ * Portrait never had one. There `flex-1` took the whole leftover column —
+ * 784px on capture step 2 at 820x1180, 851px on /scan — around a frame that
+ * stops at its own `max-h-[420px]`, so 300-380px of empty wrapper sat BELOW
+ * the control row and pushed the name field, Next and the typed-code field to
+ * y≈1020-1056: a couple of pixels above the bottom nav, for an eye that is on
+ * the viewfinder at y≈420.
+ *
+ * 472px is that column at its natural maximum — the 420px frame cap, the 8px
+ * gap-2, and a 44px control row (--tap-min). A CEILING, not a height: flex-1
+ * min-h-0 still shrinks it wherever there is less to give.
+ *
+ * `none` below 768px is not laziness, it is the point: a phone's scanner
+ * column is the primary flow and is already under this number, so it is left
+ * literally untouched rather than trusted to come in under a cap. 768px is
+ * the iPad's short edge — every phone in portrait is below it, every tablet
+ * in either orientation is above it. Same gate as --shutter-x.
+ */
+:root {
+  --scanner-max: none;
+}
+
+@media (pointer: coarse) and (min-width: 768px) {
+  :root {
+    --shutter-x: calc(100% - 3.5rem);
+    --scanner-max: 472px;
+  }
+}
+
 /* Dark mode */
 .dark {
   --color-bg: oklch(0.145 0 0);

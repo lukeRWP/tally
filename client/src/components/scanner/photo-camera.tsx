@@ -168,12 +168,18 @@ export function PhotoCamera({ onCapture, onFallback }: PhotoCameraProps) {
           </div>
         )}
 
+        {/* left is a token, not 1/2: --shutter-x is 50% everywhere except a
+            coarse pointer on a tablet-width viewport, where the thumbs are on
+            the side bezels and frame-centre is 250-540px out of reach. See
+            globals.css for the measurements and why 768px is the gate. The
+            -translate-x-1/2 stays either way — the token is the button's
+            CENTRE, so the same class positions both cases. */}
         <button
           type="button"
           aria-label="Take photo"
           disabled={!ready}
           onClick={shutter}
-          className="absolute bottom-3 left-1/2 -translate-x-1/2 z-10 w-16 h-16 rounded-full border-4 border-white bg-white/30 active:scale-95 transition-transform disabled:opacity-40"
+          className="absolute bottom-3 left-[var(--shutter-x)] -translate-x-1/2 z-10 w-16 h-16 rounded-full border-4 border-white bg-white/30 active:scale-95 transition-transform disabled:opacity-40"
         />
       </div>
 
