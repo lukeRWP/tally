@@ -226,11 +226,14 @@ export function Home() {
     return Number.isFinite(n) ? n : null;
   }, [selParam]);
   /**
-   * The query the cursor belongs to. A new query re-ranks (or replaces) the
-   * result set, so a stale id surviving into it could highlight an unrelated
-   * row that happens to share an id — the cursor must be dropped.
+   * The result set the cursor belongs to: query text AND the tag/condition/
+   * status filters, joined into one key (#307). Any one of them re-ranks or
+   * replaces the result set, so a stale id surviving a filter-only change
+   * could highlight — and, since #304's preview pane, fully render — a row
+   * that is no longer in the list. Narrowing filters after clicking a result
+   * is exactly this: `searchQuery` never changes, only the filters do.
    *
-   * Compared by VALUE rather than counting effect runs: the query the URL
+   * Compared by VALUE rather than counting effect runs: the key the URL
    * arrived with must not clear the cursor Back just restored (#270), and a
    * run-counter gets that wrong under StrictMode's deliberate second mount,
    * which replays effects with unchanged deps.
@@ -238,7 +241,9 @@ export function Home() {
    * The clear itself is folded into the URL-sync effect below rather than
    * living in an effect of its own — see there.
    */
-  const cursorQuery = React.useRef(searchQuery);
+  const cursorResultKey = React.useRef(
+    `${searchQuery} ${selectedTagIds.join(',')} ${selectedCondition ?? ''} ${selectedStatus}`,
+  );
   const moveHighlight = React.useCallback((delta: 1 | -1) => {
     if (resultIds.length === 0) return;
     const at = highlightedId == null ? -1 : resultIds.indexOf(highlightedId);
@@ -279,8 +284,8 @@ export function Home() {
   // params FROM state; nothing reads params back into state after mount, or
   // typing and navigation would fight each other.
   React.useEffect(() => {
-    // Dropping the ring's cursor on a query change belongs HERE, in the same
-    // write, not in an effect of its own (#270 review). React Router's
+    // Dropping the ring's cursor on a result-set change belongs HERE, in the
+    // same write, not in an effect of its own (#270 review). React Router's
     // functional setSearchParams hands the updater the params from its own
     // render's closure rather than the live URL, so two writers landing in
     // one effect flush both merge from the same stale snapshot — a separate
@@ -288,8 +293,15 @@ export function Home() {
     // snapshot that still had it, put it straight back. The URL then read
     // `?q=hammer&sel=2`: nothing ringed on screen, and Enter opening a row
     // from the PREVIOUS result set.
-    const queryChanged = cursorQuery.current !== searchQuery;
-    cursorQuery.current = searchQuery;
+    //
+    // The key covers query AND filters (#307): narrowing a tag/condition/
+    // status filter after clicking a result changes WHICH rows exist without
+    // touching `searchQuery`, so comparing on the query alone left `sel`
+    // pointing at a row no longer in the list — one #304's preview pane now
+    // renders in full.
+    const resultKey = `${searchQuery} ${selectedTagIds.join(',')} ${selectedCondition ?? ''} ${selectedStatus}`;
+    const resultSetChanged = cursorResultKey.current !== resultKey;
+    cursorResultKey.current = resultKey;
     // MERGE, do not rebuild. Building a fresh URLSearchParams from just this
     // screen's own keys would silently drop any unrelated param already in
     // the URL — see search.tsx's sync effect for the same reasoning.
@@ -299,7 +311,7 @@ export function Home() {
       if (selectedTagIds.length > 0) next.set('tags', selectedTagIds.join(',')); else next.delete('tags');
       if (selectedCondition) next.set('condition', selectedCondition); else next.delete('condition');
       if (selectedStatus !== 'all') next.set('status', selectedStatus); else next.delete('status');
-      if (queryChanged) next.delete('sel');
+      if (resultSetChanged) next.delete('sel');
       return next;
     }, { replace: true });
   }, [searchQuery, selectedTagIds, selectedCondition, selectedStatus, setSearchParams]);

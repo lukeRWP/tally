@@ -39,3 +39,24 @@ test('renders no back link when state.from is something else', () => {
   renderWithState({ from: 'search' });
   expect(screen.queryByRole('link', { name: /back to alerts/i })).toBeNull();
 });
+
+// #284 — a crumb was capped at 120px at every width, truncating on a 1440px
+// desk with 900px of empty rule beside it. The row already scrolls
+// horizontally for the phone case, so the cap only needs to hold below `lg`.
+test('a crumb is capped at 120px on touch but uncapped from lg up', () => {
+  render(
+    <MemoryRouter initialEntries={['/container/1']}>
+      <Routes>
+        <Route
+          path="/container/:id"
+          element={<Breadcrumbs items={[{ type: 'container', id: 1, name: 'Christmas decorations — loft bay 3' }]} />}
+        />
+      </Routes>
+    </MemoryRouter>,
+  );
+
+  const crumb = screen.getByRole('link', { name: 'Christmas decorations — loft bay 3' });
+  const classes = crumb.className.split(' ');
+  expect(classes).toContain('max-w-[120px]');
+  expect(classes).toContain('lg:max-w-none');
+});

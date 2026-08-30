@@ -2227,6 +2227,10 @@ function ManualCreate({
   /** A lookup in flight: the submit is disabled so the form cannot commit a
    *  draft the lookup is about to rewrite underneath it. */
   const [lookingUp, setLookingUp] = React.useState(false);
+  // #284: "drop one here" is inert on a finger — a coarse pointer cannot drag
+  // a file onto this panel, only tap it. The `onDragOver`/`onDrop` handlers
+  // stay wired for the fine-pointer desk case; only the label changes.
+  const coarse = useCoarsePointer();
   /**
    * What is literally in the quantity box, mid-edit. `null` means "follow the
    * draft" — the state the field is in before it is touched, after a blur, and
@@ -2609,7 +2613,7 @@ function ManualCreate({
           >
             <ImagePlus className="h-7 w-7 text-[var(--color-text-muted)]" />
             <span className="font-mono text-[10px] uppercase tracking-[0.08em] text-[var(--color-text-muted)]">
-              drop one here, or choose a file
+              {coarse ? 'choose a photo' : 'drop one here, or choose a file'}
             </span>
           </button>
         )}

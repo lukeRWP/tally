@@ -311,6 +311,11 @@ export function EntityForm({
             // fight it for control of `errors[field.name]`.
             const showSelect = !!field.options && !customFields[field.name];
             const selectReg = showSelect ? register(field.name) : null;
+            // #284: the message was a bare <span> — aria-invalid alone tells a
+            // screen-reader user the field is wrong, not why. `errId` ties the
+            // two together the same way for all three control variants below.
+            const errId = `${field.name}-err`;
+            const describedBy = invalid ? errId : undefined;
 
             return (
             <div key={field.name} className="flex flex-col gap-1">
@@ -323,6 +328,7 @@ export function EntityForm({
                 <Select
                   id={field.name}
                   aria-invalid={invalid}
+                  aria-describedby={describedBy}
                   className={errClass}
                   {...selectReg}
                   onChange={(e) => {
@@ -348,6 +354,7 @@ export function EntityForm({
                     placeholder="e.g. Wardrobe"
                     maxLength={TYPE_MAX}
                     aria-invalid={invalid}
+                    aria-describedby={describedBy}
                     className={errClass}
                     {...register(field.name)}
                   />
@@ -377,13 +384,14 @@ export function EntityForm({
                 // The server's own limit is 255.
                 maxLength={field.name === 'name' ? NAME_MAX : undefined}
                 aria-invalid={invalid}
+                aria-describedby={describedBy}
                 className={errClass}
                 {...register(field.name)}
               />
               )}
 
               {errors[field.name] && (
-                <span className="text-xs text-[var(--color-red)]">
+                <span id={errId} role="alert" className="text-xs text-[var(--color-red)]">
                   {(errors[field.name]?.message as string) || `${field.label} is required`}
                 </span>
               )}

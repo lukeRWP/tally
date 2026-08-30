@@ -790,7 +790,14 @@ export function ContainerDetail() {
           style={{ bottom: barOffsetCss({ touch: !wide, carrying: carryBannerShowing }) }}
         >
           <p className="font-mono text-xs uppercase tracking-[0.06em] text-[var(--color-text)] shrink-0 whitespace-nowrap tabular-nums">
-            {selected.size} selected
+            {/* #284: the ghost-pruning effect above drops rows from `selected`
+                as invalidated queries remove them mid-loop, so this count was
+                counting DOWN while the progress label below counted up — both
+                numbers true, together reading as a contradiction. `total` on
+                either progress object is set once per loop and never mutates,
+                so it is the batch size to freeze on rather than a second
+                tracked value. */}
+            {bulkRunning ? (deleteProgress?.total ?? tagProgress?.total ?? selected.size) : selected.size} selected
           </p>
           <Button variant="ghost" size="sm" onClick={handleSelectAll} disabled={bulkRunning}>
             All
