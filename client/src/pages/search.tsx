@@ -61,6 +61,20 @@ export function SearchPage() {
     return () => clearTimeout(t);
   }, [query]);
 
+  /**
+   * The result set the cursor (`?sel`) belongs to: query text AND the status
+   * chip, joined into one key (#307, mirroring home.tsx's identical ref). A
+   * status change re-ranks or replaces the result set exactly as a new query
+   * does, so a stale `sel` surviving either could point at a row no longer in
+   * the list — one #304's split view now renders a full preview of, rather
+   * than an invisible ring on a row that wasn't there.
+   *
+   * Seeded from the mount values so the cursor a Back navigation restores
+   * is not cleared by this same effect's first run (#270's rule, same as
+   * home.tsx).
+   */
+  const cursorResultKey = React.useRef(`${debounced} ${status ?? ''}`);
+
   // Mirror the settled query into the URL. `replace` keeps typing from
   // flooding history — Back always leaves the page, never rewinds keystrokes.
   React.useEffect(() => {
@@ -68,10 +82,21 @@ export function SearchPage() {
     // status alone, so it silently dropped every other param in the URL — the
     // selected result vanished on mount, and any param added later would have
     // gone the same way without anyone touching this line.
+    //
+    // The `sel` clear is folded into this same write rather than living in an
+    // effect of its own — react-router's functional setSearchParams hands the
+    // updater the params from its own render's closure, not the live URL, so
+    // two writers landing in one effect flush would merge from the same stale
+    // snapshot and the second would silently undo the first (see
+    // useNavCursorParam's header comment, and home.tsx's identical effect).
+    const resultKey = `${debounced} ${status ?? ''}`;
+    const resultSetChanged = cursorResultKey.current !== resultKey;
+    cursorResultKey.current = resultKey;
     setSearchParams((prev) => {
       const next = new URLSearchParams(prev);
       if (debounced) next.set('q', debounced); else next.delete('q');
       if (status) next.set('status', status); else next.delete('status');
+      if (resultSetChanged) next.delete('sel');
       return next;
     }, { replace: true });
   }, [debounced, status, setSearchParams]);
