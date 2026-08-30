@@ -46,6 +46,43 @@ test('area shares are supported by the service (the client just never rendered t
   assert.ok(env.area && env.area.name === 'Coat Closet');
 });
 
+// ── Public framing (#282) ───────────────────────────────────────────────────
+// The public page has to tell a stranger who shared this and when it stops
+// working. Both come off the share_links row that validate() already reads, so
+// the only new cost is a LEFT JOIN for the sharer's display name.
+
+test('validate() returns the sharer name and expiry the public page frames itself with', async () => {
+  const Sharing = serviceWith(() => [{
+    ENTITY_TYPE: 'container',
+    ENTITY_ID: 4,
+    CREATED_BY: 1,
+    CREATED_BY_NAME: 'Luke Turner',
+    EXPIRES_AT: '2026-09-05T00:00:00.000Z',
+    CREATED_AT: '2026-08-29T00:00:00.000Z',
+  }]);
+  const t = await Sharing.validate('tok');
+  assert.equal(t.entityType, 'container');
+  assert.equal(t.createdByName, 'Luke Turner');
+  assert.equal(t.expiresAt, '2026-09-05T00:00:00.000Z');
+});
+
+test('validate() joins users LEFT so a link outlives its creator row', async () => {
+  let seen = '';
+  const Sharing = serviceWith((sql) => {
+    seen = sql;
+    return [{ ENTITY_TYPE: 'item', ENTITY_ID: 9, CREATED_BY: 77, CREATED_BY_NAME: null, EXPIRES_AT: null, CREATED_AT: null }];
+  });
+  const t = await Sharing.validate('tok');
+  assert.match(seen, /LEFT JOIN TALLY\.users/i, 'must be a LEFT join — an INNER one would 404 the link');
+  assert.equal(t.createdByName, null, 'null, not the string "null" — the page omits the line');
+  assert.equal(t.expiresAt, null);
+});
+
+test('validate() still refuses an expired or unknown token', async () => {
+  const Sharing = serviceWith(() => []);
+  assert.equal(await Sharing.validate('nope'), null);
+});
+
 test('property share sends FLAT child arrays that carry parent ids for stitching', async () => {
   const Sharing = serviceWith((sql) => {
     if (/FROM TALLY\.properties/i.test(sql)) return [{ ID: 1, NAME: "Luke's Apartment" }];
