@@ -215,6 +215,35 @@ test('#279: the ring goes quiet while one of this page\'s own dialogs is open', 
   expect(navigateSpy).not.toHaveBeenCalled();            // went nowhere
 });
 
+test('#267 x #279: the Select toggle\'s own blur-on-activate and the ring\'s focus fusion do not interfere with each other', () => {
+  // #286 blurs the Select toggle the instant select mode turns on, so the
+  // very next Space (this page's scroll key) reaches the page instead of
+  // re-clicking the toggle. #293 fuses Tab-onto-a-row into the ring via a
+  // window `focusin` listener that is live in select mode too (the ring
+  // never switches off there any more). Neither reads or sets the other's
+  // focus target, but both fixes live in the exact same file and both moved
+  // focus around, so this pins that a select-mode Tab still lands the ring
+  // right after the toggle's own blur — not just that each works alone.
+  renderPage();
+  const toggle = screen.getByRole('button', { name: 'Select' });
+  toggle.focus();
+  fireEvent.click(toggle);
+
+  // #267: nothing holds focus once select mode is on.
+  expect(document.activeElement).not.toBe(toggle);
+  expect(document.activeElement).toBe(document.body);
+
+  // #279: Tab landing on a row still hands the ring its cursor.
+  fireEvent.focusIn(screen.getByRole('button', { name: 'Select Nested A' }));
+  expect(ringOn('Nested A')).toBe(true);
+
+  // And the ring's own Enter (not navigation) still ticks it, proving the
+  // fused cursor is the SAME one select mode's Enter branch reads.
+  fireEvent.keyDown(window, { key: 'Enter' });
+  expect(navigateSpy).not.toHaveBeenCalled();
+  expect(screen.getByText('1 selected')).toBeTruthy();
+});
+
 test('the ring is off entirely on touch chrome', () => {
   vi.mocked(useLayoutMode).mockReturnValue('touch');
   renderPage();
