@@ -15,7 +15,7 @@
  * the test has to be one too — character events into whatever holds focus,
  * and a terminating Enter that reaches the form's implicit submit.
  */
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router';
@@ -126,6 +126,74 @@ beforeEach(() => {
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
+});
+
+test('#264 follow-up: the FIRST scan of a session, with nothing clicked, is still a real product', async () => {
+  const fetchMock = makeCatalogueMock();
+  renderDesk(fetchMock);
+  const user = userEvent.setup();
+
+  const name = screen.getByPlaceholderText('Cordless drill') as HTMLInputElement;
+  const barcode = screen.getByPlaceholderText('Type or scan') as HTMLInputElement;
+
+  // Mount focuses Name — correct for a typist, and where a page load, a
+  // remount, or a tablet switching into typed mode always starts. Nothing is
+  // clicked here: the operator picks up a box and pulls the trigger.
+  await waitFor(() => expect(document.activeElement).toBe(name));
+  await user.keyboard('012345678905{Enter}');
+
+  // The submit refused a name that is nothing but a barcode and ran the
+  // lookup instead: no item was written, the code moved into its own field.
+  expect(callsTo(fetchMock, '/api/items/_y_/create')).toHaveLength(0);
+  await waitFor(() => expect(callsTo(fetchMock, '/api/products/_y_/lookup')).toHaveLength(1));
+  expect(callsTo(fetchMock, '/api/products/_y_/check-duplicate')).toHaveLength(1);
+  await waitFor(() => expect(barcode.value).toBe('012345678905'));
+
+  // …and the catalogue answer landed in Name, with the caret on it, so the
+  // operator's next Enter finishes the item exactly as the loop promises.
+  await screen.findByDisplayValue('DeWalt Cordless Drill');
+  await waitFor(() => expect(document.activeElement).toBe(name));
+  await user.keyboard('{Enter}');
+  await waitFor(() => expect(callsTo(fetchMock, '/api/items/_y_/create')).toHaveLength(1));
+  expect(bodiesOf(fetchMock, '/api/items/_y_/create')[0])
+    .toMatchObject({ name: 'DeWalt Cordless Drill', productId: 77, containerId: 42 });
+
+  // The rescue counts as a barcode-driven item, so the NEXT one starts in
+  // the barcode field — the operator never clicks anything all session.
+  await waitFor(() => expect(document.activeElement).toBe(barcode));
+});
+
+test('#264 follow-up: the guard is on the submit, so a mouse-clicked Create is rescued too', async () => {
+  const fetchMock = makeCatalogueMock();
+  renderDesk(fetchMock);
+
+  // A code pasted (or scanned) into Name, then Create clicked with the mouse
+  // — no Enter anywhere.
+  fireEvent.change(screen.getByPlaceholderText('Cordless drill'), { target: { value: '012345678905' } });
+  fireEvent.click(screen.getByRole('button', { name: /create item/i }));
+
+  await waitFor(() => expect(callsTo(fetchMock, '/api/products/_y_/lookup')).toHaveLength(1));
+  expect(callsTo(fetchMock, '/api/items/_y_/create')).toHaveLength(0);
+  await screen.findByDisplayValue('DeWalt Cordless Drill');
+});
+
+test('#264 follow-up: a name that only looks numeric is left alone once the barcode field is filled', async () => {
+  const fetchMock = makeCatalogueMock();
+  renderDesk(fetchMock);
+
+  // The barcode field already holds the code, so digits in Name are the
+  // user's own business — a model number, a serial. Nothing is rescued.
+  const barcode = screen.getByPlaceholderText('Type or scan');
+  fireEvent.change(barcode, { target: { value: '012345678905' } });
+  fireEvent.keyDown(barcode, { key: 'Enter' });
+  await screen.findByDisplayValue('DeWalt Cordless Drill');
+
+  const name = screen.getByPlaceholderText('Cordless drill');
+  fireEvent.change(name, { target: { value: '55512345' } });
+  fireEvent.click(screen.getByRole('button', { name: /create item/i }));
+
+  await waitFor(() => expect(callsTo(fetchMock, '/api/items/_y_/create')).toHaveLength(1));
+  expect(bodiesOf(fetchMock, '/api/items/_y_/create')[0]).toMatchObject({ name: '55512345', productId: 77 });
 });
 
 test('#264 two consecutive scanner creates: the second is the real product, not an item named its own barcode', async () => {

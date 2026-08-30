@@ -33,7 +33,7 @@ import { useCarryStore } from '@/store/carry-store';
 import type { Item } from '@/types/inventory';
 import { cn } from '@/lib/utils';
 import { useLayoutMode } from '@/hooks/use-layout-mode';
-import { useKeyboardNav, useNavScrollIntoView } from '@/hooks/use-keyboard-nav';
+import { useKeyboardNav, useNavCursorParam, useNavScrollIntoView } from '@/hooks/use-keyboard-nav';
 import { barOffsetCss, useCarryBannerShowing, useRegisterBottomBar } from '@/hooks/use-bottom-stack';
 
 export function ContainerDetail() {
@@ -127,22 +127,33 @@ export function ContainerDetail() {
    * (#231) shrinking the list right out from under it and silently ends up
    * pointing at whatever row now occupies that slot instead. Mirrors the
    * by-id ring in matches.tsx.
+   *
+   * Parked in `?nav` rather than useState (#270) so it survives the browse
+   * loop's own gesture: j to row 20, Enter, read, Back. Scroll restoration
+   * already returned the list to the exact pixel; a state cursor did not come
+   * back with it, and the next `j` silently re-seeded at row 1 hundreds of
+   * pixels above the viewport. The URL is what POP restores, so the two
+   * arrive together; every write is a same-pathname REPLACE, which
+   * use-scroll-restoration.ts deliberately leaves alone. Navigating bin → bin
+   * needs no reset any more — the new bin's URL simply carries no `?nav`.
    */
-  const [highlightedKey, setHighlightedKey] = useState<string | null>(null);
-
-  // Navigating bin -> bin keeps the component mounted (same as the select-mode
-  // reset above) — without this a highlighted row from the PREVIOUS bin would
-  // still point at something here, just not the thing the user was looking at.
-  useEffect(() => { setHighlightedKey(null); }, [id]);
+  const { cursor: highlightedKey, setCursor: setHighlightedKey } = useNavCursorParam('nav');
 
   // Reconcile only when the highlighted row itself is gone (bulk delete, or
   // any other removal) — a poll/refetch that leaves it in place, even under
   // a brand new array reference, must not touch the cursor at all.
+  //
+  // Gated on the lists having actually LOADED: a cursor restored from the URL
+  // lands on the mount commit, when `children`/`items` are still undefined
+  // and `visibleKeys` is empty — reconciling there would clear the restored
+  // cursor before the rows it names have ever rendered.
+  const listsLoaded = children != null && items != null;
   useEffect(() => {
+    if (!listsLoaded) return;
     if (highlightedKey != null && !visibleKeys.includes(highlightedKey)) {
       setHighlightedKey(null);
     }
-  }, [visibleKeys, highlightedKey]);
+  }, [listsLoaded, visibleKeys, highlightedKey, setHighlightedKey]);
 
   const moveHighlight = React.useCallback((delta: 1 | -1) => {
     if (visibleKeys.length === 0) return;
@@ -151,24 +162,57 @@ export function ContainerDetail() {
       ? (delta === 1 ? 0 : visibleKeys.length - 1)
       : Math.min(visibleKeys.length - 1, Math.max(0, at + delta));
     setHighlightedKey(visibleKeys[next]);
-  }, [visibleKeys, highlightedKey]);
+  }, [visibleKeys, highlightedKey, setHighlightedKey]);
 
   const highlighted = highlightedKey != null
     ? visibleOrder[visibleKeys.indexOf(highlightedKey)] ?? null
     : null;
 
+  /**
+   * Any of this page's own overlays being up. `createType` is the shared
+   * create form (one dialog for both kinds); `fabOpen` is the create menu,
+   * which owns Escape and arrow keys of its own while it is open.
+   */
+  const dialogOpen = createType !== null || fabOpen || printOpen || shareOpen
+    || deleteOpen || bulkDeleteOpen || bulkTagOpen;
+
   useKeyboardNav({
-    // Off while the batch-select checkboxes are up — Enter jumping to a whole
-    // other page would fight the "pick several, then act" flow that mode is
-    // for, and off entirely on touch chrome, where there is no keyboard.
-    enabled: wide && !selecting,
+    // Off on touch chrome, where there is no keyboard to serve. Select mode
+    // no longer switches the whole ring off (#279): gating `enabled` on
+    // `!selecting` took `onMove` down with `onOpen` while the ring stayed
+    // PAINTED, so the highlight sat there looking live and answered nothing.
+    // Enter's select-mode branch below is what the old guard was really for —
+    // Enter must not navigate away mid-selection — and with it in place
+    // moving the cursor is free, which turns "tick 12 scattered rows" into
+    // j j j <Enter> with no mouse at all.
+    //
+    // What `!selecting` WAS incidentally covering is now covered on purpose:
+    // this page's dialogs. Bulk delete/tag only open in select mode, so the
+    // old guard kept the ring off under them by accident. Enter belongs to
+    // the dialog's own buttons while one is up, and `/` must not navigate
+    // the page out from under it. Same guard item-detail.tsx uses.
+    enabled: wide && !dialogOpen,
     onMove: moveHighlight,
     onOpen: () => {
       if (!highlighted) return false;
+      if (selecting) {
+        toggleSelected(`${highlighted.type}:${highlighted.id}`);
+        return true;
+      }
       navigate(highlighted.type === 'container' ? `/container/${highlighted.id}` : `/item/${highlighted.id}`);
       return true;
     },
     onEscape: () => setHighlightedKey(null),
+    // Tab onto a row IS a cursor move (#279): the ring and the app-wide focus
+    // outline used to mark two different rows and Enter opened the ring's, so
+    // they are fused rather than refereed. Unknown ids (a row from a stale
+    // render) are ignored.
+    onFocusRow: (navId) => {
+      if (visibleKeys.includes(navId)) setHighlightedKey(navId);
+    },
+    // '/' was dead on the surface a desk browse spends the MOST time in — the
+    // leaf of every areas → area → bin walk (#279). Matches areas.tsx.
+    onSearch: () => navigate('/search'),
   });
   // Keeps the cursor on screen in a bin longer than the viewport (#235) — the
   // row wrappers below carry the matching data-nav-id (same (type, id) key).

@@ -149,3 +149,103 @@ test('a move to a cursor with no rendered row is a silent no-op', () => {
   rerender(<ScrollProbe id="item:99" />);
   expect(scrollSpy).not.toHaveBeenCalled();
 });
+
+// ── Escape: two jobs, one per press (#271) ───────────────────────────────
+
+test('Escape from a FIELD only blurs — the selection survives the press', () => {
+  // The whole defect: /search restores its cursor from ?sel, autoFocus puts
+  // focus in the query box, and the only gesture that leaves the box used to
+  // clear the cursor in the same handler.
+  const onEscape = vi.fn();
+  render(<Nav onEscape={onEscape} />);
+  const field = document.createElement('input');
+  document.body.appendChild(field);
+  field.focus();
+
+  fireEvent.keyDown(field, { key: 'Escape' });
+
+  expect(document.activeElement).not.toBe(field);
+  expect(onEscape).not.toHaveBeenCalled();
+
+  // Second press, now from outside the field, is the one that backs out.
+  fireEvent.keyDown(window, { key: 'Escape' });
+  expect(onEscape).toHaveBeenCalledTimes(1);
+
+  document.body.removeChild(field);
+});
+
+// ── Focus fusion: Tab MOVES the ring (#279) ──────────────────────────────
+
+function FocusProbe({ onFocusRow, enabled = true }: {
+  onFocusRow: (navId: string) => void; enabled?: boolean;
+}) {
+  useKeyboardNav({ onFocusRow, enabled });
+  return (
+    <div>
+      <div data-nav-id="item:601"><button type="button">Row 1</button></div>
+      <div data-nav-id="item:620"><button type="button">Row 20</button></div>
+      <button type="button">Not a row</button>
+    </div>
+  );
+}
+
+test('focus landing anywhere inside a row hands the ring that row\'s data-nav-id', () => {
+  const onFocusRow = vi.fn();
+  render(<FocusProbe onFocusRow={onFocusRow} />);
+
+  // The focusable thing is the row's inner button; the marker is on the
+  // wrapper — the nearest ancestor carrying one is what counts.
+  fireEvent.focusIn(screen.getByText('Row 1'));
+  expect(onFocusRow).toHaveBeenCalledWith('item:601');
+
+  fireEvent.focusIn(screen.getByText('Row 20'));
+  expect(onFocusRow).toHaveBeenLastCalledWith('item:620');
+});
+
+test('a row\'s secondary control (data-nav-ignore) neither moves the ring nor loses Enter', () => {
+  // The areas tree's expand chevron: it lives inside a ringed row but is not
+  // what the row's Enter means. Fusing from it would move the cursor onto a
+  // bin the user was only expanding, and claiming Enter would open that bin
+  // instead of expanding it.
+  const onFocusRow = vi.fn();
+  const onOpen = vi.fn(() => true);
+  render(
+    <>
+      <Nav onFocusRow={onFocusRow} onOpen={onOpen} />
+      <div data-nav-id="42">
+        <button type="button" data-nav-ignore="">Expand</button>
+        <button type="button">Bin 42</button>
+      </div>
+    </>,
+  );
+
+  const chevron = screen.getByText('Expand');
+  fireEvent.focusIn(chevron);
+  expect(onFocusRow).not.toHaveBeenCalled();
+
+  // Enter stays the chevron's — un-prevented, and the ring never consulted.
+  expect(fireEvent.keyDown(chevron, { key: 'Enter' })).toBe(true);
+  expect(onOpen).not.toHaveBeenCalled();
+
+  // The row's own button is unaffected on both counts.
+  fireEvent.focusIn(screen.getByText('Bin 42'));
+  expect(onFocusRow).toHaveBeenCalledWith('42');
+  expect(fireEvent.keyDown(screen.getByText('Bin 42'), { key: 'Enter' })).toBe(false);
+  expect(onOpen).toHaveBeenCalledTimes(1);
+});
+
+test('focus outside any row leaves the ring alone', () => {
+  const onFocusRow = vi.fn();
+  render(<FocusProbe onFocusRow={onFocusRow} />);
+
+  fireEvent.focusIn(screen.getByText('Not a row'));
+  expect(onFocusRow).not.toHaveBeenCalled();
+});
+
+test('focus fusion is off with the rest of the ring (touch chrome)', () => {
+  const onFocusRow = vi.fn();
+  render(<FocusProbe onFocusRow={onFocusRow} enabled={false} />);
+
+  fireEvent.focusIn(screen.getByText('Row 1'));
+  expect(onFocusRow).not.toHaveBeenCalled();
+});

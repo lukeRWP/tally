@@ -22,8 +22,13 @@
  * queued/searching) can land in between. matches.tsx satisfies this with a
  * `rowsRef` kept current via a `useEffect`, read inside the onSuccess
  * callback instead of the render-scoped `rows`.
+ *
+ * #278 update: bulk-clear now confirms before firing (it has no undo, unlike
+ * the recycle-bin deletes it sits next to) and continues past a mid-loop
+ * failure instead of bailing, matching container-detail's and recycle-bin's
+ * bulk loops. The confirm/cancel/continue-on-failure tests below cover that.
  */
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { toast } from '@/components/ui/toast';
@@ -228,7 +233,39 @@ test('the bulk-clear button only appears when there are none/failed rows, with t
   expect(screen.getByRole('button', { name: 'Clear 2 failed' })).toBeTruthy();
 });
 
-test('(f) bulk-clear fires sequential dismiss calls, tracks progress, and toasts one outcome', async () => {
+// Clicking the trigger opens a confirm (#278) — it no longer fires the
+// dismiss loop directly. Every test below clicks through it first.
+function openAndConfirmBulkClear() {
+  fireEvent.click(screen.getByRole('button', { name: /Clear \d+ failed/ }));
+  const dialog = screen.getByRole('dialog');
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Clear' }));
+}
+
+test('the bulk-clear trigger opens a confirm naming the count, with no-undo copy, before anything fires', () => {
+  currentRows = [makeRow(1, 'none'), makeRow(2, 'failed'), makeRow(3, 'failed')];
+  renderMatches();
+
+  fireEvent.click(screen.getByRole('button', { name: 'Clear 3 failed' }));
+
+  const dialog = screen.getByRole('dialog');
+  expect(within(dialog).getByText('Clear 3 failed lookups?')).toBeTruthy();
+  expect(within(dialog).getByText(/leave the worklist/i)).toBeTruthy();
+  expect(mutateAsyncMock).not.toHaveBeenCalled();
+});
+
+test('cancelling the bulk-clear confirm is a no-op', () => {
+  currentRows = [makeRow(1, 'none'), makeRow(2, 'failed'), makeRow(3, 'failed')];
+  renderMatches();
+
+  fireEvent.click(screen.getByRole('button', { name: 'Clear 3 failed' }));
+  const dialog = screen.getByRole('dialog');
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+
+  expect(screen.queryByRole('dialog')).toBeNull();
+  expect(mutateAsyncMock).not.toHaveBeenCalled();
+});
+
+test('(f) confirming bulk-clear fires sequential dismiss calls, tracks progress, and toasts one outcome', async () => {
   currentRows = [makeRow(1, 'ready'), makeRow(2, 'none'), makeRow(3, 'failed'), makeRow(4, 'failed')];
   const deferred: ReturnType<typeof makeDeferred<unknown>>[] = [];
   mutateAsyncMock.mockImplementation(() => {
@@ -238,8 +275,7 @@ test('(f) bulk-clear fires sequential dismiss calls, tracks progress, and toasts
   });
 
   renderMatches();
-
-  fireEvent.click(screen.getByRole('button', { name: 'Clear 3 failed' }));
+  openAndConfirmBulkClear();
 
   await waitFor(() => expect(mutateAsyncMock).toHaveBeenCalledTimes(1));
   expect(mutateAsyncMock).toHaveBeenNthCalledWith(1, { id: 2, dismiss: true });
@@ -262,18 +298,19 @@ test('(f) bulk-clear fires sequential dismiss calls, tracks progress, and toasts
   expect((screen.getByRole('button', { name: 'Clear 3 failed' }) as HTMLButtonElement).disabled).toBe(false);
 });
 
-test('(f) a mid-loop bulk-clear failure stops and toasts a truthful partial count', async () => {
+test('(f) a mid-loop bulk-clear failure continues through the rest and toasts a truthful split count', async () => {
   currentRows = [makeRow(1, 'none'), makeRow(2, 'failed'), makeRow(3, 'failed')];
   mutateAsyncMock
     .mockResolvedValueOnce(undefined)
-    .mockRejectedValueOnce(new Error('network blip'));
+    .mockRejectedValueOnce(new Error('network blip'))
+    .mockResolvedValueOnce(undefined);
 
   renderMatches();
+  openAndConfirmBulkClear();
 
-  fireEvent.click(screen.getByRole('button', { name: 'Clear 3 failed' }));
-
-  await waitFor(() => expect(toast).toHaveBeenCalledWith('Cleared 1 of 3'));
-  // Stopped after the failure — the third row was never attempted.
-  expect(mutateAsyncMock).toHaveBeenCalledTimes(2);
+  await waitFor(() => expect(toast).toHaveBeenCalledWith('Cleared 2 · 1 failed'));
+  // All three were attempted — the loop does not stop at the failure
+  // (container-detail's and recycle-bin's discipline, #278).
+  expect(mutateAsyncMock).toHaveBeenCalledTimes(3);
   expect((screen.getByRole('button', { name: 'Clear 3 failed' }) as HTMLButtonElement).disabled).toBe(false);
 });
