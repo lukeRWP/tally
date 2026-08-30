@@ -1140,6 +1140,20 @@ export function Capture() {
     setPhase('place');
   }
 
+  /**
+   * #268: the scanner's `Close` — 8px from `Stop`, same size, same weight —
+   * is dropped on a finger-driven screen.
+   *
+   * `Stop` pauses the decode loop and is one tap to undo. `Close` unmounts
+   * Capture, taking the held photo Blob, the typed name and any Kept vision
+   * fields with it, no confirm and no undo. Adjacent identical 32px controls,
+   * one benign and one destructive, is a mis-tap waiting to happen every
+   * scanning session. A coarse pointer already has two safer ways out — the
+   * draft strip's Discard and the browser's own back — so the destructive one
+   * simply is not offered there. A mouse keeps it: a cursor does not slip 8px.
+   */
+  const scannerClose = coarse ? undefined : () => navigate(-1);
+
   return (
     <div className={cn(
       'flex flex-col gap-3 mx-auto h-full',
@@ -1170,7 +1184,15 @@ export function Capture() {
               type="button"
               aria-label={`Back to ${STEP_LABEL[n]}`}
               onClick={() => setPhase(STEP_PHASE[n])}
-              className="p-1 -m-1"
+              // `flex` is load-bearing, not decoration (#273): the dot is a
+              // <span>, and inside a plain block button it is an ordinary
+              // INLINE child, where the dotClass width/height do not apply —
+              // it rendered 0x0 inside an 8x8 button, so the completed step
+              // vanished from the row and #229's way back was invisible.
+              // Blockifying it as a flex item paints it again; p-2 -m-2 is
+              // what makes the target big enough for a finger without moving
+              // anything around it.
+              className="flex p-2 -m-2"
             >
               <span className={dotClass} />
             </button>
@@ -1514,7 +1536,7 @@ export function Capture() {
               <ProductScanner
                 label={busy ?? 'Scan product barcode'}
                 onBarcode={handleCode}
-                onClose={() => navigate(-1)}
+                onClose={scannerClose}
               />
             </div>
           ) : (
@@ -1522,7 +1544,7 @@ export function Capture() {
               <TagScanner
                 label={busy ?? 'Scan tote/area tag'}
                 onTag={handleCode}
-                onClose={() => navigate(-1)}
+                onClose={scannerClose}
               />
             </div>
           )}

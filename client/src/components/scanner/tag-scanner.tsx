@@ -23,7 +23,8 @@ export function TagScanner({
   label = 'Scan tote/area tag',
 }: {
   onTag: (code: string) => void;
-  onClose: () => void;
+  /** Optional — see CameraScanner's own onClose (#268). */
+  onClose?: () => void;
   isActive?: boolean;
   label?: string;
 }) {
