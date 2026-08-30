@@ -182,7 +182,7 @@ export function PhotoCamera({ onCapture, onFallback }: PhotoCameraProps) {
       <button
         type="button"
         onClick={onFallback}
-        className="self-center min-h-[36px] px-3 font-mono text-[10px] uppercase tracking-[0.08em] text-[var(--color-text-muted)] underline decoration-dotted"
+        className="self-center min-h-[max(36px,var(--tap-min))] px-3 font-mono text-[10px] uppercase tracking-[0.08em] text-[var(--color-text-muted)] underline decoration-dotted"
       >
         Use system camera
       </button>

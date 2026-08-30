@@ -28,7 +28,7 @@ export function PropertyChips({
           aria-pressed={value === p.id}
           onClick={() => onChange(p.id)}
           className={cn(
-            'shrink-0 whitespace-nowrap rounded-full border px-3 min-h-[32px] font-mono text-[10px] uppercase tracking-[0.08em] transition-colors',
+            'shrink-0 whitespace-nowrap rounded-full border px-3 min-h-[max(32px,var(--tap-min))] font-mono text-[10px] uppercase tracking-[0.08em] transition-colors',
             value === p.id
               ? 'bg-[var(--color-text)] text-[var(--color-bg)] border-[var(--color-text)]'
               : 'border-[var(--color-rule)] text-[var(--color-text-secondary)] hover:bg-[var(--color-elevated)]',

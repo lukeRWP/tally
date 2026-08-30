@@ -144,7 +144,7 @@ export function DestinationPicker({
             type="button"
             aria-label="Close"
             onClick={onClose}
-            className="min-w-[32px] min-h-[32px] flex items-center justify-center text-[var(--color-text-muted)]"
+            className="min-w-[max(32px,var(--tap-min))] min-h-[max(32px,var(--tap-min))] flex items-center justify-center text-[var(--color-text-muted)]"
           >
             <X className="w-4 h-4" />
           </button>
@@ -158,7 +158,7 @@ export function DestinationPicker({
               setPropertyId(Number(e.target.value));
               setAreaId(0);
             }}
-            className="w-full min-h-[40px] px-2 rounded-[var(--radius-sm)] border border-[var(--color-rule)] bg-[var(--color-bg)] text-sm shrink-0"
+            className="w-full min-h-[max(40px,var(--tap-min))] px-2 rounded-[var(--radius-sm)] border border-[var(--color-rule)] bg-[var(--color-bg)] text-sm shrink-0"
           >
             <option value={0}>Property…</option>
             {properties?.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
@@ -169,7 +169,7 @@ export function DestinationPicker({
           value={areaId}
           onChange={(e) => { seeded.current = true; setAreaId(Number(e.target.value)); }}
           disabled={!propertyId}
-          className="w-full min-h-[40px] px-2 rounded-[var(--radius-sm)] border border-[var(--color-rule)] bg-[var(--color-bg)] text-sm disabled:opacity-50 shrink-0"
+          className="w-full min-h-[max(40px,var(--tap-min))] px-2 rounded-[var(--radius-sm)] border border-[var(--color-rule)] bg-[var(--color-bg)] text-sm disabled:opacity-50 shrink-0"
         >
           <option value={0}>Area…</option>
           {areas?.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}

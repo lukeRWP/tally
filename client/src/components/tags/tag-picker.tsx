@@ -143,7 +143,10 @@ export function TagPicker({ entityType, entityId, propertyId, batchMode }: TagPi
           variant="outline"
           size="sm"
           onClick={() => setDropdownOpen((v) => !v)}
-          className="h-6 px-2 text-xs gap-1"
+          // This height OVERRIDES the sm variant's (tailwind-merge keeps the
+          // last `h-*`), so it has to carry the tap floor itself or the one
+          // control that adds a tag stays 24px on a tablet.
+          className="h-[max(1.5rem,var(--tap-min))] px-2 text-xs gap-1"
         >
           <Plus className="w-3 h-3" />
           Add tag
@@ -162,7 +165,7 @@ export function TagPicker({ entityType, entityId, propertyId, batchMode }: TagPi
                     key={tag.id}
                     type="button"
                     onClick={() => handleAddTag(tag.id)}
-                    className="flex items-center gap-2.5 px-2 py-1.5 rounded-[var(--radius-md)] hover:bg-[var(--color-elevated)] text-left transition-all duration-150 w-full"
+                    className="flex items-center gap-2.5 px-2 py-1.5 min-h-[var(--tap-min)] rounded-[var(--radius-md)] hover:bg-[var(--color-elevated)] text-left transition-all duration-150 w-full"
                   >
                     <div
                       className="w-3 h-3 rounded-sm shrink-0"
@@ -212,7 +215,7 @@ export function TagPicker({ entityType, entityId, propertyId, batchMode }: TagPi
                 size="sm"
                 onClick={handleCreateTag}
                 disabled={!newTagName.trim() || createTag.isPending}
-                className="h-7 text-xs w-full"
+                className="h-[max(1.75rem,var(--tap-min))] text-xs w-full"
               >
                 <Plus className="w-3 h-3" />
                 Create & Apply

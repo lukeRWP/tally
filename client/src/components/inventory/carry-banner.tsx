@@ -111,7 +111,7 @@ export function CarryBanner() {
           type="button"
           onClick={undo}
           disabled={moveItem.isPending || moveContainer.isPending}
-          className="shrink-0 inline-flex items-center gap-1 border border-[var(--color-primary)] text-[var(--color-primary)] rounded-[var(--radius-sm)] px-2 min-h-[32px] font-mono text-[10px] font-bold uppercase tracking-[0.06em] disabled:opacity-50"
+          className="shrink-0 inline-flex items-center gap-1 border border-[var(--color-primary)] text-[var(--color-primary)] rounded-[var(--radius-sm)] px-2 min-h-[max(32px,var(--tap-min))] font-mono text-[10px] font-bold uppercase tracking-[0.06em] disabled:opacity-50"
         >
           <Undo2 className="w-3.5 h-3.5" />
           Undo
@@ -120,7 +120,7 @@ export function CarryBanner() {
           type="button"
           aria-label="Dismiss"
           onClick={clearLastMove}
-          className="shrink-0 min-w-[32px] min-h-[32px] inline-flex items-center justify-center text-[var(--color-text-muted)]"
+          className="shrink-0 min-w-[max(32px,var(--tap-min))] min-h-[max(32px,var(--tap-min))] inline-flex items-center justify-center text-[var(--color-text-muted)]"
         >
           <X className="w-4 h-4" />
         </button>
@@ -157,7 +157,7 @@ export function CarryBanner() {
       <button
         type="button"
         onClick={() => navigate('/move')}
-        className="shrink-0 inline-flex items-center gap-1 bg-[var(--color-primary)] text-white rounded-[var(--radius-sm)] px-2.5 min-h-[34px] font-mono text-[10px] font-bold uppercase tracking-[0.06em]"
+        className="shrink-0 inline-flex items-center gap-1 bg-[var(--color-primary)] text-white rounded-[var(--radius-sm)] px-2.5 min-h-[max(34px,var(--tap-min))] font-mono text-[10px] font-bold uppercase tracking-[0.06em]"
       >
         <ScanLine className="w-3.5 h-3.5" />
         {carried.some((c) => c.kind === 'container') ? 'Scan dest' : 'Scan bin'}
@@ -166,7 +166,7 @@ export function CarryBanner() {
         type="button"
         aria-label="Put down"
         onClick={clear}
-        className="shrink-0 min-w-[32px] min-h-[32px] inline-flex items-center justify-center text-[var(--color-primary)]"
+        className="shrink-0 min-w-[max(32px,var(--tap-min))] min-h-[max(32px,var(--tap-min))] inline-flex items-center justify-center text-[var(--color-primary)]"
       >
         <X className="w-4 h-4" />
       </button>

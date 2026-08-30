@@ -125,7 +125,7 @@ function TagMultiSelect({
             onClick={() => toggle(tag.id)}
             className={cn(
               // Filter chips stay pills; only badges and buttons are squared.
-              'inline-flex items-center gap-1.5 rounded-full border px-3 min-h-[32px] font-mono text-[10px] uppercase tracking-[0.08em] transition-colors',
+              'inline-flex items-center gap-1.5 rounded-full border px-3 min-h-[max(32px,var(--tap-min))] font-mono text-[10px] uppercase tracking-[0.08em] transition-colors',
               on
                 ? 'bg-[var(--color-text)] text-[var(--color-bg)] border-[var(--color-text)]'
                 : 'border-[var(--color-rule)] text-[var(--color-text-secondary)] hover:bg-[var(--color-elevated)]',

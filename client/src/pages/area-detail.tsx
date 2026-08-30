@@ -147,7 +147,7 @@ export function AreaDetail() {
                   onClick={handleLabelAllBins}
                   aria-label="Label all bins"
                   title="Stage a label for every top-level bin in this area — nested bins stage from their parent bin's page"
-                  className="-my-1 px-1 min-h-[28px] inline-flex items-center text-[var(--color-primary)] hover:opacity-80"
+                  className="-my-1 px-1 min-h-[max(28px,var(--tap-min))] inline-flex items-center text-[var(--color-primary)] hover:opacity-80"
                 >
                   Label all ›
                 </button>
@@ -155,7 +155,7 @@ export function AreaDetail() {
               <button
                 type="button"
                 onClick={() => setCreateOpen(true)}
-                className="-my-1 px-1 min-h-[28px] inline-flex items-center text-[var(--color-primary)] hover:opacity-80"
+                className="-my-1 px-1 min-h-[max(28px,var(--tap-min))] inline-flex items-center text-[var(--color-primary)] hover:opacity-80"
               >
                 + Add
               </button>

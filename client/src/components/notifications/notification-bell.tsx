@@ -10,7 +10,7 @@ export function NotificationBell() {
   return (
     <button
       type="button"
-      className="relative p-2"
+      className="relative p-2 inline-flex items-center justify-center min-h-[var(--tap-min)] min-w-[var(--tap-min)]"
       onClick={() => navigate('/notifications')}
       aria-label={unread > 0 ? `${unread} unread notifications` : 'Notifications'}
     >

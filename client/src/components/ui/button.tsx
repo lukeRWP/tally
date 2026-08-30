@@ -24,11 +24,17 @@ const buttonVariants = cva(
         destructive:
           'bg-[var(--color-red)] text-white border-[var(--color-red)] hover:opacity-85',
       },
+      // Heights are `max(<desk height>, var(--tap-min))`, not bare `h-8`/`h-9`:
+      // --tap-min is 0 under a fine pointer, so a desk gets the identical
+      // 32/36/44/36 it always did, and 44px under a coarse one, so the same
+      // button is a finger target on a tablet without a single call site
+      // passing size="lg". `icon` takes it on BOTH axes — a 36px square is
+      // still a miss at 44px tall. See globals.css → Touch targets.
       size: {
-        sm: 'h-8 px-3 text-[11px]',
-        md: 'h-9 px-4 text-xs',
-        lg: 'h-11 px-6 text-sm',
-        icon: 'h-9 w-9 p-0 text-sm',
+        sm: 'h-[max(2rem,var(--tap-min))] px-3 text-[11px]',
+        md: 'h-[max(2.25rem,var(--tap-min))] px-4 text-xs',
+        lg: 'h-[max(2.75rem,var(--tap-min))] px-6 text-sm',
+        icon: 'h-[max(2.25rem,var(--tap-min))] w-[max(2.25rem,var(--tap-min))] p-0 text-sm',
       },
     },
     defaultVariants: {

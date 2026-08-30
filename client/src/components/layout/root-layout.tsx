@@ -115,7 +115,11 @@ function Sidebar() {
           <DropdownMenuTrigger asChild>
             <button
               aria-label="Add"
-              className="w-full flex items-center gap-2 px-3 py-2.5 rounded-[var(--radius-sm)] bg-[var(--color-primary)] text-white font-mono text-xs font-bold uppercase tracking-[0.12em] hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-[var(--color-text)] focus:ring-offset-2"
+              // This rail is the ONLY nav an iPad in landscape gets (there is
+              // no bottom nav there), so its rows are finger targets on a
+              // coarse pointer — 36/40px from padding alone at a desk, floored
+              // to 44 on touch. See globals.css → Touch targets.
+              className="w-full flex items-center gap-2 px-3 py-2.5 min-h-[var(--tap-min)] rounded-[var(--radius-sm)] bg-[var(--color-primary)] text-white font-mono text-xs font-bold uppercase tracking-[0.12em] hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-[var(--color-text)] focus:ring-offset-2"
             >
               <Plus className="w-4 h-4 shrink-0" />
               <span>Add</span>
@@ -151,7 +155,7 @@ function Sidebar() {
               onClick={() => navigate(item.path)}
               aria-current={isActive ? 'page' : undefined}
               className={cn(
-                'flex items-center gap-3 w-full px-3 py-2.5 rounded-[var(--radius-sm)] font-mono text-xs font-bold uppercase tracking-[0.08em] transition-colors duration-150',
+                'flex items-center gap-3 w-full px-3 py-2.5 min-h-[var(--tap-min)] rounded-[var(--radius-sm)] font-mono text-xs font-bold uppercase tracking-[0.08em] transition-colors duration-150',
                 isActive
                   ? 'bg-[var(--color-text)] text-[var(--color-bg)]'
                   : 'text-[var(--color-text-secondary)] hover:bg-[var(--color-elevated)] hover:text-[var(--color-text)]',
