@@ -115,7 +115,9 @@ tally/
 │   ├── init/
 │   │   ├── 001_TALLY_Init.sql    # Full schema: 21 tables
 │   │   └── 002_apply_migrations.sh # Applies SQL/migrations/ after the base schema in local dev
-│   └── migrations/               # 001–010 (see Database → Migrations)
+│   ├── migrations/               # 001–011 (see Database → Migrations)
+│   ├── ci/migration-gate.sh      # CI migration gate — chain applied twice + schema diff (rule 9)
+│   └── expected-schema.sql       # GENERATED. Regenerate with `SQL/ci/migration-gate.sh --write`
 ├── docker-compose.yml            # 5 services: tally-db, tally-minio, tally-server, tally-client, tally-vault (no nginx locally)
 ├── Taskfile.yml
 ├── .env.template
@@ -316,6 +318,7 @@ Key design patterns:
 | 008 | product matches (vision queue) |
 | 009 | printer agent `CREATED_BY` tether |
 | 010 | items indexes |
+| 011 | share-link disclosure choices (`share_links.DISCLOSURE` JSON; NULL = share everything) |
 
 ## Authentication
 
@@ -484,7 +487,7 @@ Labels can be queued for automatic printing on a USB thermal printer (Munbyn ITP
 ### CI/CD (GitHub Actions + PW Orchestrator)
 
 **Workflows:**
-- **`ci.yml`** — runs on every pull request: client (`tsc --noEmit`, ESLint, `npm test` = vitest, `npm run build`), server (ESLint, syntax check, `npm test` = `node --test`), `npm audit --production --audit-level=high`. Blocks merge on failure.
+- **`ci.yml`** — runs on every pull request: client (`tsc --noEmit`, ESLint, `npm test` = vitest, `npm run build`), server (ESLint, syntax check, `npm test` = `node --test`), `npm audit --production --audit-level=high`, and the **Migration Gate** (rule 9). Blocks merge on failure.
 - **`build.yml`** — runs on push to `master`: builds client/server/db tarballs on the self-hosted runner (debug artifacts only — the orchestrator does its OWN build from a fresh git clone), then triggers `POST /api/_y_/apps/tally/envs/prod/v2/deploy` and polls the operation.
 - **`gitleaks.yml`** / **`trivy.yml`** — secret scanning + CVE/misconfig gates.
 - All jobs use the `.github/actions/setup-node` composite action.
@@ -500,7 +503,7 @@ These rules exist because every one of them was learned from a production failur
 
 #### Contract Rules (`pw.json`)
 
-1. **`pw.json` in this repo root is the ONLY manifest.** Tally is on the PW v2 contract — there is no `app.yml` and no dual-repo sync (the leftover `orchestrator/apps/tally/app.yml` in the PW repo is v1 legacy; don't resurrect it). `pw.json` contains no IPs, VLANs, VMIDs, or Ansible groups — the PW registry owns those.
+1. **`pw.json` in this repo root is the ONLY manifest — with one exception that must not be deleted.** Tally is on the PW v2 contract: there is no dual-repo manifest sync, and the orchestrator clones this repo fresh and reads `pw.json`. BUT `orchestrator/apps/tally/app.yml` in the PW repo is **not** inert legacy — line 36 carries `adminDb: "TALLY"`, and `pw.json` has no equivalent field. That single line is what makes `migrate-all` record into `TALLY.schema_migrations` instead of falling back to its `<APP>_ADMIN` default; delete the file and the migration ledger silently moves to a stray `TALLY_ADMIN` database, so the next `migrate-all` sees zero applied migrations and re-runs the whole chain (survivable only because every migration here is idempotent — see rule 16). Leave it in place until `adminDb` has a home in `pw.json`. `pw.json` contains no IPs, VLANs, VMIDs, or Ansible groups — the PW registry owns those.
 
 2. **Build steps run with `NODE_ENV=development`** — the orchestrator PM2 process runs `NODE_ENV=production` (ecosystem.config.js), inherited by child processes; the v2 executor overrides it during the build phase so `npm ci` installs devDependencies. Don't add check/build commands that assume devDeps outside the declared `pw.json` build steps.
 
@@ -529,6 +532,10 @@ These rules exist because every one of them was learned from a production failur
     `migrate-all` auto-applies: it diffs `SQL/migrations/` against `schema_migrations` on the target and applies what's pending, in order. It takes a pre-migration `mysqldump` first. **The orchestrator is only reachable from the management VLAN (10.0.5.0/24)** — not from a normal client machine.
 
 9. **Migrations MUST be idempotent.** The playbook stops at the first error, so one failing migration blocks every later one behind it. This is not hypothetical: 002 added indexes that were later folded into `SQL/init/001_TALLY_Init.sql`, so it died with `ERROR 1061 Duplicate key name` on any database built from the current base schema — and blocked 003, leaving the print tables absent while the deploy reported success. MySQL 8 has no `ADD KEY ... IF NOT EXISTS`; guard with an `information_schema` check plus a prepared statement (see 002 for the pattern). Prefer `CREATE TABLE IF NOT EXISTS` for new tables.
+
+    **This is now enforced, not remembered.** The `Migration Gate` job in `ci.yml` is a required check: on any PR touching `SQL/` it boots MySQL 8.4, applies `SQL/init/001_TALLY_Init.sql` + the whole chain, applies **the whole chain again** and requires it to succeed, then byte-compares the resulting schema against the committed `SQL/expected-schema.sql`. Run it locally with `SQL/ci/migration-gate.sh` (needs only docker).
+
+    **Every PR that adds or changes a migration must regenerate the expected schema** — `SQL/ci/migration-gate.sh --write` — and commit `SQL/expected-schema.sql` alongside it, or the gate fails on drift. Drift is not a nuisance: the base schema silently growing ahead of the chain is what made 002 fatal.
 
 10. **Local dev applies migrations via `SQL/init/002_apply_migrations.sh`.** `docker-compose` mounts `SQL/migrations/` at `/docker-entrypoint-migrations/` and that script applies them after the base schema — MySQL's entrypoint ignores subdirectories, so they cannot simply be mounted alongside `init/`. Without this, `task db:reset` produces a database with *no* migrations applied.
 

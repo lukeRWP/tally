@@ -14,7 +14,7 @@
         },
         {
           "dir": "server",
-          "cmd": "true"
+          "cmd": "node scripts/write-version.js"
         }
       ],
       "port": 2727,

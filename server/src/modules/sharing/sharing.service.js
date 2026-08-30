@@ -400,11 +400,18 @@ const SharingService = {
     // Condition snapshots with presigned photo URLs.
     //
     // NO recordedByName, and no users join to produce one (#298). It published
-    // a second household member's name on a page they never agreed to be on,
-    // and nothing renders it: `recordedByName` appears in exactly one component,
-    // condition-timeline.tsx, which is on the authenticated item page and is
-    // not imported by share-view.tsx. Dropping the LEFT JOIN means the public
-    // route no longer touches TALLY.users for snapshots at all.
+    // a second household member's display name on an unauthenticated page they
+    // never agreed to be on, and nothing renders it: `recordedByName` appears
+    // in exactly one component, condition-timeline.tsx, which lives on the
+    // AUTHENTICATED item page (item-detail.tsx) and is not imported by
+    // share-view.tsx — that page normalises `conditionSnapshots` into the
+    // entity and never draws a field off it. The authenticated history
+    // (files/condition.service.js) still returns the name, because there the
+    // reader is a fellow property member and the timeline shows it.
+    //
+    // Dropping the LEFT JOIN means the public route no longer reads
+    // TALLY.users for snapshots at all — the name cannot leak back by someone
+    // re-adding a mapped field alone.
     const snapshotRows = await _db.query(
       `SELECT cs.ID, cs.CONDITION, cs.PHOTO_KEY, cs.NOTES, cs.CREATED_AT
        FROM TALLY.condition_snapshots cs
