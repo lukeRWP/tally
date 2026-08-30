@@ -92,8 +92,10 @@ export function AreasPage() {
     }, { replace: true });
   }, [setParams]);
 
-  useKeyboardNav({
-    // Only where there is a keyboard to serve and a selection to move.
+  // ringOn is `split` further gated on the pointer inside the hook (#313) —
+  // pass THIS to anything advertising the keys, not `split` itself.
+  const ringOn = useKeyboardNav({
+    // Layout's half of the gate — the pointer half lives in the hook.
     enabled: split,
     onMove: moveSelection,
     onEscape: clearSelection,
@@ -233,7 +235,7 @@ export function AreasPage() {
             />
           )}
 
-          <ColHead action="+ Add" onAction={() => setCreateAreaOpen(true)} hint={split}>
+          <ColHead action="+ Add" onAction={() => setCreateAreaOpen(true)} hint={ringOn}>
             Areas · {areas?.length ?? 0}
           </ColHead>
 

@@ -20,17 +20,51 @@
  * use-scroll-restoration.ts's rAF restore — arrival is restoration's
  * moment). jsdom has no scrollIntoView, so it is mocked onto the prototype
  * here and the hook's own optional call is what keeps unmocked suites alive.
+ *
+ * Pointer gating (#313): `enabled` is the caller's own layout/dialog gate,
+ * but the hook ANDs it with `!useCoarsePointer()` before anything actually
+ * happens, and returns that real, pointer-aware state. The suite up top runs
+ * with no matchMedia stub at all — jsdom's default, which useCoarsePointer
+ * reads as fine-pointer (see use-coarse-pointer.ts and
+ * destination-picker.coarse.test.tsx) — so every test above already doubles
+ * as the "fine pointer, enabled at a desk" case without stubbing anything.
+ * The block at the bottom is what covers the other half: a coarse pointer
+ * silences a ring whose OWN `enabled` says true, and a convertible's
+ * dock/undock flips that live.
  */
 import { useEffect, useState } from 'react';
-import { fireEvent, render, screen } from '@testing-library/react';
-import { afterEach, beforeEach, expect, test, vi } from 'vitest';
+import { act, fireEvent, render, screen } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, test, vi } from 'vitest';
 import {
   useKeyboardNav, useNavScrollIntoView, type KeyboardNavOptions,
 } from './use-keyboard-nav';
+import { COARSE_QUERY } from './use-coarse-pointer';
 
 function Nav(props: KeyboardNavOptions) {
   useKeyboardNav(props);
   return null;
+}
+
+/** A ring probe that also surfaces the hook's returned active state. */
+function RingProbe(props: KeyboardNavOptions) {
+  const active = useKeyboardNav(props);
+  return <div data-testid="active">{String(active)}</div>;
+}
+
+/** Same shape as use-coarse-pointer.test.ts's own mock — a `(pointer:
+ * coarse)` MediaQueryList whose `matches` can be flipped and fires
+ * `change`, standing in for a convertible's keyboard docking/undocking. */
+function mockMatchMedia(initial: boolean) {
+  let matches = initial;
+  const listeners = new Set<(e: { matches: boolean }) => void>();
+  const mql = {
+    get matches() { return matches; },
+    media: COARSE_QUERY,
+    addEventListener: (_: string, fn: (e: { matches: boolean }) => void) => listeners.add(fn),
+    removeEventListener: (_: string, fn: (e: { matches: boolean }) => void) => listeners.delete(fn),
+  };
+  vi.stubGlobal('matchMedia', vi.fn().mockReturnValue(mql));
+  return { flip(next: boolean) { matches = next; listeners.forEach((fn) => fn({ matches: next })); } };
 }
 
 function ScrollProbe({ id }: { id: string | number | null }) {
@@ -52,6 +86,7 @@ beforeEach(() => {
 
 afterEach(() => {
   delete (Element.prototype as unknown as { scrollIntoView?: unknown }).scrollIntoView;
+  vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
 
@@ -248,4 +283,69 @@ test('focus fusion is off with the rest of the ring (touch chrome)', () => {
 
   fireEvent.focusIn(screen.getByText('Row 1'));
   expect(onFocusRow).not.toHaveBeenCalled();
+});
+
+// ── Pointer gating (#313): "enabled" means a keyboard exists ────────────
+
+describe('coarse pointer', () => {
+  it('silences the ring even though the caller\'s own `enabled` is true', () => {
+    mockMatchMedia(true); // coarse — a landscape iPad with no keyboard
+    const onMove = vi.fn();
+    render(<RingProbe enabled onMove={onMove} />);
+
+    fireEvent.keyDown(window, { key: 'j' });
+    expect(onMove).not.toHaveBeenCalled();
+  });
+
+  it('reports itself inactive via the return value, not just inert', () => {
+    mockMatchMedia(true);
+    render(<RingProbe enabled onMove={() => {}} />);
+    expect(screen.getByTestId('active').textContent).toBe('false');
+  });
+
+  it('a fine pointer with `enabled` true reports active and actually moves', () => {
+    mockMatchMedia(false);
+    const onMove = vi.fn();
+    render(<RingProbe enabled onMove={onMove} />);
+
+    expect(screen.getByTestId('active').textContent).toBe('true');
+    fireEvent.keyDown(window, { key: 'j' });
+    expect(onMove).toHaveBeenCalledTimes(1);
+  });
+
+  it('the caller\'s own `enabled=false` still wins over a fine pointer', () => {
+    mockMatchMedia(false);
+    render(<RingProbe enabled={false} onMove={() => {}} />);
+    expect(screen.getByTestId('active').textContent).toBe('false');
+  });
+});
+
+describe('a convertible\'s keyboard docking mid-session', () => {
+  it('turns the ring ON live when the keyboard docks (coarse → fine)', () => {
+    const mq = mockMatchMedia(true); // starts undocked — coarse
+    const onMove = vi.fn();
+    render(<RingProbe enabled onMove={onMove} />);
+
+    fireEvent.keyDown(window, { key: 'j' });
+    expect(onMove).not.toHaveBeenCalled();
+
+    act(() => mq.flip(false)); // keyboard docks — fine pointer now
+    fireEvent.keyDown(window, { key: 'j' });
+    expect(onMove).toHaveBeenCalledTimes(1);
+  });
+
+  it('turns the ring OFF live when the keyboard undocks (fine → coarse), listeners genuinely gone', () => {
+    const mq = mockMatchMedia(false); // starts docked — fine
+    const onMove = vi.fn();
+    render(<RingProbe enabled onMove={onMove} />);
+
+    fireEvent.keyDown(window, { key: 'j' });
+    expect(onMove).toHaveBeenCalledTimes(1);
+
+    act(() => mq.flip(true)); // keyboard undocks — coarse pointer now
+    fireEvent.keyDown(window, { key: 'j' });
+    // Unchanged: not merely inert, the keydown listener was actually torn
+    // down and re-subscribing to it is the only way it could fire again.
+    expect(onMove).toHaveBeenCalledTimes(1);
+  });
 });

@@ -14,7 +14,6 @@ import { toast } from '@/components/ui/toast';
 import { ApiError } from '@/lib/api';
 import { useProperties } from '@/hooks/use-inventory';
 import { useLayoutMode } from '@/hooks/use-layout-mode';
-import { useCoarsePointer } from '@/hooks/use-coarse-pointer';
 import { useKeyboardNav, useNavScrollIntoView } from '@/hooks/use-keyboard-nav';
 import { cn, safeExternalUrl } from '@/lib/utils';
 import {
@@ -240,13 +239,6 @@ function CandidatePanel({ match, onPick, onDismiss, resolving, onBack, showKeyHi
 export function MatchesPage() {
   // Above every early return — hooks must run on each render.
   const split = useLayoutMode() === 'sidebar';
-  // The digit/`d` bindings and the ColHead summary hint both gate on the
-  // pointer, same reasoning as ColHead's own `hint` prop (#295): the ring
-  // here already gates on layout mode alone (`split`), so a coarse-pointer
-  // tablet wide enough for sidebar chrome would otherwise show a live-but-
-  // silent ring. Requiring BOTH signals before advertising anything keeps
-  // every hint in this file honest even where the ring's own gate is not.
-  const coarse = useCoarsePointer();
   const { data: properties } = useProperties();
   const propertyId = properties?.[0]?.id;
   const { data: matches, isLoading } = useMatches(propertyId);
@@ -326,7 +318,10 @@ export function MatchesPage() {
       : Math.min(ids.length - 1, Math.max(0, at + delta));
     setHighlightedId(ids[next]);
   }, [ids, highlightedId]);
-  useKeyboardNav({
+  // ringOn is `split` further gated on the pointer inside the hook (#313) —
+  // pass THIS to the digit/`d` hints and the ColHead summary hint below,
+  // not `split` itself (that was the belt-and-braces gate #313 closed out).
+  const ringOn = useKeyboardNav({
     enabled: split,
     onMove: moveHighlight,
     onOpen: () => {
@@ -514,7 +509,7 @@ export function MatchesPage() {
 
   const list = (
     <div>
-      <ColHead hint={split}>{rows.length} awaiting a product</ColHead>
+      <ColHead hint={ringOn}>{rows.length} awaiting a product</ColHead>
       {rows.map((m) => (
         <div
           key={m.id}
@@ -548,7 +543,7 @@ export function MatchesPage() {
       onDismiss={handleDismiss}
       resolving={resolve.isPending}
       onBack={!split ? () => select(null) : undefined}
-      showKeyHint={split && !coarse}
+      showKeyHint={ringOn}
     />
   ) : (
     <SplitEmpty hint="the list stays put while you look">Pick an item to see its matches.</SplitEmpty>

@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { cn } from '@/lib/utils';
-import { useCoarsePointer } from '@/hooks/use-coarse-pointer';
 
 /**
  * The column head from the printed pick-ticket: a mono, uppercase label with a
@@ -36,17 +35,19 @@ export function ColHead({
    * every heading the page happens to render, or the quiet hint becomes the
    * loud legend the issue explicitly warned against.
    *
-   * Gated on the pointer, not on `hint` alone: the keys genuinely don't exist
-   * on a coarse pointer (phone, tablet without a keyboard), so advertising
-   * them there would be actively misleading rather than merely useless. This
-   * mirrors every ringed surface's own `useCoarsePointer`/`useLayoutMode`
-   * gate on the ring itself — see destination-picker.tsx for the sibling
-   * case of a component with no layout mode of its own.
+   * Trusted alone — no separate pointer check in here (#313). This used to
+   * additionally gate on its own `useCoarsePointer()`, back when a caller's
+   * flag was only ever a layout signal (`wide`/`split`) and a coarse-pointer
+   * tablet wide enough for sidebar chrome would have shown the hint for keys
+   * that don't exist. Now that useKeyboardNav's OWN `enabled` already folds
+   * the pointer check in and hands callers back its real, pointer-aware
+   * state, `hint` IS that state — a second check here would just be the same
+   * belt-and-braces gate moved one level up. Pass the ring's return value,
+   * not the raw layout flag.
    */
   hint?: boolean;
   className?: string;
 }) {
-  const coarse = useCoarsePointer();
   return (
     <div
       className={cn(
@@ -58,7 +59,7 @@ export function ColHead({
       <span className="min-w-0 flex-1 truncate [&_b]:font-bold [&_b]:text-[var(--color-text)]">
         {children}
       </span>
-      {hint && !coarse && (
+      {hint && (
         <span
           className="shrink-0 whitespace-nowrap font-normal normal-case tracking-normal text-[var(--color-text-muted)] opacity-70"
           title="Keyboard: j/k move · Enter opens · / search · Esc back"
@@ -91,10 +92,11 @@ export function ColHead({
  * behind /matches' candidate numerals (#295): a bordered mono chip small
  * enough to sit beside the button it doubles, never mistaken for content.
  *
- * Callers gate visibility on `!useCoarsePointer()` themselves — this
- * component renders unconditionally so it can be dropped into a list of
- * items already being mapped (an index-keyed badge) without re-deriving the
- * pointer check per row; see matches.tsx's CandidateCard.
+ * Callers gate visibility on useKeyboardNav's returned (pointer-aware)
+ * active state themselves — this component renders unconditionally so it
+ * can be dropped into a list of items already being mapped (an index-keyed
+ * badge) without re-deriving the pointer check per row; see matches.tsx's
+ * CandidateCard.
  */
 export function KeyCap({ children, className }: { children: React.ReactNode; className?: string }) {
   return (

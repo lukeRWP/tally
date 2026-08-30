@@ -194,8 +194,11 @@ export function ContainerDetail() {
   const dialogOpen = createType !== null || fabOpen || printOpen || shareOpen
     || deleteOpen || bulkDeleteOpen || bulkTagOpen;
 
-  useKeyboardNav({
-    // Off on touch chrome, where there is no keyboard to serve. Select mode
+  // ringOn is `wide && !dialogOpen` further gated on the pointer inside the
+  // hook (#313) — pass THIS to anything advertising the keys, not `wide`.
+  const ringOn = useKeyboardNav({
+    // Off on touch chrome. The pointer half of that gate lives in the hook
+    // now (#313); this is purely the layout/dialog half. Select mode
     // no longer switches the whole ring off (#279): gating `enabled` on
     // `!selecting` took `onMove` down with `onOpen` while the ring stayed
     // PAINTED, so the highlight sat there looking live and answered nothing.
@@ -685,7 +688,7 @@ export function ContainerDetail() {
 
       {/* Nested Containers */}
       <section className="animate-fade-up flex flex-col" style={{ animationDelay: '150ms' }}>
-        <ColHead hint={wide}>Nested · {children?.length ?? 0}</ColHead>
+        <ColHead hint={ringOn}>Nested · {children?.length ?? 0}</ColHead>
 
         {childrenLoading && <Skeleton className="h-14 w-full mt-2" />}
 
