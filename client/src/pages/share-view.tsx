@@ -1,6 +1,12 @@
 import * as React from 'react';
-import { useParams, Link } from 'react-router';
-import { Package, Box, Building2, MapPin, AlertTriangle, Loader2 } from 'lucide-react';
+import { Link, useParams } from 'react-router';
+import { Package, Box, Building2, MapPin, AlertTriangle, Loader2, FileText } from 'lucide-react';
+import { TitleBar } from '@/components/ui/title-bar';
+import { ColHead } from '@/components/ui/col-head';
+import { RuledRow } from '@/components/ui/ruled-row';
+import { Badge } from '@/components/ui/badge';
+import { useAuth } from '@/hooks/use-auth';
+import { cn } from '@/lib/utils';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -24,6 +30,18 @@ type Rec = Record<string, unknown>;
  */
 interface ShareEnvelope extends Rec {
   type: 'property' | 'area' | 'container' | 'item';
+}
+
+/**
+ * The framing the public route sends alongside the entity (`data.share`): who
+ * shared it and when the link dies. Every field is optional on purpose — an
+ * older server, or a link whose creator row is gone, sends less, and the page
+ * must then say less rather than invent a name or a date.
+ */
+interface ShareMeta {
+  sharedByName?: string | null;
+  expiresAt?: string | null;
+  createdAt?: string | null;
 }
 
 const arr = (v: unknown): Rec[] => (Array.isArray(v) ? (v as Rec[]) : []);
@@ -112,421 +130,376 @@ function conditionLabel(c: string) {
   return map[c] ?? c;
 }
 
-function conditionColor(c: string) {
-  const map: Record<string, string> = {
-    new: 'var(--color-green)',
-    good: 'var(--color-primary)',
-    fair: 'var(--color-amber)',
-    poor: 'var(--color-red)',
+/** Condition on the thermal badge scale: new is the only "better than fine". */
+function conditionVariant(c: string): 'default' | 'success' | 'warning' | 'danger' {
+  const map: Record<string, 'default' | 'success' | 'warning' | 'danger'> = {
+    new: 'success',
+    good: 'default',
+    fair: 'warning',
+    poor: 'danger',
   };
-  return map[c] ?? 'var(--color-text-muted)';
+  return map[c] ?? 'default';
+}
+
+/** A date the sharer would recognise, or null if the payload has no usable one. */
+function formatDate(v: unknown): string | null {
+  if (v == null || v === '') return null;
+  const d = new Date(String(v));
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+}
+
+function money(v: unknown): string {
+  return v != null ? `$${Number(v).toFixed(2)}` : '--';
+}
+
+/**
+ * What a stranger is actually looking at. A property share IS the whole home,
+ * so it must not claim otherwise; the other three are one slice of one.
+ */
+const SCOPE: Record<ShareEnvelope['type'], string> = {
+  item: 'one item from someone’s home inventory',
+  container: 'the contents of one container from someone’s home inventory',
+  area: 'the contents of one room from someone’s home inventory',
+  property: 'one whole property from someone’s home inventory',
+};
+
+/** The mono meta line under a ruled row: TYPE · CODE · location, dots between. */
+function meta(...parts: (string | null | undefined | false)[]) {
+  const kept = parts.filter(Boolean) as string[];
+  return kept.length ? kept.join(' · ') : undefined;
 }
 
 // ---------------------------------------------------------------------------
 // Entity renderers
 // ---------------------------------------------------------------------------
 
-function PropertyView({ entity }: { entity: Record<string, unknown> }) {
-  const areas = (entity.areas as Record<string, unknown>[] | undefined) ?? [];
+function Breadcrumb({ trail }: { trail: { id: number; name: string; type: string }[] }) {
+  if (!trail.length) return null;
+  return (
+    <nav className="flex flex-wrap items-center gap-1.5 font-mono text-[11px] uppercase tracking-[0.1em] text-[var(--color-text-muted)]">
+      {trail.map((b, i) => (
+        <React.Fragment key={`${b.type}-${b.id}`}>
+          {i > 0 && <span aria-hidden="true">/</span>}
+          <span>{b.name}</span>
+        </React.Fragment>
+      ))}
+    </nav>
+  );
+}
+
+function EntityHead({
+  name,
+  icon,
+  badges,
+  sub,
+  description,
+  trail,
+}: {
+  name: string;
+  icon?: React.ReactNode;
+  badges?: React.ReactNode;
+  sub?: React.ReactNode;
+  description?: string;
+  trail?: { id: number; name: string; type: string }[];
+}) {
+  return (
+    <div className="flex flex-col gap-2">
+      {trail != null && <Breadcrumb trail={trail} />}
+      <div className="flex flex-wrap items-center gap-2">
+        {icon}
+        <TitleBar>{name}</TitleBar>
+        {badges}
+      </div>
+      {sub}
+      {!!description && (
+        <p className="max-w-[65ch] text-sm text-[var(--color-text-secondary)]">{description}</p>
+      )}
+    </div>
+  );
+}
+
+/** One container and everything under it, as ruled rows indented by a hairline. */
+function ContainerBranch({ container }: { container: Rec }) {
+  const items = (container.items as Rec[] | undefined) ?? [];
+  const children = (container.children as Rec[] | undefined) ?? [];
+  const count = items.length;
 
   return (
-    <div className="flex flex-col gap-4">
-      <div>
-        <h2 className="text-xl font-bold" style={{ color: 'var(--color-text)' }}>
-          {str(entity.name)}
-        </h2>
-        {!!entity.address && (
-          <p className="text-sm mt-0.5 flex items-center gap-1" style={{ color: 'var(--color-text-muted)' }}>
-            <MapPin className="w-3.5 h-3.5" />
-            {str(entity.address)}
-          </p>
-        )}
-        {!!entity.description && (
-          <p className="text-sm mt-1" style={{ color: 'var(--color-text-secondary)' }}>
-            {str(entity.description)}
-          </p>
-        )}
-      </div>
+    <div>
+      <RuledRow
+        leading={<Package className="h-4 w-4 shrink-0 text-[var(--color-text-muted)]" />}
+        title={str(container.name)}
+        titleTrailing={container.type ? <Badge>{str(container.type)}</Badge> : undefined}
+        meta={meta(str(container.qrCode) || null, str(container.description) || null)}
+        trailing={
+          count > 0 ? (
+            <span className="shrink-0 font-mono text-[11px] tracking-[0.08em] text-[var(--color-text-muted)]">
+              {count} {count === 1 ? 'ITEM' : 'ITEMS'}
+            </span>
+          ) : undefined
+        }
+      />
+      {(items.length > 0 || children.length > 0) && (
+        <div className="ml-2 border-l border-[var(--color-rule)] pl-3">
+          {items.map((item) => (
+            <ItemLine key={str(item.id)} item={item} />
+          ))}
+          {children.map((child) => (
+            <ContainerBranch key={str(child.id)} container={child} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ItemLine({ item }: { item: Rec }) {
+  const qty = item.quantity != null && Number(item.quantity) > 1 ? `×${str(item.quantity)}` : null;
+  return (
+    <RuledRow
+      leading={<Box className="h-3.5 w-3.5 shrink-0 text-[var(--color-text-muted)]" />}
+      title={str(item.name)}
+      titleTrailing={
+        item.condition ? (
+          <Badge variant={conditionVariant(str(item.condition))}>
+            {conditionLabel(str(item.condition))}
+          </Badge>
+        ) : undefined
+      }
+      meta={meta(str(item.description) || null)}
+      trailing={
+        qty ? (
+          <span className="shrink-0 font-mono text-[11px] tracking-[0.08em] text-[var(--color-text-muted)]">
+            {qty}
+          </span>
+        ) : undefined
+      }
+    />
+  );
+}
+
+function PropertyView({ entity }: { entity: Rec }) {
+  const areas = (entity.areas as Rec[] | undefined) ?? [];
+
+  return (
+    <div className="flex flex-col gap-6">
+      <EntityHead
+        name={str(entity.name)}
+        description={str(entity.description) || undefined}
+        sub={
+          entity.address ? (
+            <p className="flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-[0.08em] text-[var(--color-text-muted)]">
+              <MapPin className="h-3.5 w-3.5" />
+              {str(entity.address)}
+            </p>
+          ) : undefined
+        }
+      />
+
+      {areas.length === 0 && <Empty>No rooms have been added to this property yet.</Empty>}
 
       {areas.map((area) => {
-        const containers = (area.containers as Record<string, unknown>[] | undefined) ?? [];
+        const containers = (area.containers as Rec[] | undefined) ?? [];
         return (
-          <div
-            key={str(area.id)}
-            className="rounded-lg border p-4"
-            style={{ background: 'var(--color-card)', borderColor: 'var(--color-border)' }}
-          >
-            <div className="flex items-center gap-2 mb-3">
-              <Building2 className="w-4 h-4" style={{ color: 'var(--color-primary)' }} />
-              <h3 className="text-sm font-semibold" style={{ color: 'var(--color-text)' }}>
-                {str(area.name)}
-              </h3>
-            </div>
-            {containers.length === 0 && (
-              <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>No containers.</p>
+          <section key={str(area.id)} className="flex flex-col">
+            <ColHead>{str(area.name)}</ColHead>
+            {containers.length === 0 ? (
+              <Empty>Nothing recorded in this room.</Empty>
+            ) : (
+              containers.map((c) => <ContainerBranch key={str(c.id)} container={c} />)
             )}
-            <div className="flex flex-col gap-2">
-              {containers.map((c) => (
-                <ContainerRow key={str(c.id)} container={c} />
-              ))}
-            </div>
-          </div>
+          </section>
         );
       })}
     </div>
   );
 }
 
-function ContainerRow({ container }: { container: Record<string, unknown> }) {
-  const items = (container.items as Record<string, unknown>[] | undefined) ?? [];
-  const children = (container.children as Record<string, unknown>[] | undefined) ?? [];
+function AreaView({ entity }: { entity: Rec }) {
+  const containers = (entity.containers as Rec[] | undefined) ?? [];
+  return (
+    <div className="flex flex-col gap-6">
+      <EntityHead
+        name={str(entity.name)}
+        icon={<Building2 className="h-4 w-4 text-[var(--color-text-muted)]" />}
+        description={str(entity.description) || undefined}
+        trail={
+          entity.propertyName
+            ? [{ id: -1, name: str(entity.propertyName), type: 'property' }]
+            : undefined
+        }
+      />
+      <section className="flex flex-col">
+        <ColHead>Contents</ColHead>
+        {containers.length === 0 ? (
+          <Empty>Nothing recorded in this room.</Empty>
+        ) : (
+          containers.map((c) => <ContainerBranch key={str(c.id)} container={c} />)
+        )}
+      </section>
+    </div>
+  );
+}
+
+function ContainerView({ entity }: { entity: Rec }) {
+  const items = (entity.items as Rec[] | undefined) ?? [];
+  const children = (entity.children as Rec[] | undefined) ?? [];
+  const trail =
+    (entity.breadcrumb as { id: number; name: string; type: string }[] | undefined) ??
+    ([
+      entity.propertyName && { id: -1, name: str(entity.propertyName), type: 'property' },
+      entity.areaName && { id: -2, name: str(entity.areaName), type: 'area' },
+    ].filter(Boolean) as { id: number; name: string; type: string }[]);
 
   return (
-    <div
-      className="rounded-md border p-3"
-      style={{ background: 'var(--color-elevated)', borderColor: 'var(--color-border)' }}
-    >
-      <div className="flex items-center gap-2 mb-1">
-        <Package className="w-3.5 h-3.5" style={{ color: 'var(--color-text-muted)' }} />
-        <span className="text-sm font-medium" style={{ color: 'var(--color-text)' }}>
-          {str(container.name)}
-        </span>
-        {!!container.type && (
-          <span
-            className="text-[10px] px-1.5 py-0.5 rounded font-mono"
-            style={{ background: 'var(--color-primary-bg)', color: 'var(--color-primary)' }}
-          >
-            {str(container.type)}
-          </span>
-        )}
-      </div>
-      {items.length > 0 && (
-        <div className="ml-5 flex flex-col gap-1 mt-1">
-          {items.map((item) => (
-            <ItemRow key={str(item.id)} item={item} compact />
-          ))}
-        </div>
-      )}
+    <div className="flex flex-col gap-6">
+      <EntityHead
+        name={str(entity.name)}
+        trail={trail}
+        badges={entity.type ? <Badge>{str(entity.type)}</Badge> : undefined}
+        description={str(entity.description) || undefined}
+      />
+
       {children.length > 0 && (
-        <div className="ml-3 flex flex-col gap-1 mt-2">
-          {children.map((child) => (
-            <ContainerRow key={str(child.id)} container={child} />
+        <section className="flex flex-col">
+          <ColHead>Containers inside</ColHead>
+          {children.map((c) => (
+            <ContainerBranch key={str(c.id)} container={c} />
           ))}
-        </div>
+        </section>
       )}
+
+      <section className="flex flex-col">
+        <ColHead action={items.length ? String(items.length) : undefined}>Items</ColHead>
+        {items.length === 0 ? (
+          <Empty>This container is empty.</Empty>
+        ) : (
+          items.map((item) => <ItemLine key={str(item.id)} item={item} />)
+        )}
+      </section>
     </div>
   );
 }
 
-function AreaView({ entity }: { entity: Record<string, unknown> }) {
-  const containers = (entity.containers as Record<string, unknown>[] | undefined) ?? [];
-  return (
-    <div className="flex flex-col gap-4">
-      <div>
-        <div className="flex items-center gap-2">
-          <Building2 className="w-4 h-4" style={{ color: 'var(--color-primary)' }} />
-          <h2 className="text-xl font-bold" style={{ color: 'var(--color-text)' }}>
-            {str(entity.name)}
-          </h2>
-        </div>
-        {!!entity.description && (
-          <p className="text-sm mt-1" style={{ color: 'var(--color-text-secondary)' }}>
-            {str(entity.description)}
-          </p>
-        )}
-      </div>
-      {containers.length === 0 ? (
-        <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>No containers.</p>
-      ) : (
-        <div className="flex flex-col gap-2">
-          {containers.map((c) => (
-            <ContainerRow key={str(c.id)} container={c} />
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function ContainerView({ entity }: { entity: Record<string, unknown> }) {
-  const breadcrumb = (entity.breadcrumb as { id: number; name: string; type: string }[] | undefined) ?? [];
-  const items = (entity.items as Record<string, unknown>[] | undefined) ?? [];
-  const children = (entity.children as Record<string, unknown>[] | undefined) ?? [];
+function ItemView({ entity }: { entity: Rec }) {
+  const trail = (entity.breadcrumb as { id: number; name: string; type: string }[] | undefined) ?? [];
+  const product = entity.product as Rec | null | undefined;
+  const files = (entity.files as Rec[] | undefined) ?? [];
+  const hasValue = entity.purchasePrice != null || entity.currentValue != null;
 
   return (
-    <div className="flex flex-col gap-4">
-      {/* Breadcrumb */}
-      {breadcrumb.length > 0 && (
-        <nav className="flex flex-wrap items-center gap-1 text-xs" style={{ color: 'var(--color-text-muted)' }}>
-          {breadcrumb.map((b, i) => (
-            <React.Fragment key={b.id}>
-              {i > 0 && <span>/</span>}
-              <span>{b.name}</span>
-            </React.Fragment>
-          ))}
-        </nav>
-      )}
-
-      <div>
-        <div className="flex items-center gap-2">
-          <h2 className="text-xl font-bold" style={{ color: 'var(--color-text)' }}>
-            {str(entity.name)}
-          </h2>
-          {!!entity.type && (
-            <span
-              className="text-xs px-2 py-0.5 rounded font-mono"
-              style={{ background: 'var(--color-primary-bg)', color: 'var(--color-primary)' }}
-            >
-              {str(entity.type)}
-            </span>
-          )}
-        </div>
-        {!!entity.description && (
-          <p className="text-sm mt-1" style={{ color: 'var(--color-text-secondary)' }}>
-            {str(entity.description)}
-          </p>
-        )}
-      </div>
-
-      {/* Nested containers */}
-      {children.length > 0 && (
-        <div>
-          <h3 className="text-sm font-semibold mb-2" style={{ color: 'var(--color-text)' }}>
-            Nested Containers
-          </h3>
-          <div className="flex flex-col gap-2">
-            {children.map((c) => (
-              <ContainerRow key={str(c.id)} container={c} />
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Items */}
-      {items.length > 0 && (
-        <div>
-          <h3 className="text-sm font-semibold mb-2" style={{ color: 'var(--color-text)' }}>
-            Items ({items.length})
-          </h3>
-          <div className="flex flex-col gap-2">
-            {items.map((item) => (
-              <ItemRow key={str(item.id)} item={item} />
-            ))}
-          </div>
-        </div>
-      )}
-
-      {children.length === 0 && items.length === 0 && (
-        <p className="text-sm" style={{ color: 'var(--color-text-muted)' }}>This container is empty.</p>
-      )}
-    </div>
-  );
-}
-
-function ItemRow({ item, compact = false }: { item: Record<string, unknown>; compact?: boolean }) {
-  if (compact) {
-    return (
-      <div className="flex items-center gap-2">
-        <Box className="w-3 h-3 shrink-0" style={{ color: 'var(--color-text-muted)' }} />
-        <span className="text-xs" style={{ color: 'var(--color-text)' }}>{str(item.name)}</span>
-        {!!item.condition && (
-          <span className="text-[10px] font-medium" style={{ color: conditionColor(str(item.condition)) }}>
-            {conditionLabel(str(item.condition))}
-          </span>
-        )}
-      </div>
-    );
-  }
-
-  return (
-    <div
-      className="rounded-md border p-3"
-      style={{ background: 'var(--color-elevated)', borderColor: 'var(--color-border)' }}
-    >
-      <div className="flex items-start gap-2">
-        <Box className="w-4 h-4 mt-0.5 shrink-0" style={{ color: 'var(--color-text-muted)' }} />
-        <div className="flex-1 min-w-0">
-          <p className="text-sm font-medium" style={{ color: 'var(--color-text)' }}>
-            {str(item.name)}
-          </p>
-          {!!item.description && (
-            <p className="text-xs mt-0.5" style={{ color: 'var(--color-text-secondary)' }}>
-              {str(item.description)}
-            </p>
-          )}
-          <div className="flex flex-wrap gap-2 mt-1">
-            {!!item.condition && (
-              <span className="text-[10px] font-medium" style={{ color: conditionColor(str(item.condition)) }}>
-                {conditionLabel(str(item.condition))}
-              </span>
+    <div className="flex flex-col gap-6">
+      <EntityHead
+        name={str(entity.name)}
+        trail={trail}
+        badges={
+          <>
+            {!!entity.condition && (
+              <Badge variant={conditionVariant(str(entity.condition))}>
+                {conditionLabel(str(entity.condition))}
+              </Badge>
             )}
-            {item.quantity != null && Number(item.quantity) > 1 && (
-              <span className="text-[10px]" style={{ color: 'var(--color-text-muted)' }}>
-                Qty: {str(item.quantity)}
-              </span>
+            {!!entity.status && <Badge>{str(entity.status)}</Badge>}
+            {entity.quantity != null && Number(entity.quantity) > 1 && (
+              <Badge>Qty {str(entity.quantity)}</Badge>
             )}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
+          </>
+        }
+        description={str(entity.description) || undefined}
+      />
 
-function ItemView({ entity }: { entity: Record<string, unknown> }) {
-  const breadcrumb = (entity.breadcrumb as { id: number; name: string; type: string }[] | undefined) ?? [];
-  const product = entity.product as Record<string, unknown> | null | undefined;
-  const files = (entity.files as Record<string, unknown>[] | undefined) ?? [];
-
-  return (
-    <div className="flex flex-col gap-4">
-      {/* Breadcrumb */}
-      {breadcrumb.length > 0 && (
-        <nav className="flex flex-wrap items-center gap-1 text-xs" style={{ color: 'var(--color-text-muted)' }}>
-          {breadcrumb.map((b, i) => (
-            <React.Fragment key={b.id}>
-              {i > 0 && <span>/</span>}
-              <span>{b.name}</span>
-            </React.Fragment>
-          ))}
-        </nav>
-      )}
-
-      {/* Header */}
-      <div>
-        <h2 className="text-xl font-bold" style={{ color: 'var(--color-text)' }}>
-          {str(entity.name)}
-        </h2>
-        <div className="flex items-center gap-2 mt-1">
-          {!!entity.condition && (
-            <span
-              className="text-xs font-medium px-2 py-0.5 rounded"
-              style={{
-                background: 'var(--color-elevated)',
-                color: conditionColor(str(entity.condition)),
-                border: '1px solid var(--color-border)',
-              }}
-            >
-              {conditionLabel(str(entity.condition))}
-            </span>
-          )}
-          {!!entity.status && (
-            <span
-              className="text-xs px-2 py-0.5 rounded"
-              style={{ background: 'var(--color-elevated)', color: 'var(--color-text-secondary)', border: '1px solid var(--color-border)' }}
-            >
-              {str(entity.status)}
-            </span>
-          )}
-          {entity.quantity != null && Number(entity.quantity) > 1 && (
-            <span
-              className="text-xs px-2 py-0.5 rounded"
-              style={{ background: 'var(--color-elevated)', color: 'var(--color-text-secondary)', border: '1px solid var(--color-border)' }}
-            >
-              Qty: {str(entity.quantity)}
-            </span>
-          )}
-        </div>
-        {!!entity.description && (
-          <p className="text-sm mt-2" style={{ color: 'var(--color-text-secondary)' }}>
-            {str(entity.description)}
-          </p>
-        )}
-      </div>
-
-      {/* Product info */}
       {!!product && (
-        <div
-          className="rounded-lg border p-4"
-          style={{ background: 'var(--color-card)', borderColor: 'var(--color-border)' }}
-        >
-          <h3 className="text-sm font-semibold mb-2" style={{ color: 'var(--color-text)' }}>Product Info</h3>
+        <section className="flex flex-col gap-3">
+          <ColHead>Product</ColHead>
           {!!product.imageUrl && (
             <img
               src={str(product.imageUrl)}
               alt={str(product.name)}
-              className="w-full h-32 object-contain rounded mb-2"
+              className="h-40 w-full max-w-[420px] rounded-[var(--radius-sm)] border border-[var(--color-border)] object-contain"
               style={{ background: 'var(--color-elevated)' }}
             />
           )}
-          <div className="grid grid-cols-2 gap-2 text-xs">
-            {!!product.brand && (
-              <div>
-                <span style={{ color: 'var(--color-text-muted)' }}>Brand</span>
-                <p className="font-medium" style={{ color: 'var(--color-text)' }}>{str(product.brand)}</p>
-              </div>
-            )}
-            {!!product.category && (
-              <div>
-                <span style={{ color: 'var(--color-text-muted)' }}>Category</span>
-                <p className="font-medium" style={{ color: 'var(--color-text)' }}>{str(product.category)}</p>
-              </div>
-            )}
-          </div>
-        </div>
+          <Facts
+            facts={[
+              ['Name', str(product.name) || null],
+              ['Brand', str(product.brand) || null],
+              ['Category', str(product.category) || null],
+            ]}
+          />
+        </section>
       )}
 
-      {/* Value */}
-      {(entity.purchasePrice != null || entity.currentValue != null) && (
-        <div
-          className="rounded-lg border p-4"
-          style={{ background: 'var(--color-card)', borderColor: 'var(--color-border)' }}
-        >
-          <h3 className="text-sm font-semibold mb-2" style={{ color: 'var(--color-text)' }}>Value</h3>
-          <div className="grid grid-cols-2 gap-2 text-xs">
-            <div>
-              <span style={{ color: 'var(--color-text-muted)' }}>Purchase Price</span>
-              <p className="font-medium" style={{ color: 'var(--color-text)' }}>
-                {entity.purchasePrice != null ? `$${Number(entity.purchasePrice).toFixed(2)}` : '--'}
-              </p>
-            </div>
-            <div>
-              <span style={{ color: 'var(--color-text-muted)' }}>Current Value</span>
-              <p className="font-medium" style={{ color: 'var(--color-text)' }}>
-                {entity.currentValue != null ? `$${Number(entity.currentValue).toFixed(2)}` : '--'}
-              </p>
-            </div>
-          </div>
-        </div>
+      {hasValue && (
+        <section className="flex flex-col gap-3">
+          <ColHead>Value</ColHead>
+          <Facts
+            facts={[
+              ['Purchase price', money(entity.purchasePrice)],
+              ['Current value', money(entity.currentValue)],
+            ]}
+          />
+        </section>
       )}
 
-      {/* Photos & files */}
       {files.length > 0 && (
-        <div
-          className="rounded-lg border p-4"
-          style={{ background: 'var(--color-card)', borderColor: 'var(--color-border)' }}
-        >
-          <h3 className="text-sm font-semibold mb-2" style={{ color: 'var(--color-text)' }}>
-            Files ({files.length})
-          </h3>
-          <div className="grid grid-cols-3 gap-2">
+        <section className="flex flex-col gap-3">
+          <ColHead action={String(files.length)}>Files</ColHead>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
             {files.map((f) => {
               const isImage = str(f.mimeType).startsWith('image/');
               return isImage ? (
                 <img
                   key={str(f.id)}
                   src={str(f.url ?? f.presignedUrl)}
-                  alt={str(f.originalName)}
-                  className="w-full aspect-square object-cover rounded"
-                  style={{ border: '1px solid var(--color-border)' }}
+                  alt={str(f.fileName ?? f.originalName)}
+                  className="aspect-square w-full rounded-[var(--radius-sm)] border border-[var(--color-border)] object-cover"
                 />
               ) : (
                 <div
                   key={str(f.id)}
-                  className="flex items-center justify-center aspect-square rounded text-xs font-medium"
-                  style={{
-                    background: 'var(--color-elevated)',
-                    border: '1px solid var(--color-border)',
-                    color: 'var(--color-text-muted)',
-                  }}
+                  className="flex aspect-square w-full flex-col items-center justify-center gap-1 rounded-[var(--radius-sm)] border border-[var(--color-border)] p-2 text-center font-mono text-[10px] uppercase tracking-[0.08em] text-[var(--color-text-muted)]"
                 >
-                  {str(f.originalName, 'File')}
+                  <FileText className="h-4 w-4" />
+                  <span className="line-clamp-2 [overflow-wrap:anywhere]">
+                    {str(f.fileName ?? f.originalName, 'File')}
+                  </span>
                 </div>
               );
             })}
           </div>
-        </div>
+        </section>
       )}
     </div>
+  );
+}
+
+/** Label/value pairs on the ruled grid — replaces the old grid-cols-2 card. */
+function Facts({ facts }: { facts: [string, string | null][] }) {
+  const kept = facts.filter(([, v]) => v != null && v !== '');
+  if (!kept.length) return null;
+  return (
+    <dl className="grid grid-cols-1 gap-x-8 sm:grid-cols-2 lg:grid-cols-3">
+      {kept.map(([label, value]) => (
+        <div
+          key={label}
+          className="flex items-baseline justify-between gap-3 border-b border-[var(--color-rule)] py-2"
+        >
+          <dt className="font-mono text-[11px] uppercase tracking-[0.1em] text-[var(--color-text-muted)]">
+            {label}
+          </dt>
+          <dd className="text-sm font-semibold text-[var(--color-text)]">{value}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+function Empty({ children }: { children: React.ReactNode }) {
+  return (
+    <p className="py-3 font-mono text-[11px] uppercase tracking-[0.1em] text-[var(--color-text-muted)]">
+      {children}
+    </p>
   );
 }
 
@@ -534,12 +507,22 @@ function ItemView({ entity }: { entity: Record<string, unknown> }) {
 // Main page component
 // ---------------------------------------------------------------------------
 
+/** The app's own column ladder (root-layout.tsx) — a share is not a phone column. */
+const LADDER = 'md:max-w-[720px] lg:max-w-[900px] xl:max-w-[1100px] 2xl:max-w-[1400px] mx-auto w-full';
+
 export function ShareView() {
   const { token } = useParams<{ token: string }>();
   const [data, setData] = React.useState<ShareEnvelope | null>(null);
+  const [share, setShare] = React.useState<ShareMeta | null>(null);
   const view = React.useMemo(() => (data ? normalize(data) : null), [data]);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
+
+  // A stranger has no session and must never be pointed at Entra; someone who
+  // IS signed in is almost always the sharer checking their own link, and they
+  // do want a way back into the app. So the app link is conditional, not the
+  // default, and nothing here gates the shared content on the answer.
+  const { user } = useAuth();
 
   React.useEffect(() => {
     if (!token) {
@@ -557,6 +540,7 @@ export function ShareView() {
         const json = await res.json();
         // the envelope lives under `data`; older/raw responses may be flat
         setData(((json.data?.entity ?? json.data ?? json) as ShareEnvelope));
+        setShare((json.data?.share as ShareMeta | undefined) ?? null);
       })
       .catch((err: unknown) => {
         setError(err instanceof Error ? err.message : 'This link has expired or is invalid.');
@@ -564,78 +548,93 @@ export function ShareView() {
       .finally(() => setLoading(false));
   }, [token]);
 
-  return (
-    <div
-      className="min-h-screen"
-      style={{ background: 'var(--color-bg)', color: 'var(--color-text)' }}
-    >
-      {/* Header */}
-      <div
-        className="sticky top-0 z-10 border-b px-4 py-3"
-        style={{ background: 'var(--color-card)', borderColor: 'var(--color-border)' }}
-      >
-        <div className="max-w-xl mx-auto flex items-center justify-between">
-          <div>
-            <p className="text-base font-bold" style={{ color: 'var(--color-text)' }}>Tally</p>
-            <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>Shared view — read only</p>
-          </div>
-          <Link
-            to="/"
-            className="text-xs px-3 py-1.5 rounded-md transition-colors"
-            style={{ background: 'var(--color-primary-bg)', color: 'var(--color-primary)' }}
-          >
-            Sign in
-          </Link>
-        </div>
-      </div>
+  const sharedBy = share?.sharedByName ? String(share.sharedByName) : null;
+  const expires = formatDate(share?.expiresAt);
 
-      {/* Content */}
-      <div className="max-w-xl mx-auto px-4 py-6">
+  return (
+    <div className="min-h-screen bg-[var(--color-bg)] text-[var(--color-text)]">
+      {/* Header — brand and status only. No sidebar, no bottom nav, no ADD:
+          this is a no-auth read-only surface and must not wear app chrome. */}
+      <header className="sticky top-0 z-10 border-b border-[var(--color-rule)] bg-[var(--color-card)] px-4 py-3">
+        <div className={cn(LADDER, 'flex items-center justify-between gap-3')}>
+          <div className="flex min-w-0 items-center gap-3">
+            <TitleBar>Tally</TitleBar>
+            <span className="hidden font-mono text-[11px] uppercase tracking-[0.1em] text-[var(--color-text-muted)] sm:inline">
+              Shared view · read only
+            </span>
+          </div>
+          {!!user && (
+            <Link
+              to="/"
+              className="shrink-0 font-mono text-[11px] font-bold uppercase tracking-[0.1em] text-[var(--color-primary)] hover:opacity-80"
+            >
+              Open Tally ›
+            </Link>
+          )}
+        </div>
+      </header>
+
+      <main className={cn(LADDER, 'px-4 py-6')}>
         {loading && (
-          <div className="flex flex-col items-center justify-center py-20 gap-3">
-            <Loader2 className="w-8 h-8 animate-spin" style={{ color: 'var(--color-primary)' }} />
-            <p className="text-sm" style={{ color: 'var(--color-text-muted)' }}>Loading shared content…</p>
+          <div className="flex flex-col items-center justify-center gap-3 py-20">
+            <Loader2 className="h-8 w-8 animate-spin text-[var(--color-primary)]" />
+            <p className="font-mono text-[11px] uppercase tracking-[0.1em] text-[var(--color-text-muted)]">
+              Loading shared content…
+            </p>
           </div>
         )}
 
         {!loading && !!error && (
-          <div className="flex flex-col items-center justify-center py-20 gap-4 text-center">
+          <div className="mx-auto flex max-w-[46ch] flex-col items-center justify-center gap-4 py-20 text-center">
             <div
-              className="w-16 h-16 rounded-full flex items-center justify-center"
+              className="flex h-14 w-14 items-center justify-center rounded-full"
               style={{ background: 'var(--color-red-bg)' }}
             >
-              <AlertTriangle className="w-8 h-8" style={{ color: 'var(--color-red)' }} />
+              <AlertTriangle className="h-7 w-7 text-[var(--color-red)]" />
             </div>
-            <h1 className="text-lg font-bold" style={{ color: 'var(--color-text)' }}>
-              Link unavailable
-            </h1>
-            <p className="text-sm max-w-xs" style={{ color: 'var(--color-text-muted)' }}>
-              {error}
+            <TitleBar>Link unavailable</TitleBar>
+            <p className="text-sm text-[var(--color-text-secondary)]">{error}</p>
+            <p className="text-sm text-[var(--color-text-muted)]">
+              Share links from Tally expire. Ask whoever sent it for a fresh one — there is nothing
+              to sign in to here.
             </p>
-            <Link
-              to="/"
-              className="text-sm font-medium mt-2"
-              style={{ color: 'var(--color-primary)' }}
-            >
-              Go to Tally
-            </Link>
           </div>
         )}
 
         {!loading && !error && !!view && (
-          <>
+          <div className="flex flex-col gap-6">
+            {/* Who sent this, when it dies, and what "this" even is. A stranger
+                lands here cold; without these three lines the page is someone
+                else's inventory with no sender, no scope and no shelf life. */}
+            <section className="flex flex-col gap-2" data-testid="share-provenance">
+              <ColHead action={expires ? `Expires ${expires}` : undefined}>
+                {sharedBy ? (
+                  <>
+                    Shared by <b>{sharedBy}</b>
+                  </>
+                ) : (
+                  'Shared with you'
+                )}
+              </ColHead>
+              <p className="max-w-[70ch] text-sm text-[var(--color-text-secondary)]">
+                Tally is a home-inventory app. You are looking at {SCOPE[view.kind]} — read only, no
+                account needed. Nothing else in their inventory is reachable from this link.
+              </p>
+            </section>
+
             {view.kind === 'property' && <PropertyView entity={view.entity} />}
             {view.kind === 'area' && <AreaView entity={view.entity} />}
             {view.kind === 'container' && <ContainerView entity={view.entity} />}
             {view.kind === 'item' && <ItemView entity={view.entity} />}
-          </>
+          </div>
         )}
+
         {!loading && !error && !!data && !view && (
-          <p className="text-sm text-center" style={{ color: 'var(--color-text-muted)' }}>
+          <p className="py-20 text-center text-sm text-[var(--color-text-muted)]">
             This share link points at something this page can't display yet.
           </p>
         )}
-      </div>
+      </main>
     </div>
   );
 }
