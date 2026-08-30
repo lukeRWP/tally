@@ -72,6 +72,10 @@ function ContainerRow({ node, depth, expanded, onToggle, onSelect, selectedId }:
             same level line up regardless of which bins have children. */}
         <button
           type="button"
+          // The one secondary control inside a ringed row (#279): focusing it
+          // must not move the ring's cursor, and Enter on it must expand this
+          // bin rather than open it. See use-keyboard-nav.ts's NAV_IGNORE.
+          data-nav-ignore=""
           aria-label={hasChildren ? (isOpen ? `Collapse ${container.name}` : `Expand ${container.name}`) : undefined}
           aria-expanded={hasChildren ? isOpen : undefined}
           disabled={!hasChildren}

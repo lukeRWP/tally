@@ -284,6 +284,13 @@ export function MatchesPage() {
       return true;
     },
     onEscape: () => { select(null); setHighlightedId(null); },
+    // Tab onto a row IS a cursor move (#279). It moves the CURSOR only —
+    // `selectedId` (the row whose candidates are open in the pane) stays
+    // whatever it was, keeping this page's two distinct markers distinct.
+    onFocusRow: (navId) => {
+      const n = Number(navId);
+      if (Number.isFinite(n) && ids.includes(n)) setHighlightedId(n);
+    },
   });
   // Keeps the cursor on screen while browsing a long backlog (#235) — rows
   // below carry the matching data-nav-id. A click-driven hand-off (sync #1)
