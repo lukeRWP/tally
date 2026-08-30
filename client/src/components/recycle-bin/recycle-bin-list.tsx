@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router';
 import { RotateCcw, Trash2, Box, Package, MapPin, CheckSquare, Check } from 'lucide-react';
@@ -11,6 +11,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from '@/components/ui/toast';
 import { cn } from '@/lib/utils';
 import { useLayoutMode } from '@/hooks/use-layout-mode';
+import { useKeyboardNav, useNavCursorParam, useNavScrollIntoView } from '@/hooks/use-keyboard-nav';
 import { barOffsetCss, useCarryBannerShowing, useRegisterBottomBar } from '@/hooks/use-bottom-stack';
 
 /**
@@ -190,6 +191,70 @@ export function RecycleBinList() {
 
   const list = batches ?? [];
 
+  /**
+   * Keyboard ring (#272) — the twin's `(type, id)` key collapses to a plain
+   * id here: every row is the same "kind" (a delete batch), so there is no
+   * second type to disambiguate. The id is still what survives a refetch —
+   * an index would not (see container-detail.tsx's own comment on this) —
+   * so it, not a position, is what the URL cursor and the reconcile effect
+   * below both track. Kept as a string since useNavCursorParam's `?nav=` is
+   * one for every ringed surface in the app.
+   */
+  const visibleKeys = useMemo(() => list.map((b) => String(b.id)), [list]);
+  const { cursor: highlightedKey, setCursor: setHighlightedKey } = useNavCursorParam('nav');
+
+  // Reconcile only when the highlighted row itself is gone (a restore, or the
+  // 30-day sweep) — gated on the list having actually loaded so a cursor
+  // restored from the URL on the mount commit (before the first fetch
+  // resolves and `visibleKeys` is still empty) is not cleared before its row
+  // has ever rendered. Mirrors container-detail.tsx's `listsLoaded` gate.
+  useEffect(() => {
+    if (isLoading) return;
+    if (highlightedKey != null && !visibleKeys.includes(highlightedKey)) {
+      setHighlightedKey(null);
+    }
+  }, [isLoading, visibleKeys, highlightedKey, setHighlightedKey]);
+
+  const moveHighlight = useCallback((delta: 1 | -1) => {
+    if (visibleKeys.length === 0) return;
+    const at = highlightedKey == null ? -1 : visibleKeys.indexOf(highlightedKey);
+    const next = at === -1
+      ? (delta === 1 ? 0 : visibleKeys.length - 1)
+      : Math.min(visibleKeys.length - 1, Math.max(0, at + delta));
+    setHighlightedKey(visibleKeys[next]);
+  }, [visibleKeys, highlightedKey, setHighlightedKey]);
+
+  // This page's only overlay — same gate shape as container-detail.tsx's
+  // `dialogOpen` (there, several dialogs; here, just the one).
+  const dialogOpen = purgeOpen;
+
+  useKeyboardNav({
+    // Off on touch chrome, where there is no keyboard to serve — matches
+    // every other ringed surface.
+    enabled: wide && !dialogOpen,
+    onMove: moveHighlight,
+    onOpen: () => {
+      if (highlightedKey == null) return false;
+      // Outside select mode a batch row has nothing to "open" — no detail
+      // page exists for a deletion the way one does for a container or item
+      // — so the ring is a pure cursor there, same as it starts out for the
+      // twin before Enter's select-mode branch does anything. In select
+      // mode it ticks the highlighted row, exactly like the twin's Enter.
+      if (!selecting) return false;
+      toggleSelected(Number(highlightedKey));
+      return true;
+    },
+    onEscape: () => setHighlightedKey(null),
+    // Tab onto a row IS a cursor move (#279 parity) — fuses the Tab focus
+    // outline and the ring into one cursor instead of drawing two.
+    onFocusRow: (navId) => {
+      if (visibleKeys.includes(navId)) setHighlightedKey(navId);
+    },
+  });
+  // Keeps the cursor on screen in a bin longer than the viewport — the row
+  // wrapper below carries the matching data-nav-id (the same string key).
+  useNavScrollIntoView(highlightedKey);
+
   // A background refetch can remove rows out from under an open selection —
   // prune ghosts so "N selected" only ever counts rows still here.
   useEffect(() => {
@@ -206,7 +271,14 @@ export function RecycleBinList() {
     setSelected(new Set());
   }
 
-  function toggleSelected(batchId: number) {
+  /**
+   * The last row toggled ON, which is what a shift-click measures from.
+   * Cleared when the selection empties so a stale anchor cannot select a
+   * range across a list the user has since left. Mirrors container-detail.tsx.
+   */
+  const anchor = useRef<number | null>(null);
+
+  function toggleSelected(batchId: number, shift = false) {
     // Inert while the restore loop runs (#239) — mirrors container-detail's
     // toggleSelected: a mid-loop click would mutate `selected` only to have
     // the loop's own end-of-run `setSelected(new Set(failed))` silently
@@ -214,8 +286,26 @@ export function RecycleBinList() {
     if (bulkRunning) return;
     setSelected((prev) => {
       const next = new Set(prev);
+
+      // Shift-click selects everything between the anchor and here, in the
+      // order the rows are DRAWN — the only order this list has. Without
+      // that order a range would jump around the page. Additive, never
+      // subtractive, same as the twin: shift-clicking is how you GROW a
+      // selection.
+      if (shift && anchor.current != null && anchor.current !== batchId) {
+        const order = list.map((b) => b.id);
+        const from = order.indexOf(anchor.current);
+        const to = order.indexOf(batchId);
+        if (from !== -1 && to !== -1) {
+          const [lo, hi] = from < to ? [from, to] : [to, from];
+          for (let i = lo; i <= hi; i++) next.add(order[i]);
+          return next;
+        }
+      }
+
       if (next.has(batchId)) next.delete(batchId);
-      else next.add(batchId);
+      else { next.add(batchId); anchor.current = batchId; }
+      if (next.size === 0) anchor.current = null;
       return next;
     });
   }
@@ -339,11 +429,19 @@ export function RecycleBinList() {
             const Icon = ICON[b.rootType] ?? Package;
             const contents = describeContents(b);
             const isSelected = selected.has(b.id);
+            const navId = String(b.id);
             return (
               <div
                 key={b.id}
-                className="flex items-center gap-3 py-3 border-b border-[var(--color-rule)] last:border-b-0"
-                onClick={selecting ? () => toggleSelected(b.id) : undefined}
+                data-nav-id={navId}
+                className={cn(
+                  'flex items-center gap-3 py-3 border-b border-[var(--color-rule)] last:border-b-0 rounded-[var(--radius-sm)]',
+                  highlightedKey === navId && 'bg-[var(--color-elevated)] ring-1 ring-[var(--color-text)]',
+                )}
+                // `e.shiftKey` is read here, not reconstructed from a keydown
+                // listener elsewhere — same rule ruled-row.tsx documents for
+                // every other selectable row in the app (#272).
+                onClick={selecting ? (e) => toggleSelected(b.id, e.shiftKey) : undefined}
                 role={selecting ? 'button' : undefined}
                 tabIndex={selecting ? 0 : undefined}
                 aria-pressed={selecting ? isSelected : undefined}
@@ -410,14 +508,18 @@ export function RecycleBinList() {
           this page needs: count, All/Cancel, and the one bulk action. */}
       {selecting && (
         <div
-          className="fixed left-4 right-4 lg:left-auto lg:right-8 lg:w-[24rem] z-30 bg-[var(--color-card)] border-2 border-[var(--color-text)] rounded-[var(--radius-md)] shadow-lg px-3 py-2.5 flex flex-wrap items-center gap-2"
+          // #276 twin: a fixed lg:w-[24rem] starves "N selected" toward the
+          // truncation ellipsis the same way it did on container-detail's
+          // bar (three buttons, less room than that one, but the same
+          // shape of bug) — content-driven width instead, same as there.
+          className="fixed left-4 right-4 lg:left-auto lg:right-8 lg:w-auto lg:max-w-[28rem] z-30 bg-[var(--color-card)] border-2 border-[var(--color-text)] rounded-[var(--radius-md)] shadow-lg px-3 py-2.5 flex flex-wrap items-center gap-2"
           // Shared with container-detail.tsx's select bar (use-bottom-stack.ts)
           // so this stacks above the carry banner instead of overlapping it,
           // the same bug class as #286 — an inline style, not a class, since
           // the offset is a runtime value Tailwind's class scanner can't see.
           style={{ bottom: barOffsetCss({ touch: !wide, carrying: carryBannerShowing }) }}
         >
-          <p className="font-mono text-xs uppercase tracking-[0.06em] text-[var(--color-text)] flex-1 min-w-0 truncate tabular-nums">
+          <p className="font-mono text-xs uppercase tracking-[0.06em] text-[var(--color-text)] shrink-0 whitespace-nowrap tabular-nums">
             {selected.size} selected
           </p>
           <Button variant="ghost" size="sm" onClick={handleSelectAll} disabled={bulkRunning}>
