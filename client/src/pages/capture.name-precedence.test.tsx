@@ -92,6 +92,37 @@ function makeCatalogueMock() {
   });
 }
 
+/** The same, plus a photo-identify answer — the model-suggested branch. */
+function makeVisionMock(suggestion: {
+  name: string; brand: string | null; description?: string | null;
+}) {
+  const base = makeCatalogueMock();
+  return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === 'string' ? input : input.toString();
+    if (url.includes('/api/products/_y_/identify-photo')) {
+      return jsonResponse({
+        success: true,
+        data: {
+          available: true,
+          matchAvailable: false,
+          suggestion: {
+            name: suggestion.name,
+            description: suggestion.description ?? null,
+            category: null,
+            brand: suggestion.brand,
+            quantity: null,
+            estimatedValue: null,
+            confidence: 'high',
+          },
+        },
+      });
+    }
+    return base(input, init);
+  });
+}
+
+const JPEG = new File([new Uint8Array([0xff, 0xd8, 0xff, 0xe0])], 'p.jpg', { type: 'image/jpeg' });
+
 function renderDesk(fetchMock: ReturnType<typeof vi.fn>) {
   vi.stubGlobal('fetch', fetchMock);
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
@@ -187,4 +218,74 @@ test('#266 an untouched name still takes the catalogue title outright — nothin
   const name = await screen.findByDisplayValue('DeWalt Cordless Drill');
   expect((name as HTMLInputElement).id).toBe('mc-name');
   expect(screen.queryByRole('button', { name: /^keep$/i })).toBeNull();
+});
+
+/*
+ * The model-suggested branch, which had no coverage at all.
+ *
+ * "Is this name the model's?" used to be a boolean set beside the guarded
+ * write that applies the suggestion, so the two could disagree — the write
+ * refused (or something else changed the name afterwards) while the flag
+ * still said "the model wrote this". #266 reads that flag to decide whether a
+ * name is worth protecting, so a disagreement costs the user their name at
+ * the next barcode lookup, silently and with no Keep offered.
+ *
+ * The flag is now derived: the page stores WHICH name it applied and compares
+ * it to the field. Both tests below drive a path where the field moves out
+ * from under the suggestion; neither can be made to pass by remembering to
+ * clear a flag in one more place.
+ */
+test('#266 follow-up: a suggestion the user has not touched is still replaced outright by a catalogue hit', async () => {
+  const fetchMock = makeVisionMock({ name: 'Cast Iron Skillet', brand: null });
+  renderDesk(fetchMock);
+
+  fireEvent.drop(screen.getByRole('button', { name: /drop one here, or choose a file/i }),
+    { dataTransfer: { files: [JPEG] } });
+
+  // A guess, marked as one.
+  const name = await screen.findByDisplayValue('Cast Iron Skillet') as HTMLInputElement;
+  expect(name.className).toContain('border-dashed');
+
+  const barcode = screen.getByPlaceholderText('Type or scan');
+  fireEvent.change(barcode, { target: { value: '012345678905' } });
+  fireEvent.keyDown(barcode, { key: 'Enter' });
+
+  // A catalogue hit beats a guess: taken, not offered, and no longer dashed.
+  await waitFor(() => expect(name.value).toBe('DeWalt Cordless Drill'));
+  expect(name.className).not.toContain('border-dashed');
+  expect(screen.queryByRole('button', { name: /^keep$/i })).toBeNull();
+});
+
+test('#266 follow-up: a name the user assembled from the suggestion is theirs — and keeps its protection', async () => {
+  const fetchMock = makeVisionMock({
+    name: 'Cast Iron Skillet', brand: 'Lodge',
+    description: 'A 12-inch pre-seasoned cast iron skillet',
+  });
+  renderDesk(fetchMock);
+
+  fireEvent.drop(screen.getByRole('button', { name: /drop one here, or choose a file/i }),
+    { dataTransfer: { files: [JPEG] } });
+  const name = await screen.findByDisplayValue('Cast Iron Skillet') as HTMLInputElement;
+  expect(name.className).toContain('border-dashed');
+
+  // "Add to name" is an explicit act on the user's part, and it writes the
+  // draft without going through the name field's own onChange — the exact
+  // shape of write a manually-cleared flag misses.
+  fireEvent.click(await screen.findByRole('button', { name: /review what it found/i }));
+  fireEvent.click(screen.getByRole('button', { name: /add to name/i }));
+  await waitFor(() => expect(name.value).toBe('Lodge Cast Iron Skillet'));
+  // The field no longer holds what the model offered, so it is not a
+  // suggestion any more — no unconfirmed border.
+  expect(name.className).not.toContain('border-dashed');
+
+  // …and #266 protects it like any other name a person decided on: the
+  // catalogue title is offered behind Keep, not taken.
+  const barcode = screen.getByPlaceholderText('Type or scan');
+  fireEvent.change(barcode, { target: { value: '012345678905' } });
+  fireEvent.keyDown(barcode, { key: 'Enter' });
+
+  await waitFor(() => expect(callsTo(fetchMock, '/api/products/_y_/lookup')).toHaveLength(1));
+  expect(name.value).toBe('Lodge Cast Iron Skillet');
+  expect(await screen.findByText('DeWalt Cordless Drill')).toBeTruthy();
+  expect(screen.getByRole('button', { name: /^keep$/i })).toBeTruthy();
 });

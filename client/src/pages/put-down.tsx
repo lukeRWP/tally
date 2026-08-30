@@ -748,7 +748,11 @@ export function PutDown() {
                 isActive={!pendingConfirm}
                 label={scannerLabel}
                 onTag={handleCode}
-                onClose={() => navigate(-1)}
+                // #268: not on a finger. Close sits 8px from Stop in the
+                // scanner's control row, identical in size and weight, and
+                // leaving mid-gather abandons the load being carried. Stop
+                // is one tap to undo; this is not.
+                onClose={coarse ? undefined : () => navigate(-1)}
               />
             </div>
           )}
@@ -766,7 +770,11 @@ export function PutDown() {
                 isActive={!pendingConfirm}
                 label={scannerLabel}
                 onTag={handleCode}
-                onClose={handleDone}
+                // #268: the pinned banner's own Done button (above) is this
+                // action, at full size and nowhere near Stop. Duplicating it
+                // 8px from Stop only creates the mis-tap that ends a
+                // distribute session by accident.
+                onClose={coarse ? undefined : handleDone}
               />
             </div>
           )}
