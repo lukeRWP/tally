@@ -500,7 +500,7 @@ These rules exist because every one of them was learned from a production failur
 
 #### Contract Rules (`pw.json`)
 
-1. **`pw.json` in this repo root is the ONLY manifest.** Tally is on the PW v2 contract — there is no `app.yml` and no dual-repo sync (the leftover `orchestrator/apps/tally/app.yml` in the PW repo is v1 legacy; don't resurrect it). `pw.json` contains no IPs, VLANs, VMIDs, or Ansible groups — the PW registry owns those.
+1. **`pw.json` in this repo root is the ONLY manifest — with one exception that must not be deleted.** Tally is on the PW v2 contract: there is no dual-repo manifest sync, and the orchestrator clones this repo fresh and reads `pw.json`. BUT `orchestrator/apps/tally/app.yml` in the PW repo is **not** inert legacy — line 36 carries `adminDb: "TALLY"`, and `pw.json` has no equivalent field. That single line is what makes `migrate-all` record into `TALLY.schema_migrations` instead of falling back to its `<APP>_ADMIN` default; delete the file and the migration ledger silently moves to a stray `TALLY_ADMIN` database, so the next `migrate-all` sees zero applied migrations and re-runs the whole chain (survivable only because every migration here is idempotent — see rule 16). Leave it in place until `adminDb` has a home in `pw.json`. `pw.json` contains no IPs, VLANs, VMIDs, or Ansible groups — the PW registry owns those.
 
 2. **Build steps run with `NODE_ENV=development`** — the orchestrator PM2 process runs `NODE_ENV=production` (ecosystem.config.js), inherited by child processes; the v2 executor overrides it during the build phase so `npm ci` installs devDependencies. Don't add check/build commands that assume devDeps outside the declared `pw.json` build steps.
 
