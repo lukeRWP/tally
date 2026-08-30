@@ -673,9 +673,19 @@ export function Capture() {
       // several ~4s toasts at once; a shared "last created" slot would undo
       // whatever landed most recently, not the item this toast is about
       // (the exact bug the distribute toast's per-toast closure fixed).
-      toast.success(`${created.name} → ${destination.name}`, {
-        action: { label: 'Undo', onClick: () => { void undoCreate(key, created.id, created.name); } },
-      });
+      //
+      // Skipped under showForm (#265): at a desk with the form open, the
+      // toast painted directly over the Name field — its Undo sat exactly
+      // where a mouse goes to type the next item, so reaching for the next
+      // item could soft-delete the one just saved. The receipts list below
+      // the form is already the desk's natural record of every commit, and
+      // it carries its own Undo action (below) for the same reason — this
+      // isn't a lost capability, just a moved one.
+      if (!showForm) {
+        toast.success(`${created.name} → ${destination.name}`, {
+          action: { label: 'Undo', onClick: () => { void undoCreate(key, created.id, created.name); } },
+        });
+      }
 
       // Read from the SNAPSHOT (`seen`/`matchOn`), never live state: by now
       // the next item's photo may have landed and overwritten `vision`, and
@@ -1664,6 +1674,15 @@ export function Capture() {
               {r.state === 'failed' && (
                 <Button size="sm" variant="outline" onClick={() => retryCommit(r)}>
                   Retry
+                </Button>
+              )}
+              {/* Only under showForm (#265): everywhere else, the per-commit
+                  toast still carries its own Undo action. A row action here
+                  as well would just be a second way to do the same thing. */}
+              {saved && showForm && (
+                <Button size="sm" variant="outline" onClick={() => void undoCreate(r.key, saved.id, r.name)}>
+                  <Undo2 className="w-3.5 h-3.5" />
+                  Undo
                 </Button>
               )}
               {saved && hasPrinter && (
