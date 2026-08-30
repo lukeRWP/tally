@@ -54,6 +54,13 @@ function _calcDepreciatedValue(purchasePrice, depreciationRate, purchaseDate) {
   return parseFloat((purchasePrice * Math.pow(1 - depreciationRate, years)).toFixed(2));
 }
 
+/** A stored enum value as a printed label: 'poor' → 'Poor'. Display only. */
+function _titleCase(value) {
+  if (!value) return null;
+  const s = String(value);
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
 /** Money, to the cent — every total in a report is accumulated then rounded once. */
 function _round2(n) {
   return parseFloat(n.toFixed(2));
@@ -534,7 +541,14 @@ const ReportsService = {
       // Measured, not assumed: only tag grouping CAN overlap, and it only does
       // when some item actually carries more than one tag. Consumers use this
       // to label the subtotals rather than to correct them.
-      overlapping: groupList.reduce((s, g) => s + g.itemCount, 0) > totals.itemCount,
+      //
+      // Measured on BOTH counted and excluded items, because both have a column
+      // of their own that a reader can add up. A property whose only
+      // multi-tagged things are boxes still has an "Excluded (box/spares)"
+      // column summing above the total row, and would otherwise be labelled as
+      // if its columns tallied.
+      overlapping: groupList.reduce((s, g) => s + g.itemCount, 0) > totals.itemCount
+        || groupList.reduce((s, g) => s + g.excludedCount, 0) > totals.excludedCount,
     };
   },
 
@@ -545,7 +559,12 @@ const ReportsService = {
     // extractor rather than a fourth SELECT. NULL is a real answer — "how much
     // of the property is in poor condition" is only worth reading beside how
     // much of it nobody has rated.
-    if (groupBy === 'condition') return [row.ITEM_CONDITION || 'Unrated'];
+    //
+    // Title-cased for display: the column is ENUM('new','good','fair','poor'),
+    // and a lowercase `poor` in a Group column that also prints `Unrated`,
+    // `Untagged` and `Total` reads like a different kind of thing on a page
+    // going to an insurer.
+    if (groupBy === 'condition') return [_titleCase(row.ITEM_CONDITION) || 'Unrated'];
     if (groupBy === 'tag') {
       // An explicit bucket, because an item with no tags is not a rounding
       // error — before #310 it was dropped from the report altogether.

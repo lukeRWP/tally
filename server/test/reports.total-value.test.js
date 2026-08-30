@@ -174,6 +174,30 @@ test('overlapping is measured, not assumed — single-tagged items do not overla
   assert.equal(sum(groups, 'currentTotal'), totals.currentTotal);
 });
 
+test('a property whose only multi-tagged thing is a BOX still reports the overlap', async () => {
+  // Every counted item is single-tagged, so the money columns tally — but the
+  // box carries two tags, and "Excluded (box/spares)" is a column of its own
+  // that sums above the total row. An unqualified total row there would be the
+  // same lie in a quieter column.
+  useDb({
+    tags: [
+      { ITEM_ID: 1, TAG_NAME: 'Tools' },
+      { ITEM_ID: 3, TAG_NAME: 'Spares' },
+      { ITEM_ID: 4, TAG_NAME: 'Tools' },
+      { ITEM_ID: 4, TAG_NAME: 'Spares' },
+    ],
+  });
+  const { groups, totals, overlapping } = await Reports.totalValue(1, { groupBy: 'tag' });
+
+  assert.equal(sum(groups, 'itemCount'), totals.itemCount, 'the counted items do NOT overlap here');
+  assert.equal(sum(groups, 'excludedCount'), 2);
+  assert.equal(totals.excludedCount, 1);
+  assert.equal(overlapping, true, 'the excluded column overlaps and the report must say so');
+
+  const last = Reports.generateCsv('total_value', { groups, totals, overlapping }).trim().split('\n').pop();
+  assert.match(last, /groups above overlap/);
+});
+
 // ── the other groupings ─────────────────────────────────────────────────────
 
 test('grouped by area, the groups partition the property exactly', async () => {
@@ -192,16 +216,19 @@ test('grouped by condition (#285), an unrated item is its own answer', async () 
   useDb();
   const { groups, totals, overlapping } = await Reports.totalValue(1, { groupBy: 'condition' });
 
+  // Title-cased: the column is ENUM('new','good','fair','poor'), and a
+  // lowercase `poor` beside `Unrated` on an insurer's page reads as a different
+  // kind of label rather than the same one.
   const byName = Object.fromEntries(groups.map(g => [g.group, g]));
-  assert.deepEqual(Object.keys(byName).sort(), ['Unrated', 'fair', 'good', 'poor']);
-  assert.equal(byName.good.itemCount, 2);        // drill + ladder
-  assert.equal(byName.good.currentTotal, 100);   // 90 + 10
-  assert.equal(byName.poor.currentTotal, 50);
+  assert.deepEqual(Object.keys(byName).sort(), ['Fair', 'Good', 'Poor', 'Unrated']);
+  assert.equal(byName.Good.itemCount, 2);        // drill + ladder
+  assert.equal(byName.Good.currentTotal, 100);   // 90 + 10
+  assert.equal(byName.Poor.currentTotal, 50);
   assert.equal(byName.Unrated.currentTotal, 20);
   // The box is 'fair' — present as an exclusion, absent from the money.
-  assert.equal(byName.fair.itemCount, 0);
-  assert.equal(byName.fair.excludedCount, 1);
-  assert.equal(byName.fair.currentTotal, 0);
+  assert.equal(byName.Fair.itemCount, 0);
+  assert.equal(byName.Fair.excludedCount, 1);
+  assert.equal(byName.Fair.currentTotal, 0);
 
   assert.equal(overlapping, false);
   assert.equal(sum(groups, 'currentTotal'), totals.currentTotal);

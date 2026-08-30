@@ -192,6 +192,49 @@ test('an item with no money at all has no basis to report', async () => {
   assert.equal(item.valueBasis, null);
 });
 
+/**
+ * #310, same shape of bug on the same document: a join that MULTIPLIES.
+ *
+ * `insuranceSummary` LEFT JOINs `item_dates` (DATE_TYPE is free text a user
+ * types — nothing stops two rows saying "Purchased") and a `condition_snapshots`
+ * subquery keyed on `MAX(CREATED_AT)` (a DATETIME tie returns both rows). Either
+ * one fans a single item out into several, and the item then prints twice with
+ * its value added to the band twice — on the report you hand an insurer.
+ *
+ * Both fan-outs at once, on one $1,400 laptop: 2 date rows × 2 tied snapshots =
+ * 4 rows for one item. The service de-duplicates on ITEM_ID, so the fix holds
+ * regardless of what any future join does. Delete that `seen` Set and this test
+ * fails — nothing else in the suite would.
+ */
+test('a join that fans one item out still reports one item, once', async () => {
+  const base = {
+    ITEM_ID: 7, ITEM_NAME: 'Dell XPS 15', AREA_NAME: 'Study', CONTAINER_NAME: 'Desk',
+    PURCHASE_PRICE: '1400.00', CURRENT_VALUE: '1400.00', CURRENT_VALUE_IS_ESTIMATE: 0,
+    COMPLETENESS: 'complete',
+  };
+  const rows = [
+    // Two "Purchased" dates × two condition snapshots sharing one CREATED_AT.
+    { ...base, PURCHASE_DATE: new Date('2024-03-01'), LATEST_CONDITION: 'good' },
+    { ...base, PURCHASE_DATE: new Date('2024-03-01'), LATEST_CONDITION: 'fair' },
+    { ...base, PURCHASE_DATE: new Date('2025-11-20'), LATEST_CONDITION: 'good' },
+    { ...base, PURCHASE_DATE: new Date('2025-11-20'), LATEST_CONDITION: 'fair' },
+  ];
+  Reports.init({ db: { query: async () => rows }, logger: noop, config: {} });
+
+  const items = await Reports.insuranceSummary(1);
+  assert.equal(items.length, 1, 'the laptop was reported four times — one row per join combination');
+
+  // The band's two figures, computed exactly as _renderInsurancePdf computes
+  // them: the fan-out reported a two-laptop, $2,800 study.
+  const counted = items.filter(i => i.completeness === 'complete');
+  assert.equal(counted.reduce((s, i) => s + (i.currentValue || 0), 0), 1400);
+  assert.equal(counted.reduce((s, i) => s + (i.purchasePrice || 0), 0), 1400);
+
+  // …and the CSV a spreadsheet sums has one data row, not four.
+  const lines = Reports.generateCsv('insurance', items).trim().split('\n');
+  assert.equal(lines.length, 2, `expected a header and ONE row, got ${lines.length - 1} rows`);
+});
+
 // ── the exports ───────────────────────────────────────────────────────────
 
 test('every basis the report can produce has a PDF mark and none prints undefined', () => {
