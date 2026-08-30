@@ -3,6 +3,7 @@ import { Printer as PrinterIcon, Copy, Trash2, RotateCw } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ColHead } from '@/components/ui/col-head';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { Input } from '@/components/ui/input';
 import { toast } from '@/components/ui/toast';
 import {
@@ -51,7 +52,20 @@ export function PrinterSettings({ propertyId }: { propertyId?: number }) {
 
   const [newName, setNewName] = React.useState('');
   const [issuedToken, setIssuedToken] = React.useState<string | null>(null);
+  // The agent token is shown exactly once, at registration (see the
+  // issuedToken panel below). Removing the printer here has no undo and the
+  // same token can't be reissued — a mis-click means re-flashing
+  // tally-printer.conf on the Pi from scratch (#278).
+  const [removeOpen, setRemoveOpen] = React.useState(false);
   const printer = printers?.[0];
+
+  function confirmRemove() {
+    if (!printer) return;
+    revokePrinter.mutate(printer.id, {
+      onSuccess: () => { setIssuedToken(null); setRemoveOpen(false); },
+      onError: (e) => { toast(e instanceof Error ? e.message : 'Could not remove the printer'); setRemoveOpen(false); },
+    });
+  }
 
   // Drop the one-time token panel when the selected property changes — it
   // belongs to the property it was issued for, and showing it under another
@@ -107,14 +121,23 @@ agent_token = ${issuedToken}`}
               {problem ?? (online ? 'Online' : offlineLabel(printer.lastSeenAt))}
             </Badge>
             <Button variant="outline" size="sm" className="ml-auto"
+                    aria-label={`Remove ${printer.name}`}
                     disabled={revokePrinter.isPending}
-                    onClick={() => revokePrinter.mutate(printer.id, {
-                      onSuccess: () => setIssuedToken(null),
-                      onError: (e) => toast(e instanceof Error ? e.message : 'Could not remove the printer'),
-                    })}>
+                    onClick={() => setRemoveOpen(true)}>
               <Trash2 className="w-3.5 h-3.5" />
             </Button>
           </div>
+
+          <ConfirmDialog
+            open={removeOpen}
+            onOpenChange={(open) => { if (!revokePrinter.isPending) setRemoveOpen(open); }}
+            title={`Remove ${printer.name}?`}
+            description="This can't be undone. The Pi's saved token stops working immediately, and the same token can't be reissued — re-adding the printer means re-flashing tally-printer.conf with a new one."
+            destructive
+            confirmLabel="Remove"
+            isPending={revokePrinter.isPending}
+            onConfirm={confirmRemove}
+          />
 
           <div className="flex flex-col gap-1.5">
             <p className="font-mono text-[10px] uppercase tracking-[0.1em] text-[var(--color-text-muted)]">Loaded roll</p>

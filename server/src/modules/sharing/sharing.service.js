@@ -49,8 +49,17 @@ const SharingService = {
   },
 
   async validate(token) {
+    // The public page has to frame itself for a stranger — who shared this and
+    // when it stops working — so the sharer's display name is joined in here.
+    // LEFT JOIN on purpose: a link outlives the user row it was created from,
+    // and a share whose creator is gone must still resolve (the page then just
+    // omits the "shared by" line rather than inventing one).
     const rows = await _db.query(
-      'SELECT * FROM TALLY.share_links WHERE TOKEN = ? AND EXPIRES_AT > NOW()',
+      `SELECT s.ENTITY_TYPE, s.ENTITY_ID, s.CREATED_BY, s.EXPIRES_AT, s.CREATED_AT,
+              u.DISPLAY_NAME AS CREATED_BY_NAME
+       FROM TALLY.share_links s
+       LEFT JOIN TALLY.users u ON s.CREATED_BY = u.ID
+       WHERE s.TOKEN = ? AND s.EXPIRES_AT > NOW()`,
       [token]
     );
     if (!rows.length) return null;
@@ -60,6 +69,9 @@ const SharingService = {
       entityType: row.ENTITY_TYPE,
       entityId: row.ENTITY_ID,
       createdBy: row.CREATED_BY,
+      createdByName: row.CREATED_BY_NAME || null,
+      expiresAt: row.EXPIRES_AT || null,
+      createdAt: row.CREATED_AT || null,
     };
   },
 

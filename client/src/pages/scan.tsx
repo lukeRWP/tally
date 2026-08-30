@@ -127,7 +127,13 @@ export function Scan() {
               capture.tsx for the ~200px regression this idiom exists to
               avoid). The clamp binds on tablets only. */}
           <div className={cn('flex flex-col flex-1 min-h-0', atDesk && coarse && 'max-h-[clamp(230px,36vh,280px)] overflow-hidden')}>
-            <TagScanner onTag={handleCode} onClose={() => navigate(-1)} />
+            {/* #268: no Close beside Stop on a finger-driven screen. The two
+                are identical 32px controls 8px apart in the scanner's own
+                control row, and one of them leaves the page — a mis-tap
+                every session. A coarse pointer has the nav and the browser's
+                own back; a mouse keeps the button, because a cursor does not
+                slip 8px. */}
+            <TagScanner onTag={handleCode} onClose={coarse ? undefined : () => navigate(-1)} />
           </div>
 
           <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-[var(--color-text-muted)] text-center shrink-0">

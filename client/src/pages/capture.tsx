@@ -81,6 +81,25 @@ const PARTIAL_OPTIONS = [
   { value: 'accessories_only' as const, label: 'spares only' },
 ];
 
+/**
+ * A value that is a barcode and nothing else: 8–14 digits, the length range
+ * every retail symbology this app scans lives in (EAN-8 through GTIN-14).
+ *
+ * Used on the desk form's submit to catch a scan that landed in the NAME
+ * field. #264 fixed where focus goes between items, which is the loop's
+ * steady state — but the FIRST scan of a page load (or a remount, or a tablet
+ * switching into typed mode) starts with the caret in Name by design, and a
+ * USB reader is a keyboard: it types the code there and its terminating Enter
+ * submits it. A guard on the submit itself is the version that does not care
+ * where focus happened to be, so it also covers a pasted code and the caret
+ * being moved by hand.
+ *
+ * Deliberately anchored and digits-only: a name that is nothing but a GTIN's
+ * worth of digits is not a name anyone typed on purpose, and anything with a
+ * letter or a space in it is left alone.
+ */
+const BARE_BARCODE = /^\d{8,14}$/;
+
 const DEST_KEY = 'tally-last-container';
 /** How many recent bins to offer at step 3. Three fits one row at 390px. */
 const RECENTS = 3;
@@ -339,7 +358,25 @@ export function Capture() {
   const [visionPending, setVisionPending] = React.useState(false);
   // The name is the one field allowed to pre-fill, so it is the one field that
   // needs to look unconfirmed until someone has actually looked at it.
-  const [nameIsSuggested, setNameIsSuggested] = React.useState(false);
+  /**
+   * The name the model offered and this page actually applied — not a flag
+   * saying it did.
+   *
+   * The flag version could disagree with the field. `identifyPhoto` decides
+   * whether to apply a suggestion, then repeats the guard inside the state
+   * updater as its last line of defence ("a name typed while the request was
+   * in flight is theirs") — but the flag beside it was set unconditionally,
+   * so in exactly the race the guard exists for, the user's own name was kept
+   * AND marked suggested. #266 then reads that flag to decide whether a
+   * hand-typed name is worth protecting, so the next barcode lookup
+   * overwrote it with the catalogue title and offered no Keep.
+   *
+   * Storing the applied name makes the two agree by construction:
+   * `nameIsSuggested` below is a comparison against the live field, so a
+   * suggestion that lost the race is a name that does not match, and the
+   * flag is false without anyone having to remember to clear it.
+   */
+  const [suggestedName, setSuggestedName] = React.useState<string | null>(null);
   /**
    * #266: a catalogue title a lookup found but did NOT apply, because the name
    * in the field was typed by a person. Offered behind a Keep rather than
@@ -347,6 +384,15 @@ export function Capture() {
    */
   const [catalogueName, setCatalogueName] = React.useState<string | null>(null);
   const [reviewOpen, setReviewOpen] = React.useState(false);
+  /**
+   * Is the name in the field the model's, unread? Derived, never stored — see
+   * suggestedName. Both name fields wear the dashed "unconfirmed" border on
+   * this, and #266 reads it to tell a person's decision from a machine's
+   * guess.
+   */
+  const nameIsSuggested = suggestedName != null && draft.name === suggestedName;
+  /** Editing (or accepting) a name makes it theirs — there is no suggestion left. */
+  function clearSuggestedName() { setSuggestedName(null); }
   /**
    * Set the moment a barcode resolves to a real catalogue product.
    *
@@ -418,7 +464,7 @@ export function Capture() {
     setDupes([]);
     setVision(null);
     setVisionPending(false);
-    setNameIsSuggested(false);
+    clearSuggestedName();
     setCatalogueName(null);
     setReviewOpen(false);
     setVisionFailed(false);
@@ -905,7 +951,7 @@ export function Capture() {
         catalogueHit.current = true;
         setVision(null);
         setReviewOpen(false);
-        setNameIsSuggested(false);
+        clearSuggestedName();
         // A barcode says WHAT the thing is, never where it goes. Every item
         // earns its place by being put somewhere on step 3 — a pinned bin is a
         // shortcut for answering that question, not a reason to skip it.
@@ -933,14 +979,26 @@ export function Capture() {
    * back to. The outcome goes back to the FIELD, which owns focus and the
    * lookup-guard re-arm; the shared network + parsing is lookupBarcode.
    */
-  async function applyBarcodeLookup(code: string): Promise<'hit' | 'miss' | 'failed'> {
+  async function applyBarcodeLookup(
+    code: string,
+    opts?: { fromNameField?: boolean },
+  ): Promise<'hit' | 'miss' | 'failed'> {
     try {
       const { product, dupes: existing } = await lookupBarcode(code);
       setDupes(existing);
       // Read the draft fresh, exactly like handleCode: the lookup round trip
       // is long enough for the user to have typed a description, and spreading
       // a pre-await snapshot would silently discard it.
-      const live = stateRef.current.draft;
+      //
+      // `fromNameField` is the rescue path (see BARE_BARCODE): the code was
+      // typed into Name by a scanner, so whatever the ref still holds there
+      // is the code, not a name. Blanking it here rather than trusting the
+      // caller's setDraft to have landed keeps this independent of React's
+      // flush timing — the answer must not depend on whether the mirroring
+      // effect ran before the network did.
+      const live = opts?.fromNameField
+        ? { ...stateRef.current.draft, name: '' }
+        : stateRef.current.draft;
       const title = product?.shortName || product?.name || '';
       /**
        * #266: whether the name in the field is one a PERSON put there.
@@ -974,7 +1032,7 @@ export function Capture() {
         catalogueHit.current = true;
         setVision(null);
         setReviewOpen(false);
-        setNameIsSuggested(false);
+        clearSuggestedName();
         return 'hit';
       }
       // Same message as the camera path: half the household is in no catalogue.
@@ -1103,7 +1161,12 @@ export function Capture() {
         // The guard is repeated inside the updater as the last line of defence:
         // the decision above is a read, this is the invariant.
         setDraft((d) => (d.name.trim() ? d : { ...d, name: s.name as string }));
-        setNameIsSuggested(true);
+        // Records WHICH name was offered, not that one was — so if the
+        // updater above refused (a name typed mid-flight), the field no
+        // longer matches and `nameIsSuggested` is false on its own. Setting a
+        // boolean here instead marked the user's own name as the model's, and
+        // #266 then let the next lookup overwrite it with no Keep offered.
+        setSuggestedName(s.name);
       }
     } catch (err) {
       console.warn('[vision] identify threw', err);
@@ -1547,7 +1610,7 @@ export function Capture() {
           // receiptList.
           receiptsSlot={receiptList}
           nameIsSuggested={nameIsSuggested}
-          setNameIsSuggested={setNameIsSuggested}
+          onNameEdited={clearSuggestedName}
           // #266: the catalogue title a lookup found and did NOT apply over a
           // hand-typed name, offered on the same terms as everything else this
           // page suggests — behind a Keep.
@@ -1557,7 +1620,7 @@ export function Capture() {
             setDraft((d) => ({ ...d, name: catalogueName }));
             // Taken deliberately, so it is theirs now: no unconfirmed border,
             // and nothing left to offer.
-            setNameIsSuggested(false);
+            clearSuggestedName();
             setCatalogueName(null);
           }}
           seedAreaId={ctxArea || dest?.areaId}
@@ -1790,7 +1853,7 @@ export function Capture() {
                 className={cn(nameIsSuggested && 'border-dashed border-[var(--color-primary)]')}
                 onChange={(e) => {
                   // Editing it makes it theirs.
-                  setNameIsSuggested(false);
+                  clearSuggestedName();
                   setDraft((d) => ({ ...d, name: e.target.value }));
                 }}
                 // Typing a name and pressing enter is one gesture; making the
@@ -2038,7 +2101,7 @@ function ManualCreate({
   draft, setDraft, dest, onPickDest, recents, onChoosePhoto, dragging, setDragging,
   onDropFile, onSubmit, pending, onLookupBarcode, receiptCount,
   vision, reviewOpen, setReviewOpen, photoStatus, reviewOffered, onClearPhoto,
-  dupeWarning, receiptsSlot, nameIsSuggested, setNameIsSuggested,
+  dupeWarning, receiptsSlot, nameIsSuggested, onNameEdited,
   catalogueName, onKeepCatalogueName,
   seedAreaId, seedPropertyId, onUseCamera,
 }: {
@@ -2056,8 +2119,13 @@ function ManualCreate({
   pending: boolean;
   /** The page's reaction to a barcode (#230) — lookup + dupe check + draft
    *  and vision writes. This component owns only the FIELD's behaviour:
-   *  when to fire, when not to fire twice, and where focus goes after. */
-  onLookupBarcode: (code: string) => Promise<'hit' | 'miss' | 'failed'>;
+   *  when to fire, when not to fire twice, and where focus goes after.
+   *  `fromNameField` marks the rescue path — a code a scanner typed into
+   *  Name, which must not be read back as a hand-typed name. */
+  onLookupBarcode: (
+    code: string,
+    opts?: { fromNameField?: boolean },
+  ) => Promise<'hit' | 'miss' | 'failed'>;
   /** Ticks up when a commit appends its receipt — the submit is optimistic,
    *  so this is the only transition a completed submit is visible in here. */
   receiptCount: number;
@@ -2077,7 +2145,8 @@ function ManualCreate({
   /** The session log, rendered in this form's right column (#277). */
   receiptsSlot: React.ReactNode;
   nameIsSuggested: boolean;
-  setNameIsSuggested: (v: boolean) => void;
+  /** Called when the name stops being the model's — an edit, or a Keep. */
+  onNameEdited: () => void;
   /** #266: a catalogue title found by a lookup that refused to overwrite a
    *  hand-typed name. Rendered as an offer under Name; null when there is
    *  nothing to offer. */
@@ -2148,15 +2217,17 @@ function ManualCreate({
   }, [receiptCount]);
 
   /** Fire the lookup once per distinct value — see lastLookedUp. */
-  async function lookupIfNew(raw: string) {
+  async function lookupIfNew(raw: string, opts?: { fromNameField?: boolean }) {
     const code = raw.trim();
     if (!code || lookingUp || code === lastLookedUp.current) return;
     lastLookedUp.current = code;
     // This item was identified through the barcode field, so the NEXT one
-    // starts there too — see cameFromBarcode.
+    // starts there too — see cameFromBarcode. True for the rescue path as
+    // well: a code that arrived in Name came off a trigger pull, and the
+    // operator's next gesture is another one.
     cameFromBarcode.current = true;
     setLookingUp(true);
-    const outcome = await onLookupBarcode(code);
+    const outcome = await onLookupBarcode(code, opts);
     setLookingUp(false);
     if (outcome === 'failed') {
       // Re-arm: pressing Enter again on the unchanged code is a retry, not
@@ -2171,6 +2242,35 @@ function ManualCreate({
   }
 
   const ready = draft.name.trim().length > 0 && dest != null;
+
+  /**
+   * The submit's last check: is this "name" actually a barcode? (#264
+   * follow-up.)
+   *
+   * #264 fixed where focus goes BETWEEN items. The first scan of a session
+   * still starts with the caret in Name — that is the correct place for it to
+   * start, and a typist would be wrong-footed by anything else — so a USB
+   * reader's first trigger pull types the code there and its Enter submits
+   * it. Guarding the submit instead of the focus covers that, plus the paste,
+   * plus anyone who clicked into Name by hand.
+   *
+   * The code is moved into the field it belongs in and run through the SAME
+   * lookup a scan into that field would have got, so the item still gets its
+   * catalogue name, its productId and its duplicate check. Returns true when
+   * it took the submit over.
+   */
+  function rescuedBarcodeInName(): boolean {
+    const typed = draft.name.trim();
+    // Only when the barcode field is empty: a code already sitting there
+    // means these digits are something else (a model number, a serial), and
+    // guessing at that point would be the same sin in the other direction.
+    if (!BARE_BARCODE.test(typed) || (draft.barcode ?? '').trim()) return false;
+    setDraft((d) => ({ ...d, name: '', barcode: typed }));
+    // fromNameField: the lookup must not read those digits back out of the
+    // draft as a hand-typed name and "protect" them under #266.
+    void lookupIfNew(typed, { fromNameField: true });
+    return true;
+  }
 
   return (
     <div className="flex flex-col gap-3">
@@ -2192,7 +2292,15 @@ function ManualCreate({
     <div className="grid grid-cols-[minmax(0,1fr)_minmax(260px,320px)] items-start gap-6">
       <form
         className="flex flex-col gap-4"
-        onSubmit={(e) => { e.preventDefault(); if (ready && !pending && !lookingUp) onSubmit(); }}
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (pending || lookingUp) return;
+          // Before the ready gate, and before anything is written: a bare
+          // code in Name is a mis-fielded scan whichever control fired this
+          // submit — the button, or the reader's own Enter.
+          if (rescuedBarcodeInName()) return;
+          if (ready) onSubmit();
+        }}
       >
         <div className="flex flex-col gap-1">
           <label htmlFor="mc-name" className="font-mono text-[10px] uppercase tracking-[0.1em] text-[var(--color-text-muted)]">
@@ -2209,7 +2317,7 @@ function ManualCreate({
             className={cn(nameIsSuggested && 'border-dashed border-[var(--color-primary)]')}
             onChange={(e) => {
               // Editing it makes it theirs.
-              setNameIsSuggested(false);
+              onNameEdited();
               setDraft((d) => ({ ...d, name: e.target.value }));
             }}
           />
