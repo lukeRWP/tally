@@ -34,6 +34,7 @@ import type { Item } from '@/types/inventory';
 import { cn } from '@/lib/utils';
 import { useLayoutMode } from '@/hooks/use-layout-mode';
 import { useKeyboardNav, useNavScrollIntoView } from '@/hooks/use-keyboard-nav';
+import { barOffsetCss, useCarryBannerShowing, useRegisterBottomBar } from '@/hooks/use-bottom-stack';
 
 export function ContainerDetail() {
   // Above every early return — hooks must run on each render.
@@ -88,6 +89,16 @@ export function ContainerDetail() {
   const addTag = useAddTag();
   const pickUp = useCarryStore((s) => s.pickUp);
   const carried = useCarryStore((s) => s.carried);
+  // Whatever CarryBanner itself renders for (the "put back" banner counts
+  // too, not just an active carry) — the select-mode bar below needs to
+  // know when that banner is on screen so it can get out of its way. Shared
+  // with root-layout.tsx's own `<main>` reserve and toast.tsx's touch
+  // offset via use-bottom-stack.ts, rather than re-derived here.
+  const carryBannerShowing = useCarryBannerShowing();
+  // Global chrome mounted elsewhere (the toast layer, `<main>`'s own scroll
+  // reserve) has no other way to see that THIS page's select-mode bar is up
+  // — register it for as long as `selecting` is true so both can clear it.
+  useRegisterBottomBar(selecting);
 
   /**
    * The ring j/k walks: nested bins THEN item rows, exactly as rendered below.
@@ -510,19 +521,15 @@ export function ContainerDetail() {
     + (bulkDeleteCascades ? ' Nested bins bring their contents with them.' : '');
 
   return (
-    <div className={cn(
-      'flex flex-col gap-4',
-      // The select-mode bar is `fixed`, so — same idiom as the carry-banner
-      // reserve in root-layout.tsx's <main> (a state-keyed padding swap,
-      // rather than inventing a new one) — reserve extra bottom clearance
-      // only while it's actually on screen. It buries the final row
-      // otherwise (#276): the baseline pb-16 sits within single-digit
-      // pixels of the bar's own footprint on desk/tablet-landscape once
-      // it's back to one line, and phone width wraps six controls plus the
-      // count onto two lines, needing the same extra room by a different
-      // route. Measured (see PR body) rather than eyeballed on both chromes.
-      selecting ? 'pb-32' : 'pb-16',
-    )}>
+    // pb-16 clears the FAB (a local, non-stacking concern — it's hidden
+    // whenever the select-mode bar would be up anyway). The select bar's
+    // OWN bottom clearance is reserved centrally, in root-layout.tsx's
+    // <main> (see the `useRegisterBottomBar` call above and
+    // use-bottom-stack.ts's own doc comment) rather than duplicated here —
+    // that used to be a page-local pb-* swap that had to be kept in sync by
+    // hand with the bar's own offset below, which is exactly the kind of
+    // drift #286's fix round 2 hit once carrying entered the picture too.
+    <div className="flex flex-col gap-4 pb-16">
       {/* Breadcrumbs */}
       <Breadcrumbs items={breadcrumbItems} />
 
@@ -697,7 +704,21 @@ export function ContainerDetail() {
           flex-wrap: Move/Tag/Delete/Queue plus All/Cancel no longer fit one
           line on a phone now that Tag and Delete joined Move and Queue. */}
       {selecting && (
-        <div className="fixed bottom-[calc(5.5rem+env(safe-area-inset-bottom))] lg:bottom-8 left-4 right-4 lg:left-auto lg:right-8 lg:w-auto lg:max-w-[46rem] z-30 bg-[var(--color-card)] border-2 border-[var(--color-text)] rounded-[var(--radius-md)] shadow-lg px-3 py-2.5 flex flex-wrap items-center gap-2">
+        <div
+          className="fixed left-4 right-4 lg:left-auto lg:right-8 lg:w-auto lg:max-w-[46rem] z-30 bg-[var(--color-card)] border-2 border-[var(--color-text)] rounded-[var(--radius-md)] shadow-lg px-3 py-2.5 flex flex-wrap items-center gap-2"
+          // CarryBanner docks in this same bottom-right corner on both
+          // chromes, and both bars are `fixed` — nothing makes them yield to
+          // each other on their own. The two states are genuinely reachable
+          // together (Move here adds to a load already picked up elsewhere),
+          // so this stacks above the banner's own dock instead of letting
+          // them overlap, via the same shared model root-layout.tsx's <main>
+          // and toast.tsx both read (use-bottom-stack.ts) — an inline style
+          // rather than a class because that model computes a runtime value
+          // Tailwind's build-time class scanner cannot see. `!wide` (not a
+          // `lg:` class) picks the chrome, since `useLayoutMode` is
+          // orientation-aware in a way a pure width breakpoint is not.
+          style={{ bottom: barOffsetCss({ touch: !wide, carrying: carryBannerShowing }) }}
+        >
           <p className="font-mono text-xs uppercase tracking-[0.06em] text-[var(--color-text)] shrink-0 whitespace-nowrap tabular-nums">
             {selected.size} selected
           </p>

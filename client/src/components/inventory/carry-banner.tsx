@@ -3,6 +3,7 @@ import { X, ScanLine, Undo2 } from 'lucide-react';
 import { useCarryStore, type CarriedItem } from '@/store/carry-store';
 import { useMoveItem, useMoveContainer } from '@/hooks/use-inventory';
 import { useLayoutMode } from '@/hooks/use-layout-mode';
+import { carryBannerOffsetCss } from '@/hooks/use-bottom-stack';
 import { toast } from '@/components/ui/toast';
 import { cn } from '@/lib/utils';
 
@@ -28,10 +29,13 @@ function describeLoad(load: CarriedItem[]): string {
 export function CarryBanner() {
   const navigate = useNavigate();
   // Docks bottom-right as a panel when there is no bottom nav to sit above,
-  // and spans the width above the bar when there is.
-  const dock = useLayoutMode() === 'sidebar'
-    ? 'bottom-6 right-6 w-[26rem]'
-    : 'bottom-[calc(4.6rem+env(safe-area-inset-bottom))] left-3 right-3';
+  // and spans the width above the bar when there is. The `bottom` offset
+  // itself comes from the shared stack model (use-bottom-stack.ts) — an
+  // inline style, not a class, since that model computes a runtime value
+  // Tailwind's build-time class scanner cannot see.
+  const touch = useLayoutMode() !== 'sidebar';
+  const dockClassName = touch ? 'left-3 right-3' : 'right-6 w-[26rem]';
+  const dockOffset = carryBannerOffsetCss(touch);
   const { pathname } = useLocation();
   const carried = useCarryStore((s) => s.carried);
   const lastMove = useCarryStore((s) => s.lastMove);
@@ -82,8 +86,11 @@ export function CarryBanner() {
 
   if (lastMove) {
     return (
-      <div className={cn('fixed z-40', dock,
-        'border-2 border-[var(--color-text)] bg-[var(--color-bg)] rounded-[var(--radius-sm)] px-3 py-2 flex items-center gap-2')}>
+      <div
+        className={cn('fixed z-40', dockClassName,
+          'border-2 border-[var(--color-text)] bg-[var(--color-bg)] rounded-[var(--radius-sm)] px-3 py-2 flex items-center gap-2')}
+        style={{ bottom: dockOffset }}
+      >
         <span className="min-w-0 flex-1">
           <span className="block font-mono text-[10px] uppercase tracking-[0.1em] text-[var(--color-text-muted)]">
             moved to {lastMove.to.name}
@@ -118,12 +125,15 @@ export function CarryBanner() {
   if (carried.length === 0) return null;
 
   return (
-    <div className={cn('fixed z-40', dock,
-      // --color-primary-bg is an 8%-alpha tint meant for chips on solid
-      // surfaces; this banner floats over page content, so the tint is
-      // layered on an opaque base or the page bleeds through it.
-      '[background:linear-gradient(var(--color-primary-bg),var(--color-primary-bg)),var(--color-bg)]',
-      'border-2 border-[var(--color-primary)] rounded-[var(--radius-sm)] px-3 py-2 flex items-center gap-2')}>
+    <div
+      className={cn('fixed z-40', dockClassName,
+        // --color-primary-bg is an 8%-alpha tint meant for chips on solid
+        // surfaces; this banner floats over page content, so the tint is
+        // layered on an opaque base or the page bleeds through it.
+        '[background:linear-gradient(var(--color-primary-bg),var(--color-primary-bg)),var(--color-bg)]',
+        'border-2 border-[var(--color-primary)] rounded-[var(--radius-sm)] px-3 py-2 flex items-center gap-2')}
+      style={{ bottom: dockOffset }}
+    >
       <span className="min-w-0 flex-1">
         <span className="block font-mono text-[10px] uppercase tracking-[0.1em] text-[var(--color-primary)] font-bold">
           carrying {carried.length > 1 ? `· ${carried.length}` : ''}

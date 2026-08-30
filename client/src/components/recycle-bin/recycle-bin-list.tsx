@@ -11,6 +11,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from '@/components/ui/toast';
 import { cn } from '@/lib/utils';
 import { useLayoutMode } from '@/hooks/use-layout-mode';
+import { barOffsetCss, useCarryBannerShowing, useRegisterBottomBar } from '@/hooks/use-bottom-stack';
 
 /**
  * The recycle bin, one row per DELETION rather than one row per swept-up item.
@@ -129,6 +130,13 @@ export function RecycleBinList() {
   const [selecting, setSelecting] = useState(false);
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [restoreProgress, setRestoreProgress] = useState<{ i: number; total: number } | null>(null);
+  // Same shared bottom-stack model container-detail.tsx's select bar uses
+  // (use-bottom-stack.ts): `carryBannerShowing` for this bar's own offset,
+  // and registering while `selecting` is true so global chrome mounted
+  // elsewhere (the toast layer, root-layout.tsx's own <main> reserve) knows
+  // to clear this bar too.
+  const carryBannerShowing = useCarryBannerShowing();
+  useRegisterBottomBar(selecting);
   // Keyed by batch id — a failed restore (most commonly the ancestor-blocked
   // 409) renders inline on that row rather than as a toast, for both a
   // single-row Restore click and a bulk-restore loop failure alike.
@@ -389,7 +397,14 @@ export function RecycleBinList() {
       {/* Select-mode action bar — mirrors container-detail's, at the minimum
           this page needs: count, All/Cancel, and the one bulk action. */}
       {selecting && (
-        <div className="fixed bottom-[calc(5.5rem+env(safe-area-inset-bottom))] lg:bottom-8 left-4 right-4 lg:left-auto lg:right-8 lg:w-[24rem] z-30 bg-[var(--color-card)] border-2 border-[var(--color-text)] rounded-[var(--radius-md)] shadow-lg px-3 py-2.5 flex flex-wrap items-center gap-2">
+        <div
+          className="fixed left-4 right-4 lg:left-auto lg:right-8 lg:w-[24rem] z-30 bg-[var(--color-card)] border-2 border-[var(--color-text)] rounded-[var(--radius-md)] shadow-lg px-3 py-2.5 flex flex-wrap items-center gap-2"
+          // Shared with container-detail.tsx's select bar (use-bottom-stack.ts)
+          // so this stacks above the carry banner instead of overlapping it,
+          // the same bug class as #286 — an inline style, not a class, since
+          // the offset is a runtime value Tailwind's class scanner can't see.
+          style={{ bottom: barOffsetCss({ touch: !wide, carrying: carryBannerShowing }) }}
+        >
           <p className="font-mono text-xs uppercase tracking-[0.06em] text-[var(--color-text)] flex-1 min-w-0 truncate tabular-nums">
             {selected.size} selected
           </p>
