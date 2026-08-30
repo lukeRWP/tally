@@ -200,7 +200,7 @@ async function decodedSymbols() {
 
 // ── the claims ─────────────────────────────────────────────────────────────
 
-for (const [preset, fixture, kind] of [
+for (const [preset, entity, kind] of [
   ['small', SMALL, '2x1 item tag'],
   ['medium', MEDIUM, '3x3 bin tag'],
 ]) {
@@ -210,7 +210,7 @@ for (const [preset, fixture, kind] of [
     // Exact equality, deliberately. "It decodes to something" would pass on a
     // label carrying the wrong entity's code, which is the failure that
     // actually costs someone an afternoon in a garage.
-    assert.equal(text, `${CLIENT_URL}/s/${fixture.qrCode}`,
+    assert.equal(text, `${CLIENT_URL}/s/${entity.qrCode}`,
       `${preset}: the printed QR decodes to ${JSON.stringify(text)}`);
   });
 }
