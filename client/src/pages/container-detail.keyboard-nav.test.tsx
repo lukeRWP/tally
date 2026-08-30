@@ -229,9 +229,12 @@ test('#267 x #279: the Select toggle\'s own blur-on-activate and the ring\'s foc
   toggle.focus();
   fireEvent.click(toggle);
 
-  // #267: nothing holds focus once select mode is on.
+  // #267: the toggle itself no longer holds focus once select mode is on.
+  // #288: it doesn't fall through to BODY either any more — it lands on the
+  // select-mode bar (see container-detail.select-bar.test.tsx for the
+  // dedicated coverage of that landing spot and why it's safe for Space).
   expect(document.activeElement).not.toBe(toggle);
-  expect(document.activeElement).toBe(document.body);
+  expect(document.activeElement).toBe(screen.getByText('0 selected').closest('div'));
 
   // #279: Tab landing on a row still hands the ring its cursor.
   fireEvent.focusIn(screen.getByRole('button', { name: 'Select Nested A' }));
