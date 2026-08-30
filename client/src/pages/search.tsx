@@ -283,7 +283,7 @@ export function SearchPage() {
           // is a full-width rule above the split, as it is on every other list
           // in the app, rather than a caption on the left column only.
           <>
-            <ColHead>{results.length} result{results.length === 1 ? '' : 's'}</ColHead>
+            <ColHead hint={split}>{results.length} result{results.length === 1 ? '' : 's'}</ColHead>
             <SearchResults
               items={results}
               split={split}

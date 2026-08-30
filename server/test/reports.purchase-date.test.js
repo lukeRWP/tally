@@ -18,8 +18,13 @@ test('no report joins the purchase date on a value the UI never writes', () => {
 });
 
 test('every purchase-date join accepts what the form actually writes', () => {
+  // Two joins, not the original four: #310 collapsed totalValue's three
+  // near-identical SELECTs (one per grouping) into a single query, leaving the
+  // insurance summary and that one. What matters is that EVERY join present
+  // matches what the date form writes — the count is only here so a silent
+  // deletion of them all cannot pass.
   const joins = SRC.match(/id_purchase\.ITEM_ID = i\.ID AND [^\n]+/g) || [];
-  assert.ok(joins.length >= 4, `expected the purchase joins, found ${joins.length}`);
+  assert.ok(joins.length >= 2, `expected the purchase joins, found ${joins.length}`);
   for (const j of joins) {
     assert.match(j, /LOWER\(id_purchase\.DATE_TYPE\)/, `not case-insensitive: ${j}`);
     assert.match(j, /'purchased'/, `does not accept the form's preset: ${j}`);

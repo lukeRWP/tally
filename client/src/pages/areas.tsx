@@ -233,7 +233,7 @@ export function AreasPage() {
             />
           )}
 
-          <ColHead action="+ Add" onAction={() => setCreateAreaOpen(true)}>
+          <ColHead action="+ Add" onAction={() => setCreateAreaOpen(true)} hint={split}>
             Areas · {areas?.length ?? 0}
           </ColHead>
 

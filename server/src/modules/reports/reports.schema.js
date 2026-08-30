@@ -18,8 +18,16 @@ const REPORT_TYPES = Object.freeze([
   'tag',
 ]);
 
-/** How `total_value` aggregates. `property` is a single grand total. */
-const GROUP_BY = Object.freeze(['property', 'area', 'tag']);
+// How `total_value` aggregates. `property` is a single grand total.
+//
+// `condition` was offered by the page for as long as the page existed and had
+// no server branch at all, so it 422'd; #263 removed it rather than paper over
+// it and #285 filed what implementing it would take. It is implemented now —
+// `items.CONDITION` is a first-class column, and once the grouping key became
+// a JS function of a row rather than a SELECT of its own, this is one more key
+// extractor. Whatever is added here inherits the invariant test in
+// reports.total-value.test.js for free.
+const GROUP_BY = Object.freeze(['property', 'area', 'tag', 'condition']);
 
 const generateReport = Joi.object({
   reportType: Joi.string().valid(...REPORT_TYPES).required(),

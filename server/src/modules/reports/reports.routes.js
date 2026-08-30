@@ -2,7 +2,7 @@ module.exports = function reportsRoutes({ app, db, logger, config }) {
   const ReportsService = require('./reports.service');
   ReportsService.init({ db, logger, config });
 
-  const { generateReport, REPORT_TYPES } = require('./reports.schema');
+  const { generateReport, REPORT_TYPES, GROUP_BY } = require('./reports.schema');
   const { success, error } = require('../../utils/response');
 
   // ── Generate Report (PDF / CSV) ──────────────────────────────────────────
@@ -74,7 +74,15 @@ module.exports = function reportsRoutes({ app, db, logger, config }) {
         return error(res, 'Property not found or access denied', 403);
       }
 
+      // The preview must answer the question Generate will answer, so it takes
+      // the same grouping — and validates it against the same list. A groupBy
+      // this route did not recognise used to fall through to `property`, so the
+      // number beside Generate was quietly computed for a different report
+      // (#310); silently substituting a grouping is what made that invisible.
       const groupBy = req.query.groupBy || 'property';
+      if (!GROUP_BY.includes(groupBy)) {
+        return error(res, 'Invalid groupBy', 400);
+      }
       const tagIds = req.query.tagIds ? req.query.tagIds.split(',').map(Number).filter(n => !isNaN(n)) : null;
       const startDate = req.query.startDate || null;
       const endDate = req.query.endDate || null;
