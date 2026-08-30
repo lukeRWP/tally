@@ -5,6 +5,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { ColHead } from '@/components/ui/col-head';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { Skeleton } from '@/components/ui/skeleton';
 import { TitleBar } from '@/components/ui/title-bar';
 import { RuledRow } from '@/components/ui/ruled-row';
@@ -290,6 +291,7 @@ export function MatchesPage() {
   useNavScrollIntoView(highlightedId);
 
   const [bulkClearing, setBulkClearing] = React.useState<{ i: number; n: number } | null>(null);
+  const [bulkClearOpen, setBulkClearOpen] = React.useState(false);
   const failedRows = rows.filter((r) => r.status === 'none' || r.status === 'failed');
 
   function handlePick(index: number) {
@@ -331,27 +333,31 @@ export function MatchesPage() {
 
   // Sequential, not Promise.all — these share the same underlying dismiss
   // endpoint the single-row flow uses, and firing them concurrently would
-  // just be N races against the same list invalidation. One outcome toast;
-  // a mid-loop failure stops rather than plowing through the rest blind.
+  // just be N races against the same list invalidation. Continue-on-failure
+  // (#278), matching container-detail's and recycle-bin's bulk loops: one
+  // row's 500 does not strand the rest of the batch. There is nothing to
+  // "keep selected" here the way those two do — failedRows is derived
+  // straight from `rows`, so a row whose dismiss failed simply never leaves
+  // the none/failed set and reappears in it on its own once this snapshot's
+  // targets array is done being walked.
   async function handleBulkClear() {
     const targets = failedRows;
     const n = targets.length;
     if (n === 0 || bulkClearing) return;
     setBulkClearing({ i: 0, n });
-    let cleared = 0;
-    for (const row of targets) {
+    let ok = 0;
+    let failed = 0;
+    for (let idx = 0; idx < targets.length; idx++) {
       try {
-        await resolve.mutateAsync({ id: row.id, dismiss: true });
-        cleared += 1;
-        setBulkClearing({ i: cleared, n });
+        await resolve.mutateAsync({ id: targets[idx].id, dismiss: true });
+        ok += 1;
       } catch {
-        setBulkClearing(null);
-        toast(`Cleared ${cleared} of ${n}`);
-        return;
+        failed += 1;
       }
+      setBulkClearing({ i: idx + 1, n });
     }
     setBulkClearing(null);
-    toast(`Cleared ${n}`);
+    toast(failed ? `Cleared ${ok} · ${failed} failed` : `Cleared ${ok}`);
   }
 
   const loading = isLoading || !propertyId;
@@ -402,11 +408,22 @@ export function MatchesPage() {
       <div className="flex items-center justify-between gap-2">
         <h1><TitleBar>Matches</TitleBar></h1>
         {failedRows.length > 0 && (
-          <Button variant="outline" size="sm" onClick={handleBulkClear} disabled={!!bulkClearing}>
+          <Button variant="outline" size="sm" onClick={() => setBulkClearOpen(true)} disabled={!!bulkClearing}>
             {bulkClearing ? `Clearing… ${bulkClearing.i} of ${bulkClearing.n}` : `Clear ${failedRows.length} failed`}
           </Button>
         )}
       </div>
+
+      <ConfirmDialog
+        open={bulkClearOpen}
+        onOpenChange={(open) => { if (!bulkClearing) setBulkClearOpen(open); }}
+        title={`Clear ${failedRows.length} failed lookup${failedRows.length === 1 ? '' : 's'}?`}
+        description="They'll leave the worklist; the items keep their names."
+        destructive
+        confirmLabel="Clear"
+        isPending={!!bulkClearing}
+        onConfirm={() => { setBulkClearOpen(false); handleBulkClear(); }}
+      />
 
       {loading && (
         <div className="flex flex-col gap-2">

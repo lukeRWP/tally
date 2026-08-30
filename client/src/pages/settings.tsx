@@ -6,6 +6,7 @@ import { TitleBar } from '@/components/ui/title-bar';
 import { ColHead } from '@/components/ui/col-head';
 import { RuledRow } from '@/components/ui/ruled-row';
 import { Skeleton } from '@/components/ui/skeleton';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { useAuthStore } from '@/store/auth-store';
 import { useProperties } from '@/hooks/use-inventory';
 import { PropertyChips } from '@/components/inventory/property-chips';
@@ -26,9 +27,13 @@ function formatDate(dateStr: string) {
 
 // -- Share Links Section --------------------------------------------------------
 
-function ShareLinksSection() {
+export function ShareLinksSection() {
   const { data: allLinks = [], isLoading } = useMyShareLinks();
   const revokeLink = useRevokeShareLink();
+  // The link is gone the instant this fires — no undo, and the same token
+  // can't be reissued (a new share creates a new token). That's the one
+  // irreversible action on this page that had no confirm at all (#278).
+  const [revokeTarget, setRevokeTarget] = React.useState<{ id: number; entityType: string } | null>(null);
 
   function handleCopy(url: string) {
     navigator.clipboard.writeText(url).then(
@@ -37,10 +42,12 @@ function ShareLinksSection() {
     );
   }
 
-  function handleRevoke(id: number) {
+  function confirmRevoke() {
+    if (!revokeTarget) return;
+    const { id } = revokeTarget;
     revokeLink.mutate(id, {
-      onSuccess: () => toast.success('Link revoked'),
-      onError: (err) => toast.error(err.message),
+      onSuccess: () => { toast.success('Link revoked'); setRevokeTarget(null); },
+      onError: (err) => { toast.error(err.message); setRevokeTarget(null); },
     });
   }
 
@@ -83,13 +90,24 @@ function ShareLinksSection() {
             size="icon"
             aria-label={`Revoke the ${link.entityType} share link`}
             disabled={revokeLink.isPending}
-            onClick={() => handleRevoke(link.id)}
+            onClick={() => setRevokeTarget({ id: link.id, entityType: link.entityType })}
             className="text-[var(--color-red)] hover:bg-[var(--color-red)] hover:text-white"
           >
             <Trash2 className="w-4 h-4" />
           </Button>
         </div>
       ))}
+
+      <ConfirmDialog
+        open={!!revokeTarget}
+        onOpenChange={(open) => { if (!open && !revokeLink.isPending) setRevokeTarget(null); }}
+        title={`Revoke this ${revokeTarget?.entityType ?? ''} link?`}
+        description="Anyone holding it loses access immediately. This can't be undone — the same link can't be reissued, only replaced with a new one."
+        destructive
+        confirmLabel="Revoke"
+        isPending={revokeLink.isPending}
+        onConfirm={confirmRevoke}
+      />
     </section>
   );
 }
@@ -266,9 +284,12 @@ export function SettingsPage() {
         </div>
       </div>
 
-      {/* Logout -- full width below */}
+      {/* Logout -- full width below. Signing out destroys nothing, so it does
+          not get the destructive treatment (#278) — that's reserved for the
+          share-link/printer/tag controls above, which are actually
+          irreversible and now confirm before acting. */}
       <div className="border-t border-[var(--color-rule)]" />
-      <Button variant="destructive" onClick={logout} className="w-full lg:max-w-xs animate-fade-up" style={{ animationDelay: '200ms' }}>
+      <Button variant="outline" onClick={logout} className="w-full lg:max-w-xs animate-fade-up" style={{ animationDelay: '200ms' }}>
         <LogOut className="w-4 h-4" />
         Sign Out
       </Button>
