@@ -103,11 +103,21 @@ export function PrintQueuePage() {
   const carryBannerShowing = useCarryBannerShowing();
   // Global chrome mounted elsewhere (the toast layer, `<main>`'s own scroll
   // reserve) has no other way to see that one of THIS page's own bars is up
-  // — register for as long as either one can be on screen. Exactly one of
-  // the two bars renders whenever `staged.length > 0` (select-mode's
-  // auto-exit effect below guarantees `selecting` never outlives a staged
-  // batch), so that single condition covers both.
-  useRegisterBottomBar(staged.length > 0);
+  // — register for as long as either one can be on screen.
+  //
+  // #302: this used to register on `staged.length > 0` alone, on the theory
+  // that `selecting` never outlives a staged batch (the auto-exit effect
+  // below). That's false for one commit: "Clear" and "Remove failed" above
+  // the list are reachable WHILE selecting (they aren't gated on `!selecting`)
+  // and empty `staged` synchronously, but `selecting` itself only flips back
+  // via that effect on the next tick. In that window the select bar
+  // (gated on `selecting` alone, below) is still rendered but `staged.length
+  // > 0` had already gone false, so it went unregistered for a frame. Match
+  // the actual render condition of whichever bar can be up — `selecting` for
+  // the select bar, `staged.length > 0` for the send bar — with their union,
+  // same as the reference batch surfaces register on exactly their one bar's
+  // `selecting`.
+  useRegisterBottomBar(selecting || staged.length > 0);
 
   const online = !!printer?.lastSeenAt && Date.now() - new Date(printer.lastSeenAt).getTime() < 60_000;
   const problem = printer?.printerState === 'stopped'

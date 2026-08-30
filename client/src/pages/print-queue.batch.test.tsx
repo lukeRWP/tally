@@ -23,6 +23,7 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { usePrintQueueStore } from '@/store/print-queue-store';
 import type { StagedLabel } from '@/store/print-queue-store';
 import type { Printer, PrintJob } from '@/hooks/use-print';
+import { useBottomBarStore } from '@/store/bottom-bar-store';
 import { PrintQueuePage } from './print-queue';
 
 // PrintQueuePage now reads useCarryBannerShowing() (use-bottom-stack.ts),
@@ -99,10 +100,12 @@ function deferred<T>() {
 beforeEach(() => {
   vi.clearAllMocks();
   usePrintQueueStore.setState({ staged: [] });
+  useBottomBarStore.setState({ bars: {} });
 });
 
 afterEach(() => {
   usePrintQueueStore.setState({ staged: [] });
+  useBottomBarStore.setState({ bars: {} });
 });
 
 test('Select mode adds checkboxes and a bulk Remove that drops exactly the selected rows', () => {
@@ -215,4 +218,80 @@ test('a send shows a truthful N of M counter instead of a bare "Sending…"', as
   await waitFor(() => expect(usePrintQueueStore.getState().staged.length).toBe(0));
 
   expect(toastMock).toHaveBeenCalledWith('Printing 3 labels');
+});
+
+// ── #302: registration must match whichever bar is actually rendered ──────
+
+test('#302: the printer-ready send bar registers on staged alone, before Select is ever touched', () => {
+  seedStaged([label({ id: 1, name: 'Item One' })]);
+  renderPage();
+
+  // Not selecting yet — the pinned send bar is the one on screen, gated on
+  // `staged.length > 0` alone. Registration must already reflect that.
+  expect(screen.queryByText(/^\d+ selected$/)).toBeNull();
+  expect(Object.keys(useBottomBarStore.getState().bars)).toHaveLength(1);
+});
+
+test('#302: Clear (reachable WHILE selecting, :362) must not drop registration a tick before the select bar itself disappears', () => {
+  seedStaged([label({ id: 1, name: 'Item One' })]);
+  renderPage();
+
+  fireEvent.click(screen.getByRole('button', { name: 'Select' }));
+  expect(screen.getByText('0 selected')).toBeTruthy();
+  expect(Object.keys(useBottomBarStore.getState().bars)).toHaveLength(1);
+
+  // Passive effects run strictly after the commit that produced whatever is
+  // currently on screen, so checking the DOM at the exact moment the shared
+  // store reports "nothing registered" is a true "was the bar still up when
+  // clearance dropped" check — not a guess about React's internal timing.
+  // The old `staged.length > 0` condition flips to false the instant
+  // `clearStaged()` empties the array — one commit before `selecting` itself
+  // catches up via the auto-exit effect (:142-145) — unregistering while the
+  // select bar (gated only on `selecting`, :542) is still what's rendered.
+  let unregisteredWhileBarStillOnScreen = false;
+  const unsub = useBottomBarStore.subscribe((s) => {
+    if (Object.keys(s.bars).length === 0 && screen.queryByText(/^\d+ selected$/)) {
+      unregisteredWhileBarStillOnScreen = true;
+    }
+  });
+
+  fireEvent.click(screen.getByRole('button', { name: 'Clear' }));
+  unsub();
+
+  expect(unregisteredWhileBarStillOnScreen).toBe(false);
+
+  // Everything settles correctly once the tick completes: no staged rows,
+  // select mode auto-exits (the pre-existing behaviour this fix must not
+  // disturb), and nothing is left registered.
+  expect(usePrintQueueStore.getState().staged).toEqual([]);
+  expect(screen.queryByText(/^\d+ selected$/)).toBeNull();
+  expect(Object.keys(useBottomBarStore.getState().bars)).toHaveLength(0);
+});
+
+test('#302 twin: "Remove failed" (:355, also reachable while selecting) has the same one-tick hazard and must not drop registration early either', async () => {
+  seedStaged([label({ id: 1, name: 'Item One' }), label({ id: 2, name: 'Item Two' })]);
+  createJobMutateAsync.mockRejectedValue(new Error('boom'));
+  renderPage();
+
+  // Rig a failed send so "Remove failed" appears, then re-enter selecting —
+  // the button is not gated on `!selecting` any more than Clear is.
+  fireEvent.click(screen.getByRole('button', { name: /label/ }));
+  await waitFor(() => expect(screen.getByRole('button', { name: /Remove failed/ })).toBeTruthy());
+
+  fireEvent.click(screen.getByRole('button', { name: 'Select' }));
+  expect(Object.keys(useBottomBarStore.getState().bars)).toHaveLength(1);
+
+  let unregisteredWhileBarStillOnScreen = false;
+  const unsub = useBottomBarStore.subscribe((s) => {
+    if (Object.keys(s.bars).length === 0 && screen.queryByText(/^\d+ selected$/)) {
+      unregisteredWhileBarStillOnScreen = true;
+    }
+  });
+
+  fireEvent.click(screen.getByRole('button', { name: /Remove failed/ }));
+  unsub();
+
+  expect(unregisteredWhileBarStillOnScreen).toBe(false);
+  expect(usePrintQueueStore.getState().staged).toEqual([]);
+  expect(Object.keys(useBottomBarStore.getState().bars)).toHaveLength(0);
 });

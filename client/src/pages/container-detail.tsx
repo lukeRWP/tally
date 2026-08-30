@@ -71,6 +71,22 @@ export function ContainerDetail() {
   // that failed last time) always reaches the whole original selection.
   const [bulkTagTargets, setBulkTagTargets] = useState<Item[]>([]);
 
+  // #288: the toggle's own blur() (below) hands Space back to the page, but
+  // left focus nowhere it landed on BODY — a keyboard user who tabbed to
+  // Select and activated it lost their place entirely, and the next Tab
+  // restarted from the top of the document. This lands it somewhere useful
+  // instead: the select-mode bar itself, once it mounts. It has to be a
+  // non-interactive tabIndex={-1} target, not the Cancel button or a row's
+  // own toggle — either is a real <button>, and a focused <button> treats
+  // Space as a click, which would silently cancel the mode (or toggle a row)
+  // on the very next scroll keypress instead of scrolling. tabIndex={-1}
+  // still gives the next Tab a real place to continue from (the first
+  // tabbable control after it in the DOM — "All").
+  const selectBarRef = React.useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (selecting) selectBarRef.current?.focus();
+  }, [selecting]);
+
   // Navigating bin→bin only changes :containerId — the component stays
   // mounted, so without this a selection from the previous bin leaks in.
   useEffect(() => {
@@ -88,12 +104,14 @@ export function ContainerDetail() {
   const deleteItem = useDeleteItem();
   const addTag = useAddTag();
   const pickUp = useCarryStore((s) => s.pickUp);
-  const carried = useCarryStore((s) => s.carried);
   // Whatever CarryBanner itself renders for (the "put back" banner counts
-  // too, not just an active carry) — the select-mode bar below needs to
-  // know when that banner is on screen so it can get out of its way. Shared
-  // with root-layout.tsx's own `<main>` reserve and toast.tsx's touch
-  // offset via use-bottom-stack.ts, rather than re-derived here.
+  // too, not just an active carry) — the select-mode bar AND the FAB below
+  // both need to know when that banner is on screen so they can get out of
+  // its way (#299: the FAB used to read `carried.length === 0` directly,
+  // which missed the put-back banner — `lastMove` up with nothing currently
+  // carried — and rendered on top of it). Shared with root-layout.tsx's own
+  // `<main>` reserve and toast.tsx's touch offset via use-bottom-stack.ts,
+  // rather than re-derived here.
   const carryBannerShowing = useCarryBannerShowing();
   // Global chrome mounted elsewhere (the toast layer, `<main>`'s own scroll
   // reserve) has no other way to see that THIS page's select-mode bar is up
@@ -749,7 +767,9 @@ export function ContainerDetail() {
           line on a phone now that Tag and Delete joined Move and Queue. */}
       {selecting && (
         <div
-          className="fixed left-4 right-4 lg:left-auto lg:right-8 lg:w-auto lg:max-w-[46rem] z-30 bg-[var(--color-card)] border-2 border-[var(--color-text)] rounded-[var(--radius-md)] shadow-lg px-3 py-2.5 flex flex-wrap items-center gap-2"
+          ref={selectBarRef}
+          tabIndex={-1}
+          className="fixed left-4 right-4 lg:left-auto lg:right-8 lg:w-auto lg:max-w-[46rem] z-30 bg-[var(--color-card)] border-2 border-[var(--color-text)] rounded-[var(--radius-md)] shadow-lg px-3 py-2.5 flex flex-wrap items-center gap-2 focus:outline-none focus-visible:outline-none"
           // CarryBanner docks in this same bottom-right corner on both
           // chromes, and both bars are `fixed` — nothing makes them yield to
           // each other on their own. The two states are genuinely reachable
@@ -761,6 +781,12 @@ export function ContainerDetail() {
           // Tailwind's build-time class scanner cannot see. `!wide` (not a
           // `lg:` class) picks the chrome, since `useLayoutMode` is
           // orientation-aware in a way a pure width breakpoint is not.
+          //
+          // `tabIndex={-1}` + the ref above is #288's landing spot for focus
+          // when select mode turns on (see the effect near the top of this
+          // component) — programmatically focusable so Tab has somewhere
+          // real to continue from, but never itself a Tab stop and never
+          // something Space can activate, unlike Cancel or a row checkbox.
           style={{ bottom: barOffsetCss({ touch: !wide, carrying: carryBannerShowing }) }}
         >
           <p className="font-mono text-xs uppercase tracking-[0.06em] text-[var(--color-text)] shrink-0 whitespace-nowrap tabular-nums">
@@ -807,9 +833,14 @@ export function ContainerDetail() {
         </div>
       )}
 
-      {/* FAB — hidden while carrying: the carry banner occupies that corner, and
-          finishing the move is the active job. It returns when you put down. */}
-      {!selecting && carried.length === 0 && (
+      {/* FAB — hidden whenever the carry banner (an active carry OR its
+          "put back" undo, #299) occupies this same corner: finishing the
+          move, or deciding whether to undo it, is the active job while
+          either is up. It returns once both clear. `carryBannerShowing` is
+          the same predicate (use-bottom-stack.ts) the select-mode bar's
+          offset and root-layout's reserve read, rather than a page-local
+          `carried.length === 0` that only covered the first half of that. */}
+      {!selecting && !carryBannerShowing && (
       <div className="fixed bottom-[calc(6rem+env(safe-area-inset-bottom))] lg:bottom-8 right-4 lg:right-8 flex flex-col items-end gap-2 z-30">
         {fabOpen && (
           <>
