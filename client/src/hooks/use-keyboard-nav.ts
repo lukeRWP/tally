@@ -10,7 +10,10 @@ import { useSearchParams } from 'react-router';
  *
  * Deliberately narrow. These are the four keys people already expect from a
  * list (`/` to search, j/k to move, Enter to open, Escape to back out); a
- * larger set would need teaching, and nothing here teaches it.
+ * larger set would need teaching, and nothing here teaches it. A surface
+ * whose rows carry real decisions can bind its own keys on top via onAction
+ * (#269) — the hook stays the single keydown listener with the single set of
+ * guards, and the surface owns what the extra keys mean.
  *
  * Keeping the cursor VISIBLE (#235): the hook itself never knows which row is
  * highlighted — every surface owns its own cursor state — so scrolling is a
@@ -70,6 +73,27 @@ export interface KeyboardNavOptions {
    * Tab now MOVES the ring. Surfaces should ignore an id they don't recognise.
    */
   onFocusRow?: (navId: string) => void;
+  /**
+   * A key the SURFACE binds, for the decisions its rows actually carry (#269).
+   *
+   * The four keys above move a cursor; they never *do* anything. That was
+   * fine for a list whose rows only open — and useless on /matches, where the
+   * ring reached a row, opened its candidate panel, and then handed you back
+   * to the mouse for the only thing the page exists to do. Rather than let
+   * such a surface add its own window listener (which would have to re-derive
+   * every guard below, and would get one of them wrong), it hands the key
+   * here and gets the guards for free: not while typing, not with a modifier
+   * held, not from a `data-nav-ignore` control, and not on auto-repeat.
+   *
+   * Return true when the key was actually used, and the hook preventDefaults
+   * it — same contract as onOpen, for the same reason: an unclaimed key must
+   * stay the browser's.
+   *
+   * `e.repeat` is dropped because a held key is not a gesture a mouse has:
+   * every action a surface is likely to bind here is a one-way decision, and
+   * leaning on the key must not walk one down a backlog.
+   */
+  onAction?: (key: string) => boolean | void;
   /** Off in touch chrome, where there is no keyboard to serve. */
   enabled?: boolean;
 }
@@ -222,7 +246,7 @@ export function isTyping(target: EventTarget | null): boolean {
 }
 
 export function useKeyboardNav({
-  onMove, onOpen, onEscape, onSearch, onFocusRow, enabled = true,
+  onMove, onOpen, onEscape, onSearch, onFocusRow, onAction, enabled = true,
 }: KeyboardNavOptions) {
   /**
    * Tab (or a click) landing on a row hands the ring its cursor (#279).
@@ -301,10 +325,15 @@ export function useKeyboardNav({
           if (onOpen() === true) e.preventDefault();
           break;
         default:
+          // Everything the ring itself does not claim is offered to the
+          // surface (#269) — see onAction for the guards this inherits.
+          if (!onAction || e.repeat) return;
+          if (closestMatch(e.target, NAV_IGNORE)) return;
+          if (onAction(e.key) === true) e.preventDefault();
       }
     };
 
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [onMove, onOpen, onEscape, onSearch, enabled]);
+  }, [onMove, onOpen, onEscape, onSearch, onAction, enabled]);
 }

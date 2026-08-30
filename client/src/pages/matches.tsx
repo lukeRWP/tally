@@ -291,11 +291,53 @@ export function MatchesPage() {
       const n = Number(navId);
       if (Number.isFinite(n) && ids.includes(n)) setHighlightedId(n);
     },
+    // The decisions themselves (#269) — handleActionKey is a hoisted function
+    // declaration below, beside the handlers it calls.
+    onAction: handleActionKey,
   });
   // Keeps the cursor on screen while browsing a long backlog (#235) — rows
   // below carry the matching data-nav-id. A click-driven hand-off (sync #1)
   // is a no-op here: block 'nearest' moves nothing already visible.
   useNavScrollIntoView(highlightedId);
+
+  /**
+   * Focus follows the panel after a resolve (#269).
+   *
+   * A resolve destroys the button that fired it — "Use this" belongs to the
+   * row being replaced — so the browser drops focus to `<body>`, and the
+   * measured cost of that was that Tab restarted at the top of the document
+   * after EVERY match, 31 stops from the action. Auto-advance (#228) already
+   * moves the panel to the next `ready` row; focus now lands on that row's
+   * list button in the same beat. That row is also where the ring already is
+   * (the sync effect above ran on the same selection change), so the
+   * focusin listener in useKeyboardNav adopts a cursor it already holds — a
+   * no-op — and the ring and the focus outline stay the one marker #279
+   * fused them into.
+   *
+   * A ref plus a nonce rather than an effect on `selectedId`, because only a
+   * RESOLVE may move focus: a click or an Enter already put focus where the
+   * user wanted it, and yanking it back on every selection change would be
+   * fighting the browser rather than repairing it. `preventScroll` leaves
+   * scrolling to useNavScrollIntoView, the one mechanism here that knows
+   * about the sticky panel. On phone this finds nothing and does nothing —
+   * the list is unmounted while a panel is open, and there is no keyboard
+   * there to serve anyway.
+   */
+  const focusRowId = React.useRef<number | null>(null);
+  const [focusNonce, setFocusNonce] = React.useState(0);
+  React.useEffect(() => {
+    const id = focusRowId.current;
+    if (id == null) return;
+    focusRowId.current = null;
+    document
+      .querySelector<HTMLElement>(`[data-nav-id="${CSS.escape(String(id))}"] button`)
+      ?.focus?.({ preventScroll: true });
+  }, [focusNonce]);
+  function focusRowAfterAdvance(id: number | null) {
+    if (id == null) return;   // nothing left to work; the sitting is over
+    focusRowId.current = id;
+    setFocusNonce((n) => n + 1);
+  }
 
   const [bulkClearing, setBulkClearing] = React.useState<{ i: number; n: number } | null>(null);
   const [bulkClearOpen, setBulkClearOpen] = React.useState(false);
@@ -306,7 +348,9 @@ export function MatchesPage() {
     const id = current.id;
     resolve.mutate({ id, candidateIndex: index }, {
       onSuccess: (res) => {
-        select(nextPendingAfter(rowsRef.current, id));
+        const next = nextPendingAfter(rowsRef.current, id);
+        select(next);
+        focusRowAfterAdvance(next);
         if (res?.duplicates?.length) {
           toast(`Linked — you may already have one in ${res.duplicates[0].containerName}`);
         } else {
@@ -330,12 +374,59 @@ export function MatchesPage() {
     if (!current) return;
     const id = current.id;
     resolve.mutate({ id, dismiss: true }, {
-      onSuccess: () => { select(nextPendingAfter(rowsRef.current, id)); toast('Dismissed'); },
+      onSuccess: () => {
+        const next = nextPendingAfter(rowsRef.current, id);
+        select(next);
+        focusRowAfterAdvance(next);
+        toast('Dismissed');
+      },
       onError: (err) => {
         if (err instanceof ApiError && err.status === 409) select(null);
         toast(err instanceof Error ? err.message : 'Could not dismiss that match');
       },
     });
+  }
+
+  /**
+   * The keys that actually resolve a sitting (#269).
+   *
+   * The ring could reach a row and open it, then stopped: every decision was
+   * a mouse round trip of ~857px, to a target whose y position moves with the
+   * candidate count ("None of these" sits *after* the list). The bindings are
+   * read straight off the panel already on screen, which is a short, ordered
+   * list of cards and one opt-out:
+   *
+   *   1…9  "Use this" on the Nth candidate card, in rendered order. A digit
+   *        is the shortest unambiguous name for a card in a numbered list,
+   *        and the list is genuinely short — the searcher returns at most
+   *        `match.maxCandidates` (3 today), so 1–3 is the real range and the
+   *        rest of the digits simply never match anything.
+   *   d    "None of these" — dismiss. Mnemonic, and free: the ring's own
+   *        letters are j/k and `/`.
+   *
+   * Bounded by the row's OWN candidate count, so `3` on a two-candidate row
+   * does nothing rather than falling through to some neighbouring meaning.
+   *
+   * Everything is guarded on the OPEN row (`current`), never the cursor: the
+   * two are deliberately distinct here (j/k browse without opening), and a
+   * digit must only ever mean a card the user can see. `status === 'ready'`
+   * and `!resolve.isPending` are exactly the conditions under which the
+   * matching BUTTON exists and is enabled — so a key can do nothing the mouse
+   * could not do on the same frame, which is also what keeps a single-row
+   * dismiss no less safe than its button. (#278's confirm belongs to the BULK
+   * clear, which acts on rows you are not looking at; this one acts on the
+   * one panel in front of you, and the hook drops auto-repeat so a leaned-on
+   * key cannot walk down the backlog.)
+   */
+  function handleActionKey(key: string): boolean {
+    if (!current || current.status !== 'ready' || resolve.isPending) return false;
+    if (key === 'd') { handleDismiss(); return true; }
+    const nth = Number(key);
+    if (Number.isInteger(nth) && nth >= 1 && nth <= current.candidates.length) {
+      handlePick(nth - 1);
+      return true;
+    }
+    return false;
   }
 
   // Sequential, not Promise.all — these share the same underlying dismiss
