@@ -1,12 +1,15 @@
 import * as React from 'react';
 import { Link } from 'react-router';
-import { Printer as PrinterIcon, Trash2, RotateCw, Send, X, Inbox } from 'lucide-react';
+import { Printer as PrinterIcon, Trash2, RotateCw, Send, X, Inbox, CheckSquare, Check } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card } from '@/components/ui/card';
 import { TitleBar } from '@/components/ui/title-bar';
 import { toast } from '@/components/ui/toast';
 import { useProperties } from '@/hooks/use-inventory';
+import { useLayoutMode } from '@/hooks/use-layout-mode';
+import { barOffsetCss, useCarryBannerShowing, useRegisterBottomBar } from '@/hooks/use-bottom-stack';
+import { cn } from '@/lib/utils';
 import {
   usePrinters, usePrintJobs, useCreatePrintJob, useCancelPrintJob,
   useRetryPrintJob, useSetLoadedMedia, type PrintablePreset, type PrintJob,
@@ -51,6 +54,8 @@ function statusLabel(job: PrintJob) {
 }
 
 export function PrintQueuePage() {
+  // Above every early return — hooks must run on each render.
+  const wide = useLayoutMode() === 'sidebar';
   const { data: properties } = useProperties();
   const propertyId = properties?.[0]?.id;
 
@@ -67,10 +72,42 @@ export function PrintQueuePage() {
   const removeStagedMany = usePrintQueueStore((s) => s.removeMany);
   const setPreset = usePrintQueueStore((s) => s.setPreset);
   const setAllPresets = usePrintQueueStore((s) => s.setAllPresets);
+  const setPresetMany = usePrintQueueStore((s) => s.setPresetMany);
 
-  const [sending, setSending] = React.useState(false);
+  // `sendProgress` doubles as the "is a send in flight" flag (`sending`
+  // below) AND the `N of M` counter the other three batch surfaces all
+  // show (`matches.tsx`'s `Clearing…`, container-detail's `Deleting…`,
+  // recycle-bin's `Restoring…`) — this page rendered a bare "Sending…"
+  // with nothing else in the DOM to say how far along it was (#281).
+  const [sendProgress, setSendProgress] = React.useState<{ i: number; n: number } | null>(null);
   const [failedKeys, setFailedKeys] = React.useState<string[]>([]);
+  // Select mode over the staged batch — the fourth "process a pile of
+  // things" surface, brought into the same dialect as container-detail's
+  // select mode and recycle-bin-list's: a toggle, checkboxes, and one bulk
+  // action (Remove). Trimming a staged batch one X-click at a time was the
+  // single biggest defect on this page (#281).
+  const [selecting, setSelecting] = React.useState(false);
+  const [selected, setSelected] = React.useState<Set<string>>(new Set());
+  const sending = !!sendProgress;
   const printer = printers?.[0];
+
+  // Whatever CarryBanner itself renders for (the "put back" banner counts
+  // too) — this page's own two fixed bottom bars (select-mode, and the
+  // pinned send button) both dock in the same corner CarryBanner does, and
+  // neither is hidden while carrying (unlike container-detail's FAB, which
+  // sidesteps the whole problem by disappearing whenever a carry is live).
+  // Carrying something, leaving /move, and landing on /print with a staged
+  // batch is fully reachable, so both bars need the same shared offset
+  // model container-detail.tsx's and recycle-bin-list.tsx's select bars use
+  // (use-bottom-stack.ts) rather than a private hardcoded offset.
+  const carryBannerShowing = useCarryBannerShowing();
+  // Global chrome mounted elsewhere (the toast layer, `<main>`'s own scroll
+  // reserve) has no other way to see that one of THIS page's own bars is up
+  // — register for as long as either one can be on screen. Exactly one of
+  // the two bars renders whenever `staged.length > 0` (select-mode's
+  // auto-exit effect below guarantees `selecting` never outlives a staged
+  // batch), so that single condition covers both.
+  useRegisterBottomBar(staged.length > 0);
 
   const online = !!printer?.lastSeenAt && Date.now() - new Date(printer.lastSeenAt).getTime() < 60_000;
   const problem = printer?.printerState === 'stopped'
@@ -86,10 +123,83 @@ export function PrintQueuePage() {
   const live = (jobs ?? []).filter((j) => LIVE.includes(j.status));
   const recent = (jobs ?? []).filter((j) => !LIVE.includes(j.status)).slice(0, 10);
 
+  // A background change to `staged` (Clear, Remove failed, a per-row X) can
+  // drop rows out from under an open selection — prune ghosts so "N
+  // selected" only ever counts rows still here. Mirrors recycle-bin-list's
+  // and container-detail's identical effect.
+  React.useEffect(() => {
+    if (!selecting) return;
+    const valid = new Set(staged.map((l) => l.key));
+    setSelected((prev) => {
+      const next = new Set([...prev].filter((k) => valid.has(k)));
+      return next.size === prev.size ? prev : next;
+    });
+  }, [selecting, staged]);
+
+  // Nothing left to select once the batch empties out from under it (e.g.
+  // Clear, or a bulk Remove that took the last rows) — an empty select mode
+  // has no reason to stay open.
+  React.useEffect(() => {
+    if (selecting && staged.length === 0) exitSelectMode();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selecting, staged.length]);
+
+  function exitSelectMode() {
+    setSelecting(false);
+    setSelected(new Set());
+  }
+
+  function toggleSelected(key: string) {
+    // Inert while a send is in flight (#281's input-freeze discipline) — a
+    // click here would mutate `selected` only for handlePrintAll's own
+    // `removeStagedMany(sentKeys)` to silently prune it moments later.
+    if (sending) return;
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+
+  function handleSelectAll() {
+    if (sending) return;
+    setSelected(new Set(staged.map((l) => l.key)));
+  }
+
+  // Purely local — unstaging is a zustand write, not a network call, so
+  // there is nothing to run a progress loop over. It reads as instant
+  // because it is.
+  function handleBulkRemove() {
+    const keys = [...selected];
+    if (keys.length === 0) return;
+    removeStagedMany(keys);
+    exitSelectMode();
+    toast(`Removed ${keys.length}`);
+  }
+
+  // What the select-mode bar's own roll setter scopes to — a retarget of
+  // PART of the batch, unlike "Set all to" above the list (which is
+  // unscoped and stays exactly as it was). Per-row preset buttons are
+  // hidden while selecting (#281), so without this there was no way at all
+  // to retarget a subset once you'd started trimming it.
+  const selectedLabels = staged.filter((l) => selected.has(l.key));
+
+  function handleBulkPreset(preset: PrintablePreset) {
+    const keys = [...selected];
+    if (keys.length === 0) return;
+    setPresetMany(keys, preset);
+    if (preset === 'large') {
+      const skipped = selectedLabels.filter((l) => l.entityType === 'item').length;
+      if (skipped > 0) toast(`Items keep their size — ${selectedLabels.length - skipped} set to 4×6`);
+    }
+  }
+
   async function handlePrintAll() {
     const groups = groupIntoJobs(staged);
     if (!groups.length) return;
-    setSending(true);
+    const total = staged.length;
+    setSendProgress({ i: 0, n: total });
 
     let queued = 0;
     let held = 0;
@@ -113,6 +223,10 @@ export function PrintQueuePage() {
         sentKeys.push(...g.keys);
         if (res?.status === 'held') held += g.entityIds.length;
         else queued += g.entityIds.length;
+        // Group-level loop: a whole group lands (or fails) in one request,
+        // so the counter jumps by the group's size rather than ticking one
+        // at a time — still a truthful `i of n` against the label count.
+        setSendProgress({ i: sentKeys.length + failedKeys.length, n: total });
       } catch (err) {
         // The server refuses a batch if ANY id fails to resolve (deleted since
         // staging), so one stale row 404s a whole 50-label group. Isolate by
@@ -125,6 +239,7 @@ export function PrintQueuePage() {
           for (let i = 0; i < g.entityIds.length; i++) {
             if (i >= 3 && isolated === 0) {
               failedKeys.push(...g.keys.slice(i));
+              setSendProgress({ i: sentKeys.length + failedKeys.length, n: total });
               break;
             }
             try {
@@ -142,17 +257,22 @@ export function PrintQueuePage() {
               failedKeys.push(g.keys[i]);
               if (!firstError) firstError = err2 instanceof Error ? err2.message : 'Send failed';
             }
+            // Isolation loop: this is the branch the issue calls out — up to
+            // 50 sequential requests behind a bare "Sending…" with no way to
+            // tell it apart from a hang. Ticks once per entity, same shape.
+            setSendProgress({ i: sentKeys.length + failedKeys.length, n: total });
           }
         } else {
           failedKeys.push(...g.keys);
           if (!firstError) firstError = err instanceof Error ? err.message : 'Send failed';
+          setSendProgress({ i: sentKeys.length + failedKeys.length, n: total });
         }
       }
     }
 
     if (sentKeys.length) removeStagedMany(sentKeys);
     setFailedKeys(failedKeys);
-    setSending(false);
+    setSendProgress(null);
 
     if (failedKeys.length) {
       toast(
@@ -233,13 +353,22 @@ export function PrintQueuePage() {
           {staged.length > 0 && (
             <div className="ml-auto flex items-center gap-1.5">
               {failedKeys.length > 0 && (
-                <Button variant="outline" size="sm"
+                <Button variant="outline" size="sm" disabled={sending}
                   className="text-[var(--color-red)] border-[var(--color-red)]"
                   onClick={() => { removeStagedMany(failedKeys); setFailedKeys([]); }}>
                   Remove failed ({failedKeys.length})
                 </Button>
               )}
-              <Button variant="outline" size="sm" onClick={clearStaged}>Clear</Button>
+              <Button variant="outline" size="sm" disabled={sending} onClick={clearStaged}>Clear</Button>
+              <Button
+                variant={selecting ? 'default' : 'outline'}
+                size="sm"
+                disabled={sending}
+                onClick={() => (selecting ? exitSelectMode() : setSelecting(true))}
+              >
+                <CheckSquare className="w-4 h-4" />
+                Select
+              </Button>
             </div>
           )}
         </div>
@@ -266,7 +395,7 @@ export function PrintQueuePage() {
                   // mixed queue says out loud that items were skipped.
                   if (r.value === 'large' && staged.every((l) => l.entityType === 'item')) return null;
                   return (
-                    <Button key={r.value} size="sm" variant="outline"
+                    <Button key={r.value} size="sm" variant="outline" disabled={sending}
                       onClick={() => {
                         setAllPresets(r.value);
                         if (r.value === 'large') {
@@ -280,43 +409,68 @@ export function PrintQueuePage() {
                 })}
               </div>
             )}
-            {staged.map((l) => (
-              <Card key={l.key} className={`p-2.5 flex items-center gap-2 ${
-                failedKeys.includes(l.key) ? 'border-[var(--color-red)]' : ''}`}>
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm font-medium truncate">{l.name}</p>
-                  <p className="text-[10px] font-mono text-[var(--color-text-muted)]">{l.qrCode}</p>
-                </div>
-                <div className="flex gap-1">
-                  {ROLLS.map((r) => {
-                    // `large` is a contents manifest — never offered for an item.
-                    if (r.value === 'large' && l.entityType === 'item') return null;
-                    return (
-                      <Button key={r.value} size="sm"
-                        variant={l.preset === r.value ? 'default' : 'outline'}
-                        onClick={() => setPreset(l.key, r.value)}>
-                        {r.label}
-                      </Button>
-                    );
-                  })}
-                </div>
-                <Button variant="outline" size="sm" onClick={() => removeStaged(l.key)}>
-                  <X className="w-3 h-3" />
-                </Button>
-              </Card>
-            ))}
-
-            <Button className="mt-1" onClick={handlePrintAll} disabled={sending || !printer}>
-              <Send className="w-4 h-4" />
-              {sending ? 'Sending…'
-                : !printer ? 'No printer set up'
-                : `${printerReady ? 'Print' : 'Queue'} ${staged.length} label${staged.length === 1 ? '' : 's'}`}
-            </Button>
-            {printer && !printerReady && (
-              <p className="text-[10px] text-[var(--color-text-muted)] text-center">
-                {problem ? `Printer: ${problem}.` : 'Printer is offline.'} Jobs will print when it is back.
-              </p>
-            )}
+            {/* Two columns at a desk — the same `wide && grid grid-cols-2
+                gap-x-6` wrapper container-detail and recycle-bin-list already
+                use. A staged card stretched to the full page width put ~850px
+                of empty row between a label's name and its own controls,
+                50 times over, and made a 50-label batch 3930px tall (#281). */}
+            <div className={cn(wide && 'grid grid-cols-2 gap-x-6')}>
+              {staged.map((l) => {
+                const isSelected = selected.has(l.key);
+                return (
+                  <Card key={l.key}
+                    className={`p-2.5 flex items-center gap-2 ${
+                      failedKeys.includes(l.key) ? 'border-[var(--color-red)]' : ''}`}
+                    onClick={selecting ? () => toggleSelected(l.key) : undefined}
+                    aria-pressed={selecting ? isSelected : undefined}
+                    aria-label={selecting ? `Select ${l.name}` : undefined}
+                  >
+                    {selecting && (
+                      <span
+                        className={cn(
+                          'flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-[2px] border-[1.6px]',
+                          isSelected
+                            ? 'border-[var(--color-text)] bg-[var(--color-text)] text-[var(--color-bg)]'
+                            : 'border-[var(--color-text)] text-transparent',
+                        )}
+                      >
+                        <Check className="h-3 w-3" strokeWidth={3} />
+                      </span>
+                    )}
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-medium truncate">{l.name}</p>
+                      <p className="text-[10px] font-mono text-[var(--color-text-muted)]">{l.qrCode}</p>
+                    </div>
+                    {/* Hidden while selecting, same as recycle-bin-list's
+                        per-row Restore — these are real nested buttons, and
+                        the row itself becomes the toggle target, so both
+                        firing off one tap would be a second, invisible
+                        surprise action. */}
+                    {!selecting && (
+                      <>
+                        <div className="flex gap-1">
+                          {ROLLS.map((r) => {
+                            // `large` is a contents manifest — never offered for an item.
+                            if (r.value === 'large' && l.entityType === 'item') return null;
+                            return (
+                              <Button key={r.value} size="sm"
+                                variant={l.preset === r.value ? 'default' : 'outline'}
+                                disabled={sending}
+                                onClick={() => setPreset(l.key, r.value)}>
+                                {r.label}
+                              </Button>
+                            );
+                          })}
+                        </div>
+                        <Button variant="outline" size="sm" disabled={sending} onClick={() => removeStaged(l.key)}>
+                          <X className="w-3 h-3" />
+                        </Button>
+                      </>
+                    )}
+                  </Card>
+                );
+              })}
+            </div>
           </div>
         )}
       </div>
@@ -379,6 +533,75 @@ export function PrintQueuePage() {
               </Card>
             ))}
           </div>
+        </div>
+      )}
+
+      {/* Select-mode action bar — same fixed-panel treatment as
+          container-detail's and recycle-bin-list's, and mutually exclusive
+          with the send bar below (there is nothing to send mid-trim). */}
+      {selecting && (
+        <div
+          className="fixed left-4 right-4 lg:left-auto lg:right-8 lg:w-[22rem] z-30 bg-[var(--color-card)] border-2 border-[var(--color-text)] rounded-[var(--radius-md)] shadow-lg px-3 py-2.5 flex flex-wrap items-center gap-2"
+          // Shared with container-detail.tsx's and recycle-bin-list.tsx's
+          // select bars (use-bottom-stack.ts) — CarryBanner docks in this
+          // same bottom-right corner on both chromes and neither yields to
+          // the other on its own, so this stacks above the banner's dock
+          // instead of overlapping it. Inline style, not a class: the model
+          // computes a runtime value Tailwind's build-time scanner can't see.
+          style={{ bottom: barOffsetCss({ touch: !wide, carrying: carryBannerShowing }) }}
+        >
+          <p className="font-mono text-xs uppercase tracking-[0.06em] text-[var(--color-text)] flex-1 min-w-0 truncate tabular-nums">
+            {selected.size} selected
+          </p>
+          <Button variant="ghost" size="sm" onClick={handleSelectAll}>All</Button>
+          <Button variant="outline" size="sm" onClick={exitSelectMode}>Cancel</Button>
+          {/* The scoped roll setter #281 asked for — "one action (Remove)
+              plus the roll setter". "Set all to" above the list is
+              unscoped and stays; this is the only way to retarget a
+              SUBSET, since per-row preset buttons are hidden while
+              selecting. */}
+          <div className="flex gap-1">
+            {ROLLS.map((r) => {
+              if (r.value === 'large' && selected.size > 0 && selectedLabels.every((l) => l.entityType === 'item')) return null;
+              return (
+                <Button key={r.value} size="sm" variant="outline"
+                  disabled={selected.size === 0}
+                  onClick={() => handleBulkPreset(r.value)}>
+                  {r.label}
+                </Button>
+              );
+            })}
+          </div>
+          <Button size="sm" variant="outline" disabled={selected.size === 0} onClick={handleBulkRemove}>
+            <X className="w-4 h-4" />
+            Remove{selected.size > 0 ? ` ${selected.size}` : ''}
+          </Button>
+        </div>
+      )}
+
+      {/* Primary action, pinned — was the last thing in the staged list,
+          3.4 screens of scrolling down on a 50-label batch (#281). Every
+          sibling batch surface pins its primary action; this now does too. */}
+      {!selecting && staged.length > 0 && (
+        <div
+          className="fixed left-4 right-4 lg:left-auto lg:right-8 lg:w-[22rem] z-30 bg-[var(--color-card)] border-2 border-[var(--color-text)] rounded-[var(--radius-md)] shadow-lg px-3 py-2.5 flex flex-col gap-1.5"
+          // Same shared model as the select-mode bar above — this bar is
+          // not hidden while carrying (unlike container-detail's FAB), so
+          // it needs the same carry-aware offset to avoid landing on top
+          // of CarryBanner's own dock.
+          style={{ bottom: barOffsetCss({ touch: !wide, carrying: carryBannerShowing }) }}
+        >
+          <Button className="w-full" onClick={handlePrintAll} disabled={sending || !printer}>
+            <Send className="w-4 h-4" />
+            {sendProgress ? `Sending… ${sendProgress.i} of ${sendProgress.n}`
+              : !printer ? 'No printer set up'
+              : `${printerReady ? 'Print' : 'Queue'} ${staged.length} label${staged.length === 1 ? '' : 's'}`}
+          </Button>
+          {printer && !printerReady && (
+            <p className="text-[10px] text-[var(--color-text-muted)] text-center">
+              {problem ? `Printer: ${problem}.` : 'Printer is offline.'} Jobs will print when it is back.
+            </p>
+          )}
         </div>
       )}
     </div>
