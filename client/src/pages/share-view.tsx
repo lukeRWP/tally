@@ -149,8 +149,14 @@ function formatDate(v: unknown): string | null {
   return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
 }
 
-function money(v: unknown): string {
-  return v != null ? `$${Number(v).toFixed(2)}` : '--';
+/**
+ * Null when there is no figure, so `Facts` drops the row entirely. The old page
+ * printed "Current Value --" on every item share: `sharing.service.js` has
+ * never mapped `currentValue` into the public payload, so that cell could only
+ * ever be empty. Absent data says nothing rather than showing a blank label.
+ */
+function money(v: unknown): string | null {
+  return v != null ? `$${Number(v).toFixed(2)}` : null;
 }
 
 /**

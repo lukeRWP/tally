@@ -179,6 +179,21 @@ test('the expired case explains the expiry instead of pointing at a dead sign-in
   expect(screen.queryByRole('link', { name: /sign in/i })).toBeNull();
 });
 
+test('a value the payload does not carry is dropped, not printed as an empty label', async () => {
+  // sharing.service.js has never mapped `currentValue` into the public payload,
+  // so the old page printed "Current Value --" on every real item share.
+  mockShare({
+    entity: { ...ITEM_ENTITY, item: { ...ITEM_ENTITY.item, currentValue: undefined } },
+    share: { sharedByName: 'Luke Turner', expiresAt: '2026-09-05T00:00:00Z' },
+  });
+  renderShare();
+
+  await screen.findByTestId('share-provenance');
+  expect(screen.getByText('$189.99')).toBeTruthy();
+  expect(screen.queryByText(/current value/i)).toBeNull();
+  expect(screen.queryByText('--')).toBeNull();
+});
+
 test('renders the shared contents themselves as static rows, not fake buttons', async () => {
   mockShare({ entity: CONTAINER_ENTITY, share: { sharedByName: 'Luke Turner', expiresAt: '2026-09-05T00:00:00Z' } });
   renderShare();
