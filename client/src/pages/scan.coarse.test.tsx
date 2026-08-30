@@ -114,3 +114,57 @@ test('phone (non-sidebar) is unchanged even when the pointer happens to read coa
   expect(screen.getByTestId('tag-scanner')).toBeTruthy();
   expect(screen.getByPlaceholderText('Or type the code (TLY-…)')).toBeTruthy();
 });
+
+/*
+ * #280 — the scanner column's height cap must exist off the landscape axis.
+ *
+ * The clamp used to be `atDesk && coarse`, i.e. landscape only, so an iPad in
+ * PORTRAIT ran with none: `flex-1` took the whole leftover column (851px
+ * measured at 820x1180) around a frame that stops at its own 420px, and the
+ * typed-code field and Go landed at y=1020 — 418px below the scanner's own
+ * controls and 91px above the bottom nav.
+ *
+ * Two things are pinned here, and the first matters more than the second.
+ *
+ * The FLEX CHAIN is unconditional on every surface. `flex flex-col flex-1
+ * min-h-0` on this wrapper is what lets TagScanner's own flex-1 grow at all;
+ * making it conditional is the ~200px collapse this codebase has shipped
+ * twice. Only the CLAMP may fork.
+ *
+ * The clamp class is the same string on a phone and on a portrait tablet on
+ * purpose — the discrimination is in CSS, not here: --scanner-max is `none`
+ * below 768px (globals.css), so the phone is left alone by construction
+ * rather than by trusting it to come in under a number. jsdom does no layout
+ * and Tailwind is compiled by Vite, so a computed-style assertion would report
+ * the same thing before and after the fix; the class is what changed.
+ */
+test('#280 the portrait/phone scanner wrapper keeps the flex chain AND gains a cap', () => {
+  setMode('touch', true);
+  renderScan();
+  const wrapper = screen.getByTestId('tag-scanner').parentElement!;
+  for (const c of ['flex', 'flex-col', 'flex-1', 'min-h-0']) {
+    expect(wrapper.className.split(/\s+/)).toContain(c);
+  }
+  expect(wrapper.className).toContain('max-h-[var(--scanner-max)]');
+});
+
+test('#280 landscape keeps its audited vh clamp, not the portrait one', () => {
+  setMode('sidebar', true);
+  renderScan();
+  const wrapper = screen.getByTestId('tag-scanner').parentElement!;
+  for (const c of ['flex', 'flex-col', 'flex-1', 'min-h-0']) {
+    expect(wrapper.className.split(/\s+/)).toContain(c);
+  }
+  expect(wrapper.className).toContain('max-h-[clamp(230px,36vh,280px)]');
+  expect(wrapper.className).not.toContain('--scanner-max');
+});
+
+test('#280 a fine pointer gets no cap at all — the wrapper is chain-only', () => {
+  setMode('touch', false);
+  renderScan();
+  const wrapper = screen.getByTestId('tag-scanner').parentElement!;
+  for (const c of ['flex', 'flex-col', 'flex-1', 'min-h-0']) {
+    expect(wrapper.className.split(/\s+/)).toContain(c);
+  }
+  expect(wrapper.className).not.toContain('max-h-');
+});

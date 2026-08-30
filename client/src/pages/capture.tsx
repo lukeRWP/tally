@@ -307,6 +307,34 @@ export function Capture() {
   // them.
   const coarse = useCoarsePointer();
   const tablet = atDesk && coarse;
+  /**
+   * The scanner column's height cap, by surface.
+   *
+   * The wrapper around a scanner MUST keep `flex flex-col flex-1 min-h-0`
+   * unconditionally — that contract is what lets CameraScanner's own `flex-1`
+   * grow at all, and dropping it on one branch is the ~200px collapse this
+   * file has been bitten by twice. So only the CLAMP is conditional, never the
+   * chain.
+   *
+   * Landscape tablet keeps its audited vh clamps: there the danger is the
+   * stream taking over a wide page, and vh is the right axis for it.
+   *
+   * PORTRAIT is the case this gate was missing. The clamps were written as
+   * `tablet` (= atDesk && coarse), i.e. landscape only, so an iPad in portrait
+   * ran with no cap at all: `flex-1` took the whole leftover column (784px
+   * measured at 820x1180 on capture step 2) while CameraScanner's frame stops
+   * at its own `max-h-[420px]`, leaving 312px of empty wrapper BELOW the
+   * control row and stranding the name field and Next 371px further down the
+   * page — at y=1056, 11px above the bottom nav, for an eye sitting at y≈420.
+   *
+   * The portrait cap is --scanner-max (globals.css), which resolves to `none`
+   * below 768px — so this arm is applied on a phone but does literally nothing
+   * there. The phone flow is left alone by construction, not by trusting it to
+   * come in under a number.
+   */
+  const scannerClamp = (landscape: string) => coarse && (
+    atDesk ? `${landscape} overflow-hidden` : 'max-h-[var(--scanner-max)] overflow-hidden'
+  );
   // Session-only, camera-first on every cold open: a tablet always starts in
   // the camera flow and can switch to the typed form and back within the
   // same visit, but a reload (or a different item) starts camera-first again.
@@ -315,11 +343,31 @@ export function Capture() {
   // survives one; camera-first only binds cold opens, and honouring the
   // choice already made is less surprising than reverting it mid-task.
   const [typedMode, setTypedMode] = React.useState(false);
-  // The single form-vs-flow predicate every other atDesk-shaped decision in
-  // this file now keys on. Equal to atDesk whenever the pointer is fine
-  // (coarse === false), which is what keeps phones and mouse-desks rendering
-  // byte-identically to before this switch existed.
-  const showForm = atDesk && (!coarse || typedMode);
+  /**
+   * The single form-vs-flow predicate every other atDesk-shaped decision in
+   * this file now keys on.
+   *
+   * It used to be `atDesk && (!coarse || typedMode)`, and the `atDesk` half
+   * was doing two different jobs at once: "a mouse desk gets the form" and
+   * "the form only exists in landscape". The second one was never intended.
+   * A landscape iPad that had asked to type, then rotated to portrait, had
+   * the form taken away mid-entry and a live camera started in its place —
+   * `typedMode` survived the rotation (this component does not remount) but
+   * the surface it selects did not.
+   *
+   * Written this way the two jobs separate. `typedMode` alone carries a
+   * device into the form, in either orientation; `atDesk && !coarse` is the
+   * mouse desk, which has no other option. Every other surface is unchanged
+   * by construction, including a phone: `typedMode` is only ever set by the
+   * "Type it instead" button, which renders on a landscape tablet only, so on
+   * a phone this expression is false exactly as often as the old one was.
+   *
+   * A cold open in portrait still starts camera-first, deliberately —
+   * portrait is the device being CARRIED (use-layout-mode.ts states that
+   * rule), and camera-first is the right default for it. What changes is that
+   * a choice already made is no longer revoked by turning the tablet.
+   */
+  const showForm = typedMode || (atDesk && !coarse);
   const [dragging, setDragging] = React.useState(false);
   const nameField = React.useRef<HTMLInputElement>(null);
 
@@ -1632,7 +1680,14 @@ export function Capture() {
           // ternary checks reviewOpen first, then identifying, then picking —
           // any of the three left stale would resurrect that panel instead of
           // the scanner, so all three are cleared here.
-          onUseCamera={tablet ? () => {
+          //
+          // `coarse`, not `tablet`: showForm now follows typedMode through a
+          // rotation, so the form can be on screen in PORTRAIT — and gating
+          // the way back on `tablet` (landscape only) would have made turning
+          // the tablet a one-way trip into a form with no camera button on it.
+          // Unreachable on a phone (showForm is never true there) and
+          // undefined at a mouse desk, exactly as before.
+          onUseCamera={coarse ? () => {
             setTypedMode(false);
             setIdentifying(false);
             setPicking(false);
@@ -1763,7 +1818,8 @@ export function Capture() {
             // swallows CameraScanner's own flex-1 (phones lost ~200px of
             // scanner height to this before the fix), AND on tablet flex-1 is
             // what makes the wrapper grow enough for max-h to ever bind.
-            <div className={cn('flex flex-col flex-1 min-h-0', tablet && 'max-h-[clamp(240px,38vh,300px)] overflow-hidden')}>
+            // The clamp itself now covers portrait too — see scannerClamp.
+            <div className={cn('flex flex-col flex-1 min-h-0', scannerClamp('max-h-[clamp(240px,38vh,300px)]'))}>
               <ProductScanner
                 label={busy ?? 'Scan product barcode'}
                 onBarcode={handleCode}
@@ -1771,7 +1827,7 @@ export function Capture() {
               />
             </div>
           ) : (
-            <div className={cn('flex flex-col flex-1 min-h-0', tablet && 'max-h-[clamp(230px,36vh,280px)] overflow-hidden')}>
+            <div className={cn('flex flex-col flex-1 min-h-0', scannerClamp('max-h-[clamp(230px,36vh,280px)]'))}>
               <TagScanner
                 label={busy ?? 'Scan tote/area tag'}
                 onTag={handleCode}
