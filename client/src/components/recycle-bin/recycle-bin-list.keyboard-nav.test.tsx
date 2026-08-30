@@ -179,6 +179,29 @@ test('in select mode, Enter ticks the highlighted row — same as the twin', asy
   expect(screen.getByRole('button', { name: 'Select Sander' }).getAttribute('aria-pressed')).toBe('true');
 });
 
+test('fix round on #303: a Tab-focused row does not double-toggle when Enter is pressed on it', async () => {
+  // The row's own onKeyDown (present pre-fix, #229) ran during the TARGET
+  // phase and toggled the row on; the SAME Enter then bubbled to the ring's
+  // window-level listener, which — now that onFocusRow had fused the cursor
+  // to this row — toggled it right back off. Net "0 selected" where a single
+  // press should give "1 selected". Reproduced with real timing: focus,
+  // wait for the ring class to actually commit, THEN keydown, dispatched on
+  // the row itself so it bubbles exactly the way a real keypress would.
+  vi.stubGlobal('fetch', makeFetchMock());
+  renderList();
+  await screen.findByText('Drill');
+  fireEvent.click(screen.getByRole('button', { name: 'Select' }));
+
+  const row = screen.getByRole('button', { name: 'Select Drill' });
+  fireEvent.focusIn(row);
+  await waitFor(() => expect(ringOn('Drill')).toBe(true));
+
+  fireEvent.keyDown(row, { key: 'Enter' });
+
+  expect(screen.getByText('1 selected')).toBeTruthy();
+  expect(row.getAttribute('aria-pressed')).toBe('true');
+});
+
 test('the ring reconciles (clears) once the highlighted row is actually restored', async () => {
   vi.stubGlobal('fetch', makeFetchMock());
   renderList();

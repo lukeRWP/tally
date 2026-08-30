@@ -430,28 +430,42 @@ export function RecycleBinList() {
             const contents = describeContents(b);
             const isSelected = selected.has(b.id);
             const navId = String(b.id);
+            // A real <button> while selecting, exactly like ruled-row.tsx's own
+            // `interactive ? 'button' : 'div'` — not a manual role="button" div
+            // (fix round on #303). The manual-ARIA version had its own
+            // onKeyDown calling toggleSelected on Enter/Space, which ran
+            // during the TARGET phase, before the ring's window-level keydown
+            // listener sees the same Enter on its way to `window` in the
+            // bubble phase. Once the ring's onFocusRow fused the cursor to
+            // this row (click or Tab, not just Tab), both handlers fired on
+            // one keypress and canceled out: this row's own handler added it,
+            // the ring's onOpen then saw it already selected and removed it —
+            // net zero, not the single toggle either handler alone implies.
+            // A real button has no local onKeyDown at all: Enter/Space are
+            // native browser-default behaviour (a synthesized click), which
+            // the ring's own `e.preventDefault()` suppresses before it fires
+            // whenever the ring is live — exactly how container-detail.tsx's
+            // buttons were never exposed to this in the first place — and
+            // native keyboard activation still works unaided whenever the
+            // ring is OFF (touch chrome, a dialog open), so no path strands.
+            // Never nests the per-row Restore <Button> below: that only
+            // renders `!selecting`, i.e. exactly when Comp is 'div'.
+            const Comp = selecting ? 'button' : 'div';
             return (
-              <div
+              <Comp
                 key={b.id}
+                type={selecting ? 'button' : undefined}
                 data-nav-id={navId}
                 className={cn(
-                  'flex items-center gap-3 py-3 border-b border-[var(--color-rule)] last:border-b-0 rounded-[var(--radius-sm)]',
+                  'flex w-full items-center gap-3 py-3 text-left border-b border-[var(--color-rule)] last:border-b-0 rounded-[var(--radius-sm)]',
                   highlightedKey === navId && 'bg-[var(--color-elevated)] ring-1 ring-[var(--color-text)]',
                 )}
                 // `e.shiftKey` is read here, not reconstructed from a keydown
                 // listener elsewhere — same rule ruled-row.tsx documents for
                 // every other selectable row in the app (#272).
                 onClick={selecting ? (e) => toggleSelected(b.id, e.shiftKey) : undefined}
-                role={selecting ? 'button' : undefined}
-                tabIndex={selecting ? 0 : undefined}
                 aria-pressed={selecting ? isSelected : undefined}
                 aria-label={selecting ? `Select ${b.rootName}` : undefined}
-                onKeyDown={selecting ? (e) => {
-                  if (e.key === 'Enter' || e.key === ' ') {
-                    e.preventDefault();
-                    toggleSelected(b.id);
-                  }
-                } : undefined}
               >
                 {selecting && (
                   <span
@@ -497,7 +511,7 @@ export function RecycleBinList() {
                     Restore
                   </Button>
                 )}
-              </div>
+              </Comp>
             );
           })}
           </div>
