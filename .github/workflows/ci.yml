@@ -37,6 +37,13 @@ jobs:
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v6
       - uses: ./.github/actions/setup-node
+      # test/labels.geometry.test.js rasterises the real label PDFs with
+      # `pdftoppm -r 203` and checks the printed QR / Code 128 module grid
+      # against the canonical symbol data. Without poppler it SKIPS — which is
+      # the one outcome worse than failing, because the geometry then looks
+      # verified and is not. Keep this step next to the server tests.
+      - name: Install poppler-utils (pdftoppm, for the label geometry test)
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends poppler-utils
       - run: npm ci
         working-directory: server
       - name: Lint
