@@ -1,8 +1,16 @@
 name: CI
 
 on:
+  # Every pull request, whatever its base — NOT just PRs into master.
+  #
+  # Scoped to master, a PR stacked on a long-lived feature branch (say a
+  # follow-up onto an open PR's branch) matched no trigger, so GitHub reported
+  # "no checks reported". That reads as "nothing to run" and is indistinguishable
+  # at a glance from "everything passed" — the one state a reviewer must never
+  # confuse for green. A stacked PR is exactly where that is most dangerous,
+  # because its diff reaches master later via a branch whose own CI already went
+  # green before the stacked change existed.
   pull_request:
-    branches: [master]
 
 concurrency:
   group: ci-${{ github.ref }}
