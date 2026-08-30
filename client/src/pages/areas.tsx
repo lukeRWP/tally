@@ -59,6 +59,19 @@ export function AreasPage() {
    */
   const [visibleBins, setVisibleBins] = React.useState<number[]>([]);
 
+  /**
+   * Move the ring's cursor onto a bin — a SET, unlike `selectBin` above,
+   * which toggles because a second click on a chosen row means "deselect".
+   * j/k and Tab landing on the row you are already on must not clear it.
+   */
+  const setBinCursor = React.useCallback((binId: number) => {
+    setParams((prev) => {
+      const p2 = new URLSearchParams(prev);
+      p2.set('bin', String(binId));
+      return p2;
+    }, { replace: true });
+  }, [setParams]);
+
   // j/k walks the bins as drawn. Nothing selected yet starts at the top going
   // down and the bottom going up, so the first keypress always lands somewhere
   // rather than doing nothing.
@@ -68,12 +81,8 @@ export function AreasPage() {
     const next = at === -1
       ? (delta === 1 ? 0 : visibleBins.length - 1)
       : Math.min(visibleBins.length - 1, Math.max(0, at + delta));
-    setParams((prev) => {
-      const p2 = new URLSearchParams(prev);
-      p2.set('bin', String(visibleBins[next]));
-      return p2;
-    }, { replace: true });
-  }, [visibleBins, selectedBin, setParams]);
+    setBinCursor(visibleBins[next]);
+  }, [visibleBins, selectedBin, setBinCursor]);
 
   const clearSelection = React.useCallback(() => {
     setParams((prev) => {
@@ -93,6 +102,12 @@ export function AreasPage() {
       if (selectedBin == null) return false;
       navigate(`/container/${selectedBin}`);
       return true;
+    },
+    // Tab onto a bin row IS a cursor move (#279) — the tree's rows carry
+    // data-nav-id={container.id}, so focus and ring can never disagree.
+    onFocusRow: (navId) => {
+      const n = Number(navId);
+      if (Number.isFinite(n) && visibleBins.includes(n)) setBinCursor(n);
     },
   });
   // Keeps the cursor on screen in a tree taller than the viewport (#235) —

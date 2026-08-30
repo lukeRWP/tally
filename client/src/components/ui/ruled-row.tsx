@@ -11,8 +11,12 @@ import { cn } from '@/lib/utils';
  *  - select:   the row toggles a leading checkbox instead (batch label staging),
  *              no chevron, no navigation.
  *
- * It is always a real <button>, so Enter/Space work for free and screen readers
- * announce the accessible name built from `title`.
+ * When it can do either it is a real <button>, so Enter/Space work for free and
+ * screen readers announce the accessible name built from `title`. With neither
+ * `onNavigate` nor `selectable` — the read-only public share view — it renders
+ * a plain <div> with no chevron and no hover: a row with nothing to do must not
+ * claim to be pressable, and the chevron must not promise a destination that
+ * does not exist.
  */
 export interface RuledRowProps {
   /** Fires on click when not in select mode. */
@@ -53,18 +57,21 @@ export function RuledRow({
   const handleClick = selectable
     ? (e: React.MouseEvent) => onToggle?.(e.shiftKey)
     : onNavigate;
+  const interactive = selectable || !!onNavigate;
+  const Comp = interactive ? 'button' : 'div';
   return (
-    <button
-      type="button"
-      onClick={handleClick}
+    <Comp
+      type={interactive ? 'button' : undefined}
+      onClick={interactive ? handleClick : undefined}
       aria-label={selectable ? selectLabel : undefined}
       aria-pressed={selectable ? selected : undefined}
       className={cn(
         // last:border-b-0 keeps a list from ending on a dangling hairline that
         // floats over the whitespace below or doubles against the next ColHead.
         'group flex w-full items-center gap-3 border-b border-[var(--color-rule)] last:border-b-0 py-3 text-left',
-        'animate-fade-up transition-colors active:bg-[var(--color-elevated)]',
-        'hover:bg-[var(--color-elevated)]/60 focus-visible:outline-none focus-visible:bg-[var(--color-elevated)]',
+        'animate-fade-up transition-colors',
+        interactive &&
+          'active:bg-[var(--color-elevated)] hover:bg-[var(--color-elevated)]/60 focus-visible:outline-none focus-visible:bg-[var(--color-elevated)]',
         selected && 'bg-[var(--color-primary-bg)]',
       )}
       style={animationDelay ? { animationDelay } : undefined}
@@ -98,9 +105,9 @@ export function RuledRow({
 
       {trailing}
 
-      {!selectable && (
+      {!selectable && interactive && (
         <ChevronRight className="h-4 w-4 shrink-0 text-[var(--color-text-muted)]" />
       )}
-    </button>
+    </Comp>
   );
 }

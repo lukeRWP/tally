@@ -94,7 +94,18 @@ module.exports = function sharingRoutes({ app, db, logger, config }) {
         return error(res, 'Entity not found', 404);
       }
 
-      success(res, { entity });
+      // `share` is framing, not inventory: it is what lets the page tell a
+      // stranger who sent this and when it stops working. Deliberately the
+      // sharer's DISPLAY NAME only — no email, no user id, no property roster.
+      success(res, {
+        entity,
+        share: {
+          entityType: tokenData.entityType,
+          sharedByName: tokenData.createdByName,
+          expiresAt: tokenData.expiresAt,
+          createdAt: tokenData.createdAt,
+        },
+      });
     }
   );
 };

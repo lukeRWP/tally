@@ -5,6 +5,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { ColHead } from '@/components/ui/col-head';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { Skeleton } from '@/components/ui/skeleton';
 import { TitleBar } from '@/components/ui/title-bar';
 import { RuledRow } from '@/components/ui/ruled-row';
@@ -283,13 +284,63 @@ export function MatchesPage() {
       return true;
     },
     onEscape: () => { select(null); setHighlightedId(null); },
+    // Tab onto a row IS a cursor move (#279). It moves the CURSOR only —
+    // `selectedId` (the row whose candidates are open in the pane) stays
+    // whatever it was, keeping this page's two distinct markers distinct.
+    onFocusRow: (navId) => {
+      const n = Number(navId);
+      if (Number.isFinite(n) && ids.includes(n)) setHighlightedId(n);
+    },
+    // The decisions themselves (#269) — handleActionKey is a hoisted function
+    // declaration below, beside the handlers it calls.
+    onAction: handleActionKey,
   });
   // Keeps the cursor on screen while browsing a long backlog (#235) — rows
   // below carry the matching data-nav-id. A click-driven hand-off (sync #1)
   // is a no-op here: block 'nearest' moves nothing already visible.
   useNavScrollIntoView(highlightedId);
 
+  /**
+   * Focus follows the panel after a resolve (#269).
+   *
+   * A resolve destroys the button that fired it — "Use this" belongs to the
+   * row being replaced — so the browser drops focus to `<body>`, and the
+   * measured cost of that was that Tab restarted at the top of the document
+   * after EVERY match, 31 stops from the action. Auto-advance (#228) already
+   * moves the panel to the next `ready` row; focus now lands on that row's
+   * list button in the same beat. That row is also where the ring already is
+   * (the sync effect above ran on the same selection change), so the
+   * focusin listener in useKeyboardNav adopts a cursor it already holds — a
+   * no-op — and the ring and the focus outline stay the one marker #279
+   * fused them into.
+   *
+   * A ref plus a nonce rather than an effect on `selectedId`, because only a
+   * RESOLVE may move focus: a click or an Enter already put focus where the
+   * user wanted it, and yanking it back on every selection change would be
+   * fighting the browser rather than repairing it. `preventScroll` leaves
+   * scrolling to useNavScrollIntoView, the one mechanism here that knows
+   * about the sticky panel. On phone this finds nothing and does nothing —
+   * the list is unmounted while a panel is open, and there is no keyboard
+   * there to serve anyway.
+   */
+  const focusRowId = React.useRef<number | null>(null);
+  const [focusNonce, setFocusNonce] = React.useState(0);
+  React.useEffect(() => {
+    const id = focusRowId.current;
+    if (id == null) return;
+    focusRowId.current = null;
+    document
+      .querySelector<HTMLElement>(`[data-nav-id="${CSS.escape(String(id))}"] button`)
+      ?.focus?.({ preventScroll: true });
+  }, [focusNonce]);
+  function focusRowAfterAdvance(id: number | null) {
+    if (id == null) return;   // nothing left to work; the sitting is over
+    focusRowId.current = id;
+    setFocusNonce((n) => n + 1);
+  }
+
   const [bulkClearing, setBulkClearing] = React.useState<{ i: number; n: number } | null>(null);
+  const [bulkClearOpen, setBulkClearOpen] = React.useState(false);
   const failedRows = rows.filter((r) => r.status === 'none' || r.status === 'failed');
 
   function handlePick(index: number) {
@@ -297,7 +348,9 @@ export function MatchesPage() {
     const id = current.id;
     resolve.mutate({ id, candidateIndex: index }, {
       onSuccess: (res) => {
-        select(nextPendingAfter(rowsRef.current, id));
+        const next = nextPendingAfter(rowsRef.current, id);
+        select(next);
+        focusRowAfterAdvance(next);
         if (res?.duplicates?.length) {
           toast(`Linked — you may already have one in ${res.duplicates[0].containerName}`);
         } else {
@@ -321,7 +374,12 @@ export function MatchesPage() {
     if (!current) return;
     const id = current.id;
     resolve.mutate({ id, dismiss: true }, {
-      onSuccess: () => { select(nextPendingAfter(rowsRef.current, id)); toast('Dismissed'); },
+      onSuccess: () => {
+        const next = nextPendingAfter(rowsRef.current, id);
+        select(next);
+        focusRowAfterAdvance(next);
+        toast('Dismissed');
+      },
       onError: (err) => {
         if (err instanceof ApiError && err.status === 409) select(null);
         toast(err instanceof Error ? err.message : 'Could not dismiss that match');
@@ -329,29 +387,76 @@ export function MatchesPage() {
     });
   }
 
+  /**
+   * The keys that actually resolve a sitting (#269).
+   *
+   * The ring could reach a row and open it, then stopped: every decision was
+   * a mouse round trip of ~857px, to a target whose y position moves with the
+   * candidate count ("None of these" sits *after* the list). The bindings are
+   * read straight off the panel already on screen, which is a short, ordered
+   * list of cards and one opt-out:
+   *
+   *   1…9  "Use this" on the Nth candidate card, in rendered order. A digit
+   *        is the shortest unambiguous name for a card in a numbered list,
+   *        and the list is genuinely short — the searcher returns at most
+   *        `match.maxCandidates` (3 today), so 1–3 is the real range and the
+   *        rest of the digits simply never match anything.
+   *   d    "None of these" — dismiss. Mnemonic, and free: the ring's own
+   *        letters are j/k and `/`.
+   *
+   * Bounded by the row's OWN candidate count, so `3` on a two-candidate row
+   * does nothing rather than falling through to some neighbouring meaning.
+   *
+   * Everything is guarded on the OPEN row (`current`), never the cursor: the
+   * two are deliberately distinct here (j/k browse without opening), and a
+   * digit must only ever mean a card the user can see. `status === 'ready'`
+   * and `!resolve.isPending` are exactly the conditions under which the
+   * matching BUTTON exists and is enabled — so a key can do nothing the mouse
+   * could not do on the same frame, which is also what keeps a single-row
+   * dismiss no less safe than its button. (#278's confirm belongs to the BULK
+   * clear, which acts on rows you are not looking at; this one acts on the
+   * one panel in front of you.)
+   *
+   * The hook supplies the two guards a BUTTON gets for free and a key does
+   * not: auto-repeat is dropped, so a leaned-on key cannot walk down the
+   * backlog, and a key only fires when it arrives alone — this page has no
+   * text field for `isTyping` to catch a USB scanner in, and a barcode is a
+   * burst of digits aimed straight at these bindings. See ACTION_BURST_MS.
+   */
+  function handleActionKey(key: string): void {
+    if (!current || current.status !== 'ready' || resolve.isPending) return;
+    if (key === 'd') { handleDismiss(); return; }
+    const nth = Number(key);
+    if (Number.isInteger(nth) && nth >= 1 && nth <= current.candidates.length) handlePick(nth - 1);
+  }
+
   // Sequential, not Promise.all — these share the same underlying dismiss
   // endpoint the single-row flow uses, and firing them concurrently would
-  // just be N races against the same list invalidation. One outcome toast;
-  // a mid-loop failure stops rather than plowing through the rest blind.
+  // just be N races against the same list invalidation. Continue-on-failure
+  // (#278), matching container-detail's and recycle-bin's bulk loops: one
+  // row's 500 does not strand the rest of the batch. There is nothing to
+  // "keep selected" here the way those two do — failedRows is derived
+  // straight from `rows`, so a row whose dismiss failed simply never leaves
+  // the none/failed set and reappears in it on its own once this snapshot's
+  // targets array is done being walked.
   async function handleBulkClear() {
     const targets = failedRows;
     const n = targets.length;
     if (n === 0 || bulkClearing) return;
     setBulkClearing({ i: 0, n });
-    let cleared = 0;
-    for (const row of targets) {
+    let ok = 0;
+    let failed = 0;
+    for (let idx = 0; idx < targets.length; idx++) {
       try {
-        await resolve.mutateAsync({ id: row.id, dismiss: true });
-        cleared += 1;
-        setBulkClearing({ i: cleared, n });
+        await resolve.mutateAsync({ id: targets[idx].id, dismiss: true });
+        ok += 1;
       } catch {
-        setBulkClearing(null);
-        toast(`Cleared ${cleared} of ${n}`);
-        return;
+        failed += 1;
       }
+      setBulkClearing({ i: idx + 1, n });
     }
     setBulkClearing(null);
-    toast(`Cleared ${n}`);
+    toast(failed ? `Cleared ${ok} · ${failed} failed` : `Cleared ${ok}`);
   }
 
   const loading = isLoading || !propertyId;
@@ -402,11 +507,22 @@ export function MatchesPage() {
       <div className="flex items-center justify-between gap-2">
         <h1><TitleBar>Matches</TitleBar></h1>
         {failedRows.length > 0 && (
-          <Button variant="outline" size="sm" onClick={handleBulkClear} disabled={!!bulkClearing}>
+          <Button variant="outline" size="sm" onClick={() => setBulkClearOpen(true)} disabled={!!bulkClearing}>
             {bulkClearing ? `Clearing… ${bulkClearing.i} of ${bulkClearing.n}` : `Clear ${failedRows.length} failed`}
           </Button>
         )}
       </div>
+
+      <ConfirmDialog
+        open={bulkClearOpen}
+        onOpenChange={(open) => { if (!bulkClearing) setBulkClearOpen(open); }}
+        title={`Clear ${failedRows.length} failed lookup${failedRows.length === 1 ? '' : 's'}?`}
+        description="They'll leave the worklist; the items keep their names."
+        destructive
+        confirmLabel="Clear"
+        isPending={!!bulkClearing}
+        onConfirm={() => { setBulkClearOpen(false); handleBulkClear(); }}
+      />
 
       {loading && (
         <div className="flex flex-col gap-2">

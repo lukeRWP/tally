@@ -7,7 +7,7 @@
  * the batch-select checkboxes are up ("Select" mode), since Enter jumping to
  * a whole other page would fight that flow.
  */
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import type { Container, Item } from '@/types/inventory';
@@ -88,9 +88,9 @@ function ringOn(text: string): boolean {
   return !!el?.className.includes('ring-1');
 }
 
-function renderPage() {
+function renderPage(entry = '/container/1') {
   return render(
-    <MemoryRouter initialEntries={['/container/1']}>
+    <MemoryRouter initialEntries={[entry]}>
       <Routes>
         <Route path="/container/:containerId" element={<ContainerDetail />} />
       </Routes>
@@ -165,15 +165,83 @@ test('keys are inert while an unrelated field is focused (isTyping)', () => {
   document.body.removeChild(stray);
 });
 
-test('the ring is disabled while the batch-select checkboxes are up', () => {
+test('#279: in select mode the ring still MOVES, and Enter ticks the row instead of navigating', () => {
+  // The old contract switched the whole ring off here, which took j/k down
+  // with Enter while leaving the highlight painted — a cursor that looked
+  // live and answered nothing. Only Enter's meaning changes now: it must not
+  // navigate away mid-selection, so it toggles the highlighted row instead,
+  // which is what makes "tick 12 scattered rows" a keyboard job.
   renderPage();
   fireEvent.click(screen.getByRole('button', { name: 'Select' }));
 
   fireEvent.keyDown(window, { key: 'j' });
-  expect(ringOn('Nested A')).toBe(false);
+  expect(ringOn('Nested A')).toBe(true);
+  fireEvent.keyDown(window, { key: 'j' });
+  expect(ringOn('Nested B')).toBe(true);
 
   fireEvent.keyDown(window, { key: 'Enter' });
   expect(navigateSpy).not.toHaveBeenCalled();
+  // The bulk bar counts what Enter ticked.
+  expect(screen.getByText('1 selected')).toBeTruthy();
+
+  fireEvent.keyDown(window, { key: 'j' });
+  fireEvent.keyDown(window, { key: 'Enter' });
+  expect(screen.getByText('2 selected')).toBeTruthy();
+  expect(navigateSpy).not.toHaveBeenCalled();
+});
+
+test('#279: the ring goes quiet while one of this page\'s own dialogs is open', () => {
+  // Dropping the `!selecting` gate above removed something it was covering by
+  // accident: bulk delete/tag only open IN select mode, so the ring used to
+  // be off under them. Enter belongs to the dialog's buttons while one is up,
+  // and `/` must not navigate the page out from under it.
+  renderPage('/container/1?nav=container:10');
+  expect(ringOn('Nested A')).toBe(true);
+
+  fireEvent.click(screen.getByRole('button', { name: 'Select' }));
+  fireEvent.keyDown(window, { key: 'Enter' });
+  expect(screen.getByText('1 selected')).toBeTruthy();
+
+  // Scoped to the select-mode action bar — the page's own Delete is a
+  // separate control with the same label.
+  const bulkBar = screen.getByText('1 selected').parentElement!;
+  fireEvent.click(within(bulkBar).getByRole('button', { name: 'Delete' }));
+
+  fireEvent.keyDown(window, { key: 'Enter' });
+  expect(screen.getByText('1 selected')).toBeTruthy();   // toggled nothing
+  fireEvent.keyDown(window, { key: 'j' });
+  expect(ringOn('Nested A')).toBe(true);                 // moved nothing
+  fireEvent.keyDown(window, { key: '/' });
+  expect(navigateSpy).not.toHaveBeenCalled();            // went nowhere
+});
+
+test('#267 x #279: the Select toggle\'s own blur-on-activate and the ring\'s focus fusion do not interfere with each other', () => {
+  // #286 blurs the Select toggle the instant select mode turns on, so the
+  // very next Space (this page's scroll key) reaches the page instead of
+  // re-clicking the toggle. #293 fuses Tab-onto-a-row into the ring via a
+  // window `focusin` listener that is live in select mode too (the ring
+  // never switches off there any more). Neither reads or sets the other's
+  // focus target, but both fixes live in the exact same file and both moved
+  // focus around, so this pins that a select-mode Tab still lands the ring
+  // right after the toggle's own blur — not just that each works alone.
+  renderPage();
+  const toggle = screen.getByRole('button', { name: 'Select' });
+  toggle.focus();
+  fireEvent.click(toggle);
+
+  // #267: nothing holds focus once select mode is on.
+  expect(document.activeElement).not.toBe(toggle);
+  expect(document.activeElement).toBe(document.body);
+
+  // #279: Tab landing on a row still hands the ring its cursor.
+  fireEvent.focusIn(screen.getByRole('button', { name: 'Select Nested A' }));
+  expect(ringOn('Nested A')).toBe(true);
+
+  // And the ring's own Enter (not navigation) still ticks it, proving the
+  // fused cursor is the SAME one select mode's Enter branch reads.
+  fireEvent.keyDown(window, { key: 'Enter' });
+  expect(navigateSpy).not.toHaveBeenCalled();
+  expect(screen.getByText('1 selected')).toBeTruthy();
 });
 
 test('the ring is off entirely on touch chrome', () => {
@@ -208,6 +276,29 @@ test('#235: j walks the wide grid in reading order — row-major, which is DOM o
     const grid = screen.getByText(rowText).closest('button')!.parentElement!.parentElement!;
     expect(grid.className).toContain('grid-cols-2');
     expect(grid.className).not.toContain('grid-flow-col');
+  }
+});
+
+// ── #270: the cursor survives the detail round-trip ──────────────────────
+
+test('#270: a cursor in the URL is live on arrival, and j continues from it', () => {
+  // What Back actually hands the page: the history entry it left, params and
+  // all. Held in useState the highlight was simply gone and the next j
+  // re-seeded at row 1 — off-screen, scrolling nothing, because a first
+  // landing is deliberately a silent baseline.
+  renderPage('/container/1?nav=item:20');
+
+  expect(ringOn('Item A')).toBe(true);
+
+  fireEvent.keyDown(window, { key: 'j' });
+  expect(ringOn('Item B')).toBe(true);
+  expect(ringOn('Nested A')).toBe(false);
+});
+
+test('#270: a cursor naming a row that is not here is not honoured', () => {
+  renderPage('/container/1?nav=item:999');
+  for (const name of ['Nested A', 'Nested B', 'Item A', 'Item B']) {
+    expect(ringOn(name)).toBe(false);
   }
 });
 

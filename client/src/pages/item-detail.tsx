@@ -37,6 +37,7 @@ import { ShareDialog } from '@/components/sharing/share-dialog';
 import { FieldDialog, type FieldKind } from '@/components/inventory/field-dialog';
 import { safeExternalUrl, cn } from '@/lib/utils';
 import { useLayoutMode } from '@/hooks/use-layout-mode';
+import { useKeyboardNav } from '@/hooks/use-keyboard-nav';
 
 function computeDepreciation(
   purchasePrice: number,
@@ -472,6 +473,37 @@ export function ItemDetail() {
   const docCount = (itemFiles ?? []).filter((f) => f.fileType !== 'photo').length;
   const hasAccessories = (accessories?.length ?? 0) > 0;
   const hasLending = (lendingHistory?.length ?? 0) > 0;
+
+  /**
+   * The two keys that let a keyboard browse session CONTINUE past an item
+   * (#279).
+   *
+   * This is the densest page in the app and it wired nothing: `/`, j, k and
+   * Escape all did nothing, and the first fact on the page was twenty tab
+   * stops deep. A full row ring over the ledger is a larger design question
+   * and deliberately not attempted here — but arriving by keyboard and having
+   * the keyboard stop working is what ends the session, so `/` leaves for
+   * search and Escape steps back to the list you came from.
+   *
+   * Off while any dialog is up: Escape belongs to the dialog then, and
+   * navigating the page out from under an open dialog is never what was
+   * meant. `field` is the shared ledger-edit dialog (one for every row).
+   */
+  const dialogOpen = deleteOpen || editOpen || conditionFormOpen || printOpen
+    || dateFormOpen || accessoryPickerOpen || lendFormOpen || shareOpen
+    || photoOpen || useRetailOpen || field !== null;
+  useKeyboardNav({
+    enabled: split && !dialogOpen,
+    onSearch: () => navigate('/search'),
+    onEscape: () => {
+      // Direct entry (QR deep link, fresh tab) has no prior in-app entry —
+      // popping would do nothing or leave the SPA. Same guard search.tsx's
+      // back arrow uses.
+      const idx = (window.history.state as { idx?: number } | null)?.idx ?? 0;
+      if (idx > 0) navigate(-1);
+      else navigate('/');
+    },
+  });
 
   if (isLoading) {
     return (

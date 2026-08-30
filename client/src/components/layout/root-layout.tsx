@@ -17,10 +17,10 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
 import { buildCaptureUrl } from '@/lib/capture-url';
-import { useCarryStore } from '@/store/carry-store';
 import { useLayoutMode } from '@/hooks/use-layout-mode';
 import { useHasCamera } from '@/hooks/use-has-camera';
 import { useScrollRestoration } from '@/hooks/use-scroll-restoration';
+import { stackReserveCss, useBottomBarActive, useCarryBannerShowing } from '@/hooks/use-bottom-stack';
 
 /**
  * What "where" the current page already answers, so the container dialog
@@ -221,11 +221,14 @@ export function RootLayout() {
 
   // The banner is `fixed`, so it occludes the last row of every page it shows
   // on. Reserve for it here rather than deleting the banner on the one page
-  // where that hurt most. /move renders the scanner but never the banner, so
-  // it must not pay.
-  const carrying = useCarryStore(
-    (s) => (s.carried.length > 0 || s.lastMove !== null) && pathname !== '/move',
-  );
+  // where that hurt most. `useCarryBannerShowing` already knows /move renders
+  // the scanner but never the banner (the same guard carry-banner.tsx's own
+  // early return uses) — this used to be a second, independent copy of that
+  // exact condition.
+  const carrying = useCarryBannerShowing();
+  // A page's own select-mode bar (container-detail.tsx, recycle-bin-list.tsx)
+  // is equally `fixed` and equally worth reserving for — see use-bottom-stack.ts.
+  const barActive = useBottomBarActive();
   // The three camera flows are sized to the viewport instead of scrolling:
   // the frame is a flex item that absorbs the leftover height.
   const fitsViewport = pathname === '/capture' || pathname === '/scan' || pathname === '/move';
@@ -247,6 +250,23 @@ export function RootLayout() {
 
   return (
     <div className="flex h-[100dvh] bg-[var(--color-bg)] overflow-x-hidden">
+      {/* Skip link (#279). <aside> is the first thing in the DOM and holds Add
+          plus seven nav rows, so EVERY page costs eight tab stops before its
+          first breadcrumb — twenty before the first fact on item detail. First
+          child of the layout so it is tab stop 1, invisible until focused.
+          <main> needs tabIndex={-1} to be a focus target at all. */}
+      <a
+        href="#main-content"
+        // The ring preventDefaults Enter whenever a cursor exists, and #270
+        // makes "Back → Tab → Enter" the ordinary path — so without this the
+        // skip link is tab stop 1 on every ringed surface and its Enter opens
+        // the highlighted ROW instead of skipping. It is not a nav row; it
+        // opts out the same way the tree's chevron does.
+        data-nav-ignore=""
+        className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-[100] focus:px-3 focus:py-2 focus:rounded-[var(--radius-sm)] focus:bg-[var(--color-text)] focus:text-[var(--color-bg)] focus:font-mono focus:text-xs focus:font-bold focus:uppercase focus:tracking-[0.08em]"
+      >
+        Skip to content
+      </a>
       {sidebar && <Sidebar />}
 
       {/* Main content area */}
@@ -258,16 +278,20 @@ export function RootLayout() {
         )}
         <main
           ref={mainRef}
-          className={cn(
-            'flex-1 overflow-y-auto overflow-x-hidden px-4 pt-4',
-            // With no bottom nav there is nothing to clear, so the reserved
-            // space becomes ordinary padding instead of a phone-sized gutter.
-            sidebar
-              ? (carrying ? 'pb-28' : 'pb-6')
-              : (carrying
-                  ? 'pb-[calc(9.5rem+env(safe-area-inset-bottom))]'
-                  : 'pb-[calc(5rem+env(safe-area-inset-bottom))]'),
-          )}
+          id="main-content"
+          tabIndex={-1}
+          className="flex-1 overflow-y-auto overflow-x-hidden px-4 pt-4"
+          // The reserve for whatever is currently pinned to the bottom of the
+          // screen — the nav (touch only), the carry banner, and a page's own
+          // select-mode bar — comes from the ONE shared model in
+          // use-bottom-stack.ts, so this can never drift from what the carry
+          // banner, a page's own bar, or the toast layer each think is
+          // stacked below them (see that file's own doc comment for why this
+          // used to be four independent, occasionally-wrong arithmetics).
+          // Inline style, not a Tailwind class: the reserve is one of several
+          // numeric rem values computed at runtime, and Tailwind's build-time
+          // class scanner cannot see a dynamically-built class name.
+          style={{ paddingBottom: stackReserveCss({ touch: !sidebar, carrying, barActive }) }}
         >
           <div className={cn(
             // Each step stays just under the space actually available, so the
