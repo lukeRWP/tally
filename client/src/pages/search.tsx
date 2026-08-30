@@ -4,15 +4,13 @@ import { ArrowLeft, Search as SearchIcon, ScanLine, ArrowRight } from 'lucide-re
 import { Button } from '@/components/ui/button';
 import { ColHead } from '@/components/ui/col-head';
 import { Input } from '@/components/ui/input';
-import { ItemCard } from '@/components/inventory/item-card';
+import { SearchResults } from '@/components/inventory/search-results';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useSearchItems } from '@/hooks/use-inventory';
 import { extractTlyCode } from '@/lib/tly';
 import { cn } from '@/lib/utils';
 import { useLayoutMode } from '@/hooks/use-layout-mode';
 import { useKeyboardNav, useNavScrollIntoView } from '@/hooks/use-keyboard-nav';
-import { SplitView } from '@/components/layout/split-view';
-import { ItemPreview } from '@/components/inventory/item-preview';
 
 /**
  * Global search — the surface for the app's #1 job, "Where is X?".
@@ -27,6 +25,11 @@ import { ItemPreview } from '@/components/inventory/item-preview';
  * - There is no 'Removed' chip. Soft-deleted items always carry DELETED_AT,
  *   which search always excludes — the option could never match anything.
  *   Deleted things live in the Recycle Bin, reachable from Settings.
+ *
+ * This is the JUMP entrance. Home's field is the other one, and the results
+ * both produce are now the same component (`SearchResults`, #274) — the desk
+ * split-and-preview lived only here for a while, on the surface people reach
+ * second, while the app's root rendered a bare list.
  */
 
 const STATUS_CHIPS: Array<{ label: string; value: string | undefined }> = [
@@ -251,35 +254,18 @@ export function SearchPage() {
             </Button>
           </div>
         ) : results && results.length > 0 ? (
-          split ? (
-            <SplitView
-              list={
-                <>
-                  <ColHead>{results.length} result{results.length === 1 ? '' : 's'}</ColHead>
-                  {results.map((item) => (
-                    <div
-                      key={item.id}
-                      data-nav-id={item.id}
-                      className={cn(
-                        'rounded-[var(--radius-sm)]',
-                        selectedId === item.id && 'bg-[var(--color-elevated)] ring-1 ring-[var(--color-text)]',
-                      )}
-                    >
-                      <ItemCard item={item} onSelect={() => select(item.id)} />
-                    </div>
-                  ))}
-                </>
-              }
-              detail={<ItemPreview itemId={selectedId} />}
+          // Shared with Home (#274) — one answer, two entrances. The count head
+          // is a full-width rule above the split, as it is on every other list
+          // in the app, rather than a caption on the left column only.
+          <>
+            <ColHead>{results.length} result{results.length === 1 ? '' : 's'}</ColHead>
+            <SearchResults
+              items={results}
+              split={split}
+              selectedId={selectedId}
+              onSelect={select}
             />
-          ) : (
-            <>
-              <ColHead>{results.length} result{results.length === 1 ? '' : 's'}</ColHead>
-              {results.map((item) => (
-                <ItemCard key={item.id} item={item} />
-              ))}
-            </>
-          )
+          </>
         ) : !isPlaceholderData ? (
           // Reached with an empty (or absent) result set that is not loading
           // and not an error. Structurally this can only happen once

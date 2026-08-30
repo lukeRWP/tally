@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { useNavigate, useSearchParams } from 'react-router';
-import { Search, ChevronDown, Filter, X } from 'lucide-react';
+import { Search, ChevronDown, Filter, X, ScanLine, ArrowRight } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { ColHead } from '@/components/ui/col-head';
@@ -11,9 +11,11 @@ import { ErrorState } from '@/components/ui/error-state';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ItemCard } from '@/components/inventory/item-card';
 import { ItemTile } from '@/components/inventory/item-tile';
+import { SearchResults } from '@/components/inventory/search-results';
 import { TagBadge } from '@/components/tags/tag-badge';
 import { useProperties, useRecentItems, useSearchItems, type SearchFilters } from '@/hooks/use-inventory';
 import { usePropertyTags, type Tag } from '@/hooks/use-tags';
+import { extractTlyCode } from '@/lib/tly';
 import { cn } from '@/lib/utils';
 
 // -- AllPropertyTags: fetch tags across all user properties --------------------
@@ -106,6 +108,14 @@ const STATUSES: Array<{ label: string; value: string }> = [
  * results temporarily stand in front of, never replace.
  *
  * Browsing the house by place has a tab of its own, so no property list here.
+ *
+ * Home and `/search` are two ENTRANCES to one job, not two jobs (#274). This
+ * one is the landing: it carries the tag/condition/status filters and keeps
+ * recents behind the results, because you arrive here without having decided
+ * to search yet. `/search` is the jump: autofocused, one tap from every
+ * screen, deep-linkable. What they must never differ on is the ANSWER — the
+ * results themselves render through the shared `SearchResults`, so the desk
+ * split-and-preview and the touch ruled list are the same on both.
  */
 export function Home() {
   // Above any early return: hooks must run on every render.
@@ -323,6 +333,18 @@ export function Home() {
     setSearchQuery('');
   }
 
+  /**
+   * A tally code pasted into Home's box goes where the code points.
+   *
+   * `/search` has done this since it was built, and Home — the box people
+   * actually type into, because Home is the app's root — returned "Nothing
+   * matched" for a perfectly valid label, because the code is in neither NAME
+   * nor DESCRIPTION. Two entrances to one job must not disagree about what
+   * the job is (#274). Read off the live input rather than the debounced
+   * query so a paste resolves immediately instead of 300ms later.
+   */
+  const typedCode = extractTlyCode(searchInput);
+
   const selectedTags = allTags.filter((t) => selectedTagIds.includes(t.id));
   const hasActiveFilters =
     selectedTagIds.length > 0 || selectedCondition !== null || selectedStatus !== 'all';
@@ -487,7 +509,24 @@ export function Home() {
         </div>
       )}
 
-      {searching ? (
+      {typedCode ? (
+        /* A code goes where it points, ahead of any text matching — same card,
+           same wording, same behaviour as /search's. */
+        <button
+          type="button"
+          onClick={() => navigate(`/s/${typedCode}`)}
+          className="flex w-full items-center gap-3 rounded-[var(--radius-sm)] border-2 border-[var(--color-text)] px-3 py-3 text-left hover:bg-[var(--color-elevated)] animate-fade-up"
+        >
+          <ScanLine className="h-5 w-5 shrink-0" />
+          <span className="min-w-0 flex-1">
+            <span className="block font-mono text-[10px] uppercase tracking-[0.1em] text-[var(--color-text-muted)]">
+              that is a tally code
+            </span>
+            <span className="block truncate text-sm font-semibold">Go to {typedCode}</span>
+          </span>
+          <ArrowRight className="h-4 w-4 shrink-0" />
+        </button>
+      ) : searching ? (
         <section className="flex flex-col animate-fade-up">
           {/* The way back to the recent list is named on the list that hid it,
               not just parked in the field's corner. */}
@@ -525,18 +564,19 @@ export function Home() {
             </div>
           )}
 
-          {searchResults?.map((item) => (
-            <div
-              key={item.id}
-              data-nav-id={item.id}
-              className={cn(
-                'rounded-[var(--radius-sm)] border-b border-[var(--color-rule)] last:border-b-0',
-                highlightedId === item.id && 'bg-[var(--color-elevated)] ring-1 ring-[var(--color-text)]',
-              )}
-            >
-              <ItemCard item={item} />
-            </div>
-          ))}
+          {/* The desk gets the list beside a preview pane, exactly as /search
+              does — same component, so the two entrances to the app's #1 job
+              can no longer drift apart (#274). `highlightedId` IS the ring's
+              cursor, so the pane follows j/k as well as the mouse, and
+              `setCursor` stays the one writer of `?sel`. */}
+          {searchResults && searchResults.length > 0 && (
+            <SearchResults
+              items={searchResults}
+              split={wide}
+              selectedId={highlightedId}
+              onSelect={(id) => setCursor(String(id))}
+            />
+          )}
         </section>
       ) : (
         <section className="flex flex-col animate-fade-up">
