@@ -5,7 +5,17 @@ import { Button } from '@/components/ui/button';
 
 interface CameraScannerProps {
   onBarcodeScanned: (code: string) => void;
-  onClose: () => void;
+  /**
+   * Leave the scanner entirely. OPTIONAL, and omitting it is a real choice a
+   * caller makes rather than an oversight: `Stop` pauses the decode loop and
+   * is recoverable in one tap, while `Close` unmounts whatever hosts the
+   * scanner — in capture that discards the held photo Blob, the typed name
+   * and any Kept vision fields, with no confirm and no undo. Two identical
+   * 32px controls 8px apart, one benign and one destructive, is the classic
+   * coarse-pointer mis-tap (#268), so a caller on a finger-driven screen that
+   * has another way out passes nothing here and the button is not rendered.
+   */
+  onClose?: () => void;
   isActive: boolean;
   /**
    * The action, drawn INSIDE the frame above the decode box. The instruction
@@ -226,7 +236,7 @@ export function CameraScanner({ onBarcodeScanned, onClose, isActive, formats, la
               <Camera className="w-4 h-4" /> Start
             </Button>
           )}
-          <Button variant="ghost" size="sm" onClick={onClose}>Close</Button>
+          {onClose && <Button variant="ghost" size="sm" onClick={onClose}>Close</Button>}
         </div>
       </div>
     </div>

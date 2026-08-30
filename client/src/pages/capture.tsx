@@ -340,6 +340,12 @@ export function Capture() {
   // The name is the one field allowed to pre-fill, so it is the one field that
   // needs to look unconfirmed until someone has actually looked at it.
   const [nameIsSuggested, setNameIsSuggested] = React.useState(false);
+  /**
+   * #266: a catalogue title a lookup found but did NOT apply, because the name
+   * in the field was typed by a person. Offered behind a Keep rather than
+   * taken — see applyBarcodeLookup. Null whenever there is nothing to offer.
+   */
+  const [catalogueName, setCatalogueName] = React.useState<string | null>(null);
   const [reviewOpen, setReviewOpen] = React.useState(false);
   /**
    * Set the moment a barcode resolves to a real catalogue product.
@@ -413,6 +419,7 @@ export function Capture() {
     setVision(null);
     setVisionPending(false);
     setNameIsSuggested(false);
+    setCatalogueName(null);
     setReviewOpen(false);
     setVisionFailed(false);
     setVisionEmpty(false);
@@ -425,7 +432,7 @@ export function Capture() {
     // commit optimistic, the scanner stays live between items, and a second
     // scan callback can fire before React has re-rendered. Reading the dead
     // draft back out of the ref there would commit the same item twice.
-    stateRef.current = { ...stateRef.current, draft: { name: '' }, vision: null };
+    stateRef.current = { ...stateRef.current, draft: { name: '' }, vision: null, nameIsSuggested: false };
   }
 
   const createItem = useCreateItem();
@@ -454,8 +461,11 @@ export function Capture() {
   // snapshot: commit can be reached through that same long-lived callback, so
   // reading them off the render that created it would freeze the values from
   // whenever the camera was mounted, not from the moment of commit.
-  const stateRef = React.useRef({ dest, draft, phase, destConfirmed, vision, matchAvailable });
-  React.useEffect(() => { stateRef.current = { dest, draft, phase, destConfirmed, vision, matchAvailable }; }, [dest, draft, phase, destConfirmed, vision, matchAvailable]);
+  // nameIsSuggested rides along for the same reason the draft does: #266's
+  // "did a person type this name" test is read AFTER a lookup's round trip,
+  // and the render that started the lookup is not the render that answers it.
+  const stateRef = React.useRef({ dest, draft, phase, destConfirmed, vision, matchAvailable, nameIsSuggested });
+  React.useEffect(() => { stateRef.current = { dest, draft, phase, destConfirmed, vision, matchAvailable, nameIsSuggested }; }, [dest, draft, phase, destConfirmed, vision, matchAvailable, nameIsSuggested]);
 
   // Where you were standing when you tapped Add. A container pre-pins outright;
   // an area or property only seeds the picker, because "somewhere in the garage"
@@ -677,10 +687,11 @@ export function Capture() {
       // Skipped under showForm (#265): at a desk with the form open, the
       // toast painted directly over the Name field — its Undo sat exactly
       // where a mouse goes to type the next item, so reaching for the next
-      // item could soft-delete the one just saved. The receipts list below
-      // the form is already the desk's natural record of every commit, and
-      // it carries its own Undo action (below) for the same reason — this
-      // isn't a lost capability, just a moved one.
+      // item could soft-delete the one just saved. The receipts list — which
+      // sits beside the form, in its right-hand column (#277) — is already
+      // the desk's natural record of every commit, and it carries its own
+      // Undo action for the same reason: this isn't a lost capability, just
+      // a moved one.
       if (!showForm) {
         toast.success(`${created.name} → ${destination.name}`, {
           action: { label: 'Undo', onClick: () => { void undoCreate(key, created.id, created.name); } },
@@ -930,13 +941,33 @@ export function Capture() {
       // is long enough for the user to have typed a description, and spreading
       // a pre-await snapshot would silently discard it.
       const live = stateRef.current.draft;
+      const title = product?.shortName || product?.name || '';
+      /**
+       * #266: whether the name in the field is one a PERSON put there.
+       *
+       * At a desk both fields are on screen at once, so "name it, then scan
+       * it" is the natural order for anything the catalogue title is wrong
+       * for — "Dad's old drill", "the good extension lead". A typed name is a
+       * decision about this object; the catalogue title is a fact about the
+       * product. The fact does not get to overwrite the decision (and merely
+       * TABBING OUT of the barcode field used to be enough to make it),
+       * so the title is offered behind a Keep instead — the same consent gate
+       * VisionReview uses for everything the model guesses.
+       *
+       * A model-suggested name is not protected: it is a guess, and a
+       * catalogue hit is a better answer to the same question. That is the
+       * existing rule from the camera path, unchanged.
+       */
+      const userNamed = !!live.name.trim() && !stateRef.current.nameIsSuggested;
       setDraft({
         ...live,
         barcode: code,
-        name: product?.shortName || product?.name || live.name,
+        name: userNamed ? live.name : (title || live.name),
         fullName: product?.id ? undefined : product?.name,
         productId: product?.id,
       });
+      // Only worth offering when it says something the field does not.
+      setCatalogueName(userNamed && title && title !== live.name.trim() ? title : null);
       if (product?.name) {
         // A catalogue hit is a fact about this exact object; the photo guess
         // is an inference. Drop the guess, exactly as the camera path does.
@@ -1097,6 +1128,27 @@ export function Capture() {
     void identifyPhoto(blob);
   }
 
+  /**
+   * Drop the photo held for this draft, and nothing else (#277).
+   *
+   * The desk form's only photo-removing control used to be the draft strip's
+   * X, which threw the WHOLE draft away; with the strip not rendering there,
+   * a wrong photo needed an affordance that costs the name and the barcode
+   * nothing. The suggestion goes with it — it is an inference about a picture
+   * that is no longer attached.
+   */
+  function clearPhoto() {
+    setDraft((d) => ({ ...d, photo: undefined, photoUrl: undefined }));
+    // #233: an identify call still in flight belongs to the photo just
+    // removed — obsolete it, so its answer cannot land in this draft.
+    identifyGen.current++;
+    setVision(null);
+    setVisionPending(false);
+    setVisionFailed(false);
+    setVisionEmpty(false);
+    setReviewOpen(false);
+  }
+
   async function onPhoto(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     e.target.value = '';
@@ -1119,6 +1171,171 @@ export function Capture() {
     if (busy || !identified) return;
     setPhase('place');
   }
+
+  /**
+   * #268: the scanner's `Close` — 8px from `Stop`, same size, same weight —
+   * is dropped on a finger-driven screen.
+   *
+   * `Stop` pauses the decode loop and is one tap to undo. `Close` unmounts
+   * Capture, taking the held photo Blob, the typed name and any Kept vision
+   * fields with it, no confirm and no undo. Adjacent identical 32px controls,
+   * one benign and one destructive, is a mis-tap waiting to happen every
+   * scanning session. A coarse pointer already has two safer ways out — the
+   * draft strip's Discard and the browser's own back — so the destructive one
+   * simply is not offered there. A mouse keeps it: a cursor does not slip 8px.
+   */
+  const scannerClose = coarse ? undefined : () => navigate(-1);
+
+  /**
+   * The one sentence this page says about a held photo — and the one link that
+   * opens what the model found. Computed once because two surfaces say them
+   * now: the camera flow's draft strip, and the desk form's photo panel, which
+   * inherited them when the strip stopped rendering there (#277). Two copies
+   * would drift on exactly the states that are hardest to see.
+   */
+  const photoStatus = visionPending ? 'photo held — looking at it…'
+    : visionFailed ? "photo held — couldn't read it"
+    : visionEmpty ? 'photo held — nothing recognised'
+    : vision ? `photo held — ${vision.confidence === 'high' ? 'read' : 'guessed'} from the photo`
+    : 'photo held — saves with the item';
+  /** Did the model offer anything BEYOND the name, i.e. is there anything to review? */
+  const reviewOffered = !!vision && !reviewOpen && !!(
+    vision.description || vision.category || vision.brand
+    || vision.estimatedValue != null || (vision.quantity ?? 0) > 1
+  );
+
+  /** One warning, two positions — see the render sites and #277. */
+  const dupeWarning = dupes.length > 0
+    ? <DupeWarning dupes={dupes} onDismiss={() => setDupes([])} />
+    : null;
+
+  /**
+   * The session log: every commit this visit, newest first, with each
+   * row's Retry / photo-retry / Queue / Print handles on it.
+   *
+   * A node rather than JSX in place, because it has two homes (#277). In
+   * the camera flow it renders under step 1, the only step with height to
+   * spare. On the desk form it moves into the grid's right column, under
+   * the photo panel that already owns 320px there — stacked below the form
+   * it fell off the fold at ~10 items, while 796px of width sat empty
+   * beside it, and a fifty-item session is exactly when the log IS the
+   * work product.
+   *
+   * The gate is showForm OR step 1, not step 1 alone: attaching a photo
+   * moves the flow to `identify`, and that used to take the whole list
+   * with it — every earlier row's Retry, Queue and Print unreachable until
+   * the item in your hand was finished.
+   */
+  const receiptList = (showForm || phase === 'photo') && receipts.length > 0 ? (
+    <div className="flex flex-col">
+      <ColHead
+        // Only rows the server has confirmed can be queued — a pending
+        // receipt has no id or qr code yet, and a failed one never will.
+        action={savedReceipts.length > 1 ? `Queue all ${savedReceipts.length}` : undefined}
+        onAction={() => {
+          // addMany dedupes and returns how many were NEWLY staged. Report
+          // that, not the number asked for — queueing the same receipts
+          // twice stages nothing, and saying "Queued 5" would be a lie.
+          const n = stageMany(savedReceipts.map((r) => ({
+            id: r.id, entityType: 'item' as const, name: r.name, qrCode: r.qrCode, propertyId: r.propertyId,
+          })));
+          toast.success(n > 0 ? `${n} labels queued` : 'Already queued');
+        }}
+      >
+        Added this session · {receipts.length}
+      </ColHead>
+      {receipts.map((r) => {
+        // Narrowed into a plain object so the button closures below hold
+        // concrete numbers — `r.id` alone un-narrows inside a callback.
+        const saved = r.state === 'saved' && r.id != null && r.qrCode != null
+          ? { id: r.id, qrCode: r.qrCode }
+          : null;
+        return (
+        <div key={r.key} className="flex items-center gap-2 py-2.5 border-b border-[var(--color-rule)] last:border-b-0">
+          {r.state === 'saved' ? (
+            <Check className="w-4 h-4 text-[var(--color-green)] shrink-0" />
+          ) : r.state === 'failed' ? (
+            <AlertTriangle className="w-4 h-4 text-[var(--color-red)] shrink-0" />
+          ) : r.state === 'undone' ? (
+            <Undo2 className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
+          ) : (
+            <Loader2 className="w-4 h-4 animate-spin text-[var(--color-text-muted)] shrink-0" />
+          )}
+          <span className="min-w-0 flex-1">
+            <span className={cn('block text-sm font-semibold truncate',
+              r.state === 'undone' && 'line-through text-[var(--color-text-muted)]')}>{r.name}</span>
+            <span className="block font-mono text-[10px] text-[var(--color-text-muted)]">
+              {r.state === 'pending' ? 'saving…'
+                : r.state === 'failed' ? 'not saved'
+                // Terminal: no qr code (the item is gone), no Retry, no
+                // label actions — `saved` above is null for this row.
+                : r.state === 'undone' ? 'removed · in the recycle bin'
+                : (
+                  <>
+                    {r.qrCode}
+                    {r.photoState === 'uploading' && ' · uploading photo'}
+                    {r.photoState === 'failed' && (
+                      <>
+                        {' · '}
+                        <button type="button" onClick={() => retryPhoto(r)}
+                          className="underline decoration-dotted text-[var(--color-red)]">
+                          photo failed · retry
+                        </button>
+                      </>
+                    )}
+                  </>
+                )}
+            </span>
+          </span>
+          {r.state === 'failed' && (
+            <Button size="sm" variant="outline" onClick={() => retryCommit(r)}>
+              Retry
+            </Button>
+          )}
+          {/* Only under showForm (#265): everywhere else, the per-commit
+              toast still carries its own Undo action. A row action here as
+              well would just be a second way to do the same thing. */}
+          {saved && showForm && (
+            <Button size="sm" variant="outline" onClick={() => void undoCreate(r.key, saved.id, r.name)}>
+              <Undo2 className="w-3.5 h-3.5" />
+              Undo
+            </Button>
+          )}
+          {saved && hasPrinter && (
+            <Button size="sm" variant="outline"
+              onClick={() => createPrintJob.mutate(
+                { entityType: 'item', entityIds: [saved.id], preset: 'small', propertyId: r.propertyId },
+                { onSuccess: () => toast.success('Printing label'),
+                  onError: (e) => toast.error(e instanceof Error ? e.message : 'Could not print') })}>
+              <Printer className="w-3.5 h-3.5" />
+            </Button>
+          )}
+          {saved && (
+            <Button size="sm" variant="outline"
+              onClick={() => { stage({ id: saved.id, entityType: 'item', name: r.name, qrCode: saved.qrCode, propertyId: r.propertyId }); toast.success('Queued'); }}>
+              Queue
+            </Button>
+          )}
+        </div>
+        );
+      })}
+      {/*
+        #277: the camera flow only. There, "Add another" is the way back to a
+        live viewfinder after a commit left you looking at the receipt list.
+        On the desk form the phase is ALREADY 'photo', so the only surviving
+        effect of this button was resetDraft() — the widest, boldest control
+        on the page silently throwing away whatever had been typed, with no
+        confirm. The form is always there and clears itself after every
+        commit; it does not need a button to start the next item.
+      */}
+      {!showForm && (
+        <Button className="mt-3" onClick={() => { resetDraft(); setPhase('photo'); }}>
+          <Plus className="w-4 h-4" />
+          Add another
+        </Button>
+      )}
+    </div>
+  ) : null;
 
   return (
     <div className={cn(
@@ -1150,7 +1367,15 @@ export function Capture() {
               type="button"
               aria-label={`Back to ${STEP_LABEL[n]}`}
               onClick={() => setPhase(STEP_PHASE[n])}
-              className="p-1 -m-1"
+              // `flex` is load-bearing, not decoration (#273): the dot is a
+              // <span>, and inside a plain block button it is an ordinary
+              // INLINE child, where the dotClass width/height do not apply —
+              // it rendered 0x0 inside an 8x8 button, so the completed step
+              // vanished from the row and #229's way back was invisible.
+              // Blockifying it as a flex item paints it again; p-2 -m-2 is
+              // what makes the target big enough for a finger without moving
+              // anything around it.
+              className="flex p-2 -m-2"
             >
               <span className={dotClass} />
             </button>
@@ -1174,8 +1399,18 @@ export function Capture() {
         </span>
       </div>
 
-      {/* the draft being built */}
-      {(draft.photoUrl || draft.name || draft.barcode) && (
+      {/*
+        The draft being built — the camera flow's only view of it.
+
+        #277: NOT rendered on the desk form. There the fields themselves are
+        the draft, three rows below, so the strip restates them — and it
+        appears on the first character typed, shoving the field under the
+        caret down 74px mid-word, once per item. Its two genuinely unique
+        parts moved into the form instead: the completeness pills next to
+        Quantity, and the photo's status and review link onto the photo panel
+        that already owns the picture.
+      */}
+      {!showForm && (draft.photoUrl || draft.name || draft.barcode) && (
         <div className="flex items-center gap-2 border border-[var(--color-rule)] rounded-[var(--radius-sm)] p-2 shrink-0">
           {draft.photoUrl
             ? <img src={draft.photoUrl} alt="" className="w-11 h-11 rounded-[var(--radius-sm)] object-cover" />
@@ -1185,15 +1420,10 @@ export function Capture() {
             {draft.barcode && <span className="block font-mono text-[10px] text-[var(--color-text-muted)]">{draft.barcode}</span>}
             {draft.photo && (
               <span className="block font-mono text-[9px] uppercase tracking-[0.06em] text-[var(--color-text-muted)]">
-                {visionPending ? 'photo held — looking at it…'
-                  : visionFailed ? "photo held — couldn't read it"
-                  : visionEmpty ? 'photo held — nothing recognised'
-                  : vision ? `photo held — ${vision.confidence === 'high' ? 'read' : 'guessed'} from the photo`
-                  : 'photo held — saves with the item'}
+                {photoStatus}
               </span>
             )}
-            {vision && (vision.description || vision.category || vision.brand
-              || vision.estimatedValue != null || (vision.quantity ?? 0) > 1) && !reviewOpen && (
+            {reviewOffered && (
               <button type="button" onClick={() => setReviewOpen(true)}
                 className="block font-mono text-[9px] uppercase tracking-[0.06em] text-[var(--color-primary)] underline">
                 review what it found
@@ -1201,35 +1431,18 @@ export function Capture() {
             )}
 
             {/*
-              Two toggles rather than a three-way picker: 'complete' is the
-              default and needs no control, so the only thing to express is the
-              exception. Tapping the active one returns to complete.
-
               It lives in the draft strip because the strip is shrink-0 and
               always visible — step 2 is exactly one screen tall, and a control
-              below the fold is a control nobody uses.
+              below the fold is a control nobody uses. (The desk form has no
+              strip; it renders the same pills beside Quantity — see #277.)
             */}
-            <span className="mt-1 flex gap-1">
-              {PARTIAL_OPTIONS.map(({ value, label }) => (
-                <button
-                  key={value}
-                  type="button"
-                  aria-pressed={draft.completeness === value}
-                  onClick={() => setDraft((d) => ({
-                    ...d,
-                    completeness: d.completeness === value ? undefined : value,
-                  }))}
-                  className={cn(
-                    'font-mono text-[9px] uppercase tracking-[0.06em] px-1.5 py-0.5 rounded-full border',
-                    draft.completeness === value
-                      ? 'bg-[var(--color-text)] text-[var(--color-bg)] border-[var(--color-text)]'
-                      : 'border-[var(--color-rule)] text-[var(--color-text-muted)]',
-                  )}
-                >
-                  {label}
-                </button>
-              ))}
-            </span>
+            <CompletenessPills
+              value={draft.completeness}
+              onToggle={(value) => setDraft((d) => ({
+                ...d,
+                completeness: d.completeness === value ? undefined : value,
+              }))}
+            />
           </span>
           <button type="button" aria-label="Discard" onClick={() => { resetDraft(); setPhase('photo'); }}
             className="min-w-[36px] min-h-[36px] flex items-center justify-center text-[var(--color-text-muted)]">
@@ -1238,32 +1451,11 @@ export function Capture() {
         </div>
       )}
 
-      {dupes.length > 0 && (
-        <div className="flex items-start gap-2 border-2 border-[var(--color-amber)] rounded-[var(--radius-sm)] p-2.5 shrink-0">
-          <AlertTriangle className="w-4 h-4 shrink-0 text-[var(--color-amber)] mt-0.5" />
-          <span className="min-w-0 flex-1">
-            <span className="block font-mono text-[10px] uppercase tracking-[0.1em] font-bold text-[var(--color-amber)]">
-              you already have {dupes.length === 1 ? 'one of these' : `${dupes.length} of these`}
-            </span>
-            {dupes.slice(0, 3).map((d) => (
-              <button key={d.id} type="button" onClick={() => navigate(`/item/${d.id}`)}
-                className="block w-full text-left text-sm truncate underline decoration-dotted">
-                {d.name}
-                <span className="font-mono text-[10px] text-[var(--color-text-muted)]">
-                  {' · '}{[d.areaName, d.containerName].filter(Boolean).join(' › ')}
-                </span>
-              </button>
-            ))}
-            <span className="block font-mono text-[9px] uppercase tracking-[0.06em] text-[var(--color-text-muted)] mt-0.5">
-              adding another is fine — this is a heads-up, not a block
-            </span>
-          </span>
-          <button type="button" aria-label="Dismiss" onClick={() => setDupes([])}
-            className="min-w-[32px] min-h-[32px] flex items-center justify-center text-[var(--color-text-muted)]">
-            <X className="w-4 h-4" />
-          </button>
-        </div>
-      )}
+      {/* The camera flow's position for it. The desk form renders the same
+          component BELOW its fields (#277): up here it landed between the
+          caret and the form and pushed every field down ~195px the moment a
+          scan found a duplicate. */}
+      {!showForm && dupeWarning}
 
       {/*
         `capture="environment"` asks the OS for the REAR camera, which is right
@@ -1307,6 +1499,11 @@ export function Capture() {
           setDraft={setDraft}
           dest={dest}
           onPickDest={pinDestination}
+          // #277: the same one-tap bins the camera flow offers at step 3. The
+          // desk is the mode actually used to file fifty things across several
+          // bins, and it was the one mode without the shortcut — Change → area
+          // select → row click, per bin change.
+          recents={recents}
           onChoosePhoto={() => photoInput.current?.click()}
           dragging={dragging}
           setDragging={setDragging}
@@ -1336,8 +1533,33 @@ export function Capture() {
           vision={vision}
           reviewOpen={reviewOpen}
           setReviewOpen={setReviewOpen}
+          // What the draft strip used to say about a held photo, said by the
+          // panel that already shows the photo (#277) — the strip itself does
+          // not render here any more.
+          photoStatus={photoStatus}
+          reviewOffered={reviewOffered}
+          onClearPhoto={clearPhoto}
+          // The duplicate warning, rendered BELOW the fields here instead of
+          // above them: up top it pushed the field under the caret down ~195px
+          // the moment a scan found one.
+          dupeWarning={dupeWarning}
+          // The session log lives in this form's own right column — see
+          // receiptList.
+          receiptsSlot={receiptList}
           nameIsSuggested={nameIsSuggested}
           setNameIsSuggested={setNameIsSuggested}
+          // #266: the catalogue title a lookup found and did NOT apply over a
+          // hand-typed name, offered on the same terms as everything else this
+          // page suggests — behind a Keep.
+          catalogueName={catalogueName}
+          onKeepCatalogueName={() => {
+            if (!catalogueName) return;
+            setDraft((d) => ({ ...d, name: catalogueName }));
+            // Taken deliberately, so it is theirs now: no unconfirmed border,
+            // and nothing left to offer.
+            setNameIsSuggested(false);
+            setCatalogueName(null);
+          }}
           seedAreaId={ctxArea || dest?.areaId}
           seedPropertyId={ctxProperty || undefined}
           // Switching back to the flow must land on the LIVE camera, not
@@ -1482,7 +1704,7 @@ export function Capture() {
               <ProductScanner
                 label={busy ?? 'Scan product barcode'}
                 onBarcode={handleCode}
-                onClose={() => navigate(-1)}
+                onClose={scannerClose}
               />
             </div>
           ) : (
@@ -1490,7 +1712,7 @@ export function Capture() {
               <TagScanner
                 label={busy ?? 'Scan tote/area tag'}
                 onTag={handleCode}
-                onClose={() => navigate(-1)}
+                onClose={scannerClose}
               />
             </div>
           )}
@@ -1607,114 +1829,100 @@ export function Capture() {
 
       </div>
       )}
-      {/* ── receipts ─────────────────────────────────────────────────────── */}
-      {/* Step 1 only: this list is unbounded, and steps 2 and 3 are sized to
-          the viewport. Step 1 has no frame to steal from. */}
-      {phase === 'photo' && receipts.length > 0 && (
-        <div className="flex flex-col">
-          <ColHead
-            // Only rows the server has confirmed can be queued — a pending
-            // receipt has no id or qr code yet, and a failed one never will.
-            action={savedReceipts.length > 1 ? `Queue all ${savedReceipts.length}` : undefined}
-            onAction={() => {
-              // addMany dedupes and returns how many were NEWLY staged. Report
-              // that, not the number asked for — queueing the same receipts
-              // twice stages nothing, and saying "Queued 5" would be a lie.
-              const n = stageMany(savedReceipts.map((r) => ({
-                id: r.id, entityType: 'item' as const, name: r.name, qrCode: r.qrCode, propertyId: r.propertyId,
-              })));
-              toast.success(n > 0 ? `${n} labels queued` : 'Already queued');
-            }}
-          >
-            Added this session · {receipts.length}
-          </ColHead>
-          {receipts.map((r) => {
-            // Narrowed into a plain object so the button closures below hold
-            // concrete numbers — `r.id` alone un-narrows inside a callback.
-            const saved = r.state === 'saved' && r.id != null && r.qrCode != null
-              ? { id: r.id, qrCode: r.qrCode }
-              : null;
-            return (
-            <div key={r.key} className="flex items-center gap-2 py-2.5 border-b border-[var(--color-rule)] last:border-b-0">
-              {r.state === 'saved' ? (
-                <Check className="w-4 h-4 text-[var(--color-green)] shrink-0" />
-              ) : r.state === 'failed' ? (
-                <AlertTriangle className="w-4 h-4 text-[var(--color-red)] shrink-0" />
-              ) : r.state === 'undone' ? (
-                <Undo2 className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
-              ) : (
-                <Loader2 className="w-4 h-4 animate-spin text-[var(--color-text-muted)] shrink-0" />
-              )}
-              <span className="min-w-0 flex-1">
-                <span className={cn('block text-sm font-semibold truncate',
-                  r.state === 'undone' && 'line-through text-[var(--color-text-muted)]')}>{r.name}</span>
-                <span className="block font-mono text-[10px] text-[var(--color-text-muted)]">
-                  {r.state === 'pending' ? 'saving…'
-                    : r.state === 'failed' ? 'not saved'
-                    // Terminal: no qr code (the item is gone), no Retry, no
-                    // label actions — `saved` above is null for this row.
-                    : r.state === 'undone' ? 'removed · in the recycle bin'
-                    : (
-                      <>
-                        {r.qrCode}
-                        {r.photoState === 'uploading' && ' · uploading photo'}
-                        {r.photoState === 'failed' && (
-                          <>
-                            {' · '}
-                            <button type="button" onClick={() => retryPhoto(r)}
-                              className="underline decoration-dotted text-[var(--color-red)]">
-                              photo failed · retry
-                            </button>
-                          </>
-                        )}
-                      </>
-                    )}
-                </span>
-              </span>
-              {r.state === 'failed' && (
-                <Button size="sm" variant="outline" onClick={() => retryCommit(r)}>
-                  Retry
-                </Button>
-              )}
-              {/* Only under showForm (#265): everywhere else, the per-commit
-                  toast still carries its own Undo action. A row action here
-                  as well would just be a second way to do the same thing. */}
-              {saved && showForm && (
-                <Button size="sm" variant="outline" onClick={() => void undoCreate(r.key, saved.id, r.name)}>
-                  <Undo2 className="w-3.5 h-3.5" />
-                  Undo
-                </Button>
-              )}
-              {saved && hasPrinter && (
-                <Button size="sm" variant="outline"
-                  onClick={() => createPrintJob.mutate(
-                    { entityType: 'item', entityIds: [saved.id], preset: 'small', propertyId: r.propertyId },
-                    { onSuccess: () => toast.success('Printing label'),
-                      onError: (e) => toast.error(e instanceof Error ? e.message : 'Could not print') })}>
-                  <Printer className="w-3.5 h-3.5" />
-                </Button>
-              )}
-              {saved && (
-                <Button size="sm" variant="outline"
-                  onClick={() => { stage({ id: saved.id, entityType: 'item', name: r.name, qrCode: saved.qrCode, propertyId: r.propertyId }); toast.success('Queued'); }}>
-                  Queue
-                </Button>
-              )}
-            </div>
-            );
-          })}
-          <Button className="mt-3" onClick={() => { resetDraft(); setPhase('photo'); }}>
-            <Plus className="w-4 h-4" />
-            Add another
-          </Button>
-        </div>
-      )}
+      {/* ── receipts ─────────────────────────────────────────────────── */}
+      {/* The desk form renders this itself, inside its own grid — see
+          receiptList. */}
+      {!showForm && receiptList}
     </div>
   );
 }
 
 export default Capture;
 
+
+/**
+ * "box only" / "spares only".
+ *
+ * Two toggles rather than a three-way picker: 'complete' is the default and
+ * needs no control, so the only thing to express is the exception. Tapping the
+ * active one returns to complete.
+ *
+ * One component, two call sites (#277): the camera flow's draft strip, and the
+ * desk form beside Quantity — the strip's one genuinely unique control, which
+ * had to survive the strip not rendering there.
+ */
+function CompletenessPills({ value, onToggle, className }: {
+  value?: 'box_only' | 'accessories_only';
+  onToggle: (v: 'box_only' | 'accessories_only') => void;
+  className?: string;
+}) {
+  return (
+    <span className={cn('mt-1 flex gap-1', className)}>
+      {PARTIAL_OPTIONS.map(({ value: option, label }) => (
+        <button
+          key={option}
+          type="button"
+          aria-pressed={value === option}
+          onClick={() => onToggle(option)}
+          className={cn(
+            'font-mono text-[9px] uppercase tracking-[0.06em] px-1.5 py-0.5 rounded-full border',
+            value === option
+              ? 'bg-[var(--color-text)] text-[var(--color-bg)] border-[var(--color-text)]'
+              : 'border-[var(--color-rule)] text-[var(--color-text-muted)]',
+          )}
+        >
+          {label}
+        </button>
+      ))}
+    </span>
+  );
+}
+
+/**
+ * "You already have one of these" — shown before you add another.
+ *
+ * The rows open the item you already own in a NEW TAB (#277). They used to
+ * navigate in place, which unmounted Capture: the banner's own copy says
+ * "adding another is fine — this is a heads-up, not a block", and its only
+ * actionable control ended the session, taking the draft, any un-uploaded
+ * photo Blob and every receipt's Queue/Print/Retry handle with it. Going to
+ * look at what you already own is not a decision to abandon what you are
+ * holding.
+ */
+function DupeWarning({ dupes, onDismiss }: { dupes: Dupe[]; onDismiss: () => void }) {
+  return (
+    <div className="flex items-start gap-2 border-2 border-[var(--color-amber)] rounded-[var(--radius-sm)] p-2.5 shrink-0">
+      <AlertTriangle className="w-4 h-4 shrink-0 text-[var(--color-amber)] mt-0.5" />
+      <span className="min-w-0 flex-1">
+        <span className="block font-mono text-[10px] uppercase tracking-[0.1em] font-bold text-[var(--color-amber)]">
+          you already have {dupes.length === 1 ? 'one of these' : `${dupes.length} of these`}
+        </span>
+        {dupes.slice(0, 3).map((d) => (
+          <button
+            key={d.id}
+            type="button"
+            // noopener because the opened tab must not hold a handle on this
+            // one — and min-h because a 20px row is not a target on a tablet.
+            onClick={() => window.open(`/item/${d.id}`, '_blank', 'noopener')}
+            className="flex w-full min-h-[36px] items-baseline gap-1 text-left text-sm underline decoration-dotted"
+          >
+            <span className="truncate">{d.name}</span>
+            <span className="truncate font-mono text-[10px] text-[var(--color-text-muted)]">
+              {' · '}{[d.areaName, d.containerName].filter(Boolean).join(' › ')}
+            </span>
+          </button>
+        ))}
+        <span className="block font-mono text-[9px] uppercase tracking-[0.06em] text-[var(--color-text-muted)] mt-0.5">
+          adding another is fine — this is a heads-up, not a block
+        </span>
+      </span>
+      <button type="button" aria-label="Dismiss" onClick={onDismiss}
+        className="min-w-[32px] min-h-[32px] flex items-center justify-center text-[var(--color-text-muted)]">
+        <X className="w-4 h-4" />
+      </button>
+    </div>
+  );
+}
 
 /**
  * The "From the photo" review panel: everything the model offered beyond the
@@ -1827,15 +2035,19 @@ function VisionReview({ vision, draft, setDraft, onClose }: {
  * usually does not exist.
  */
 function ManualCreate({
-  draft, setDraft, dest, onPickDest, onChoosePhoto, dragging, setDragging,
+  draft, setDraft, dest, onPickDest, recents, onChoosePhoto, dragging, setDragging,
   onDropFile, onSubmit, pending, onLookupBarcode, receiptCount,
-  vision, reviewOpen, setReviewOpen, nameIsSuggested, setNameIsSuggested,
+  vision, reviewOpen, setReviewOpen, photoStatus, reviewOffered, onClearPhoto,
+  dupeWarning, receiptsSlot, nameIsSuggested, setNameIsSuggested,
+  catalogueName, onKeepCatalogueName,
   seedAreaId, seedPropertyId, onUseCamera,
 }: {
   draft: Draft;
   setDraft: React.Dispatch<React.SetStateAction<Draft>>;
   dest: Destination | null;
   onPickDest: (d: Destination) => void;
+  /** The remembered bins, newest first — the camera flow's step-3 chips. */
+  recents: Destination[];
   onChoosePhoto: () => void;
   dragging: boolean;
   setDragging: (v: boolean) => void;
@@ -1854,8 +2066,23 @@ function ManualCreate({
   vision: Vision | null;
   reviewOpen: boolean;
   setReviewOpen: (v: boolean) => void;
+  /** What the page says about a held photo — rendered on the photo panel here. */
+  photoStatus: string;
+  /** Whether the model offered anything beyond the name, i.e. worth reviewing. */
+  reviewOffered: boolean;
+  /** Remove the held photo, keeping the rest of the draft. */
+  onClearPhoto: () => void;
+  /** The duplicate warning, rendered below the fields rather than above them. */
+  dupeWarning: React.ReactNode;
+  /** The session log, rendered in this form's right column (#277). */
+  receiptsSlot: React.ReactNode;
   nameIsSuggested: boolean;
   setNameIsSuggested: (v: boolean) => void;
+  /** #266: a catalogue title found by a lookup that refused to overwrite a
+   *  hand-typed name. Rendered as an offer under Name; null when there is
+   *  nothing to offer. */
+  catalogueName: string | null;
+  onKeepCatalogueName: () => void;
   seedAreaId?: number;
   seedPropertyId?: number;
   /**
@@ -1869,7 +2096,15 @@ function ManualCreate({
   /** A lookup in flight: the submit is disabled so the form cannot commit a
    *  draft the lookup is about to rewrite underneath it. */
   const [lookingUp, setLookingUp] = React.useState(false);
+  /**
+   * What is literally in the quantity box, mid-edit. `null` means "follow the
+   * draft" — the state the field is in before it is touched, after a blur, and
+   * after every commit, so a quantity Kept from the photo still shows up here.
+   * See the field itself for why it cannot coerce per keystroke (#277).
+   */
+  const [qtyText, setQtyText] = React.useState<string | null>(null);
   const nameRef = React.useRef<HTMLInputElement>(null);
+  const barcodeRef = React.useRef<HTMLInputElement>(null);
   /**
    * The last barcode a lookup actually ran for. A USB scanner is a keyboard
    * that types the code and sends Enter, and the field blurs a moment later
@@ -1878,11 +2113,35 @@ function ManualCreate({
    * state: the blur can land before React re-renders the Enter's setState.
    */
   const lastLookedUp = React.useRef<string | null>(null);
+  /**
+   * #264: did the item currently being built get its identity through the
+   * BARCODE field?
+   *
+   * The two halves of #230 are each correct and each assume the other's user.
+   * The post-commit focus return exists for a typist, whose next gesture is
+   * typing a name; the barcode field's Enter lookup exists for a USB reader,
+   * whose next gesture is pulling the trigger again. Sending a scanner
+   * operator's caret to Name means the next scan TYPES the barcode into the
+   * name field and its terminating Enter submits it — an item literally named
+   * `098765432109`, with no catalogue lookup, no productId and no duplicate
+   * check.
+   *
+   * So focus goes back to the field the finished item came FROM. A ref, not
+   * state: it is written inside an async handler and read by the effect
+   * below, both of which must see the value as of NOW.
+   */
+  const cameFromBarcode = React.useRef(false);
   React.useEffect(() => {
     // Mount, and again each time a submit completes (= its receipt appends;
     // the commit is optimistic so that is synchronous with the submit): the
-    // next item starts at Name, without a mouse trip back to the field.
-    nameRef.current?.focus();
+    // next item starts where the last one started — Name for a typist,
+    // the barcode field for a scanner (#264).
+    const fromBarcode = cameFromBarcode.current;
+    cameFromBarcode.current = false;
+    (fromBarcode ? barcodeRef.current : nameRef.current)?.focus();
+    // The next item's quantity is the draft's again (i.e. blank = 1), not the
+    // digits left in the box by the last one.
+    setQtyText(null);
     // New item, clean guard: the next unit of the SAME product re-scans the
     // same code, and the dedupe above must not swallow that lookup.
     lastLookedUp.current = null;
@@ -1893,6 +2152,9 @@ function ManualCreate({
     const code = raw.trim();
     if (!code || lookingUp || code === lastLookedUp.current) return;
     lastLookedUp.current = code;
+    // This item was identified through the barcode field, so the NEXT one
+    // starts there too — see cameFromBarcode.
+    cameFromBarcode.current = true;
     setLookingUp(true);
     const outcome = await onLookupBarcode(code);
     setLookingUp(false);
@@ -1951,6 +2213,24 @@ function ManualCreate({
               setDraft((d) => ({ ...d, name: e.target.value }));
             }}
           />
+          {/* #266: the catalogue's own title for the barcode that was just
+              looked up, when it disagreed with a name a person typed. Shown
+              rather than applied — the same Keep the vision panel uses, so
+              nothing this page suggests arrives without being accepted. */}
+          {catalogueName && (
+            <div className="flex items-center gap-2 pt-0.5">
+              <p className="min-w-0 flex-1 truncate text-xs text-[var(--color-text-secondary)]">
+                <span className="font-mono text-[10px] uppercase tracking-[0.08em] text-[var(--color-text-muted)]">
+                  catalogue{' '}
+                </span>
+                {catalogueName}
+              </p>
+              <Button type="button" size="sm" variant="outline" className="shrink-0"
+                onClick={onKeepCatalogueName}>
+                Keep
+              </Button>
+            </div>
+          )}
         </div>
 
         <div className="flex flex-col gap-1">
@@ -1970,10 +2250,31 @@ function ManualCreate({
             <label htmlFor="mc-qty" className="font-mono text-[10px] uppercase tracking-[0.1em] text-[var(--color-text-muted)]">
               Quantity
             </label>
+            {/*
+              The field holds a RAW STRING and coerces on the way out — the
+              shape entity-form.tsx's quantityField already uses (#277).
+              Coercing per keystroke made the one gesture most people use file
+              the wrong number: `Math.max(1, Number(v) || 1)` resurrected the 1
+              the moment you backspaced it away, so clearing the field and
+              typing 2 filed the item with 12. Only the spinner and select-all
+              survived that, and both are gestures people reach for second.
+            */}
             <Input
-              id="mc-qty" type="number" min={1} step={1}
-              value={draft.quantity ?? 1}
-              onChange={(e) => setDraft((d) => ({ ...d, quantity: Math.max(1, Number(e.target.value) || 1) }))}
+              id="mc-qty" type="number" min={1} step={1} inputMode="numeric"
+              value={qtyText ?? String(draft.quantity ?? 1)}
+              onChange={(e) => {
+                const raw = e.target.value;
+                setQtyText(raw);
+                // The draft takes a real quantity or nothing at all: an empty
+                // (or half-typed) field means "unsaid", and commit() omits it
+                // so the column's own default of 1 carries the item.
+                const n = /^\d+$/.test(raw.trim()) ? Number(raw.trim()) : NaN;
+                setDraft((d) => ({ ...d, quantity: n >= 1 ? n : undefined }));
+              }}
+              // Leaving the field is the coercion point: whatever the draft
+              // ended up holding is what the field now shows, so a blank one
+              // reads back as the 1 it will be saved as.
+              onBlur={() => setQtyText(null)}
             />
           </div>
           <div className="flex flex-col gap-1">
@@ -1988,6 +2289,7 @@ function ManualCreate({
                 from running twice for one unchanged value. */}
             <Input
               id="mc-barcode"
+              ref={barcodeRef}
               value={draft.barcode ?? ''}
               placeholder="Type or scan"
               onChange={(e) => setDraft((d) => ({ ...d, barcode: e.target.value || undefined }))}
@@ -2003,8 +2305,31 @@ function ManualCreate({
           </div>
         </div>
 
+        {/* The draft strip's one genuinely unique control, kept when the rest
+            of the strip stopped rendering here (#277). Next to Quantity
+            because it is the same kind of statement: how much of the thing is
+            actually in the bin. */}
+        <div className="flex items-center gap-2">
+          <span className="font-mono text-[10px] uppercase tracking-[0.1em] text-[var(--color-text-muted)]">
+            What is in the bin?
+          </span>
+          <CompletenessPills
+            className="mt-0"
+            value={draft.completeness}
+            onToggle={(value) => setDraft((d) => ({
+              ...d,
+              completeness: d.completeness === value ? undefined : value,
+            }))}
+          />
+          {!draft.completeness && (
+            <span className="font-mono text-[9px] uppercase tracking-[0.06em] text-[var(--color-text-muted)]">
+              the whole thing
+            </span>
+          )}
+        </div>
+
         {/* WHERE is required, so it is stated rather than implied. */}
-        <div className="flex flex-col gap-1">
+        <div className="flex flex-col gap-1.5">
           <span className="font-mono text-[10px] uppercase tracking-[0.1em] text-[var(--color-text-muted)]">
             Where does it go?
           </span>
@@ -2018,6 +2343,31 @@ function ManualCreate({
             <Button type="button" variant="outline" onClick={() => setPicking(true)}>
               <List className="h-4 w-4" /> Choose a bin
             </Button>
+          )}
+
+          {/* #277: the camera flow's recent-bin chips, on the surface that
+              actually files fifty things across several bins. One click here
+              replaces Change → area select → row click. Tapping a chip only
+              pins the bin — the flow's version commits on tap because there
+              the bin IS the last question; here the form still has a submit. */}
+          {recents.length > 0 && (
+            <div className="flex flex-wrap gap-1.5">
+              {recents.map((r) => (
+                <button
+                  key={r.id}
+                  type="button"
+                  onClick={() => onPickDest(r)}
+                  className={cn(
+                    'font-mono text-[10px] uppercase tracking-[0.06em] rounded-full px-3 min-h-[32px] border',
+                    dest?.id === r.id
+                      ? 'border-[var(--color-primary)] text-[var(--color-primary)] font-bold'
+                      : 'border-[var(--color-rule)] text-[var(--color-text)]',
+                  )}
+                >
+                  {r.name}
+                </button>
+              ))}
+            </div>
           )}
         </div>
 
@@ -2035,6 +2385,11 @@ function ManualCreate({
             </span>
           )}
         </div>
+
+        {/* Below the fields, not above them (#277): a duplicate is a heads-up
+            about the item you are typing, and nothing about it justifies
+            moving the field under the caret 195px down the page. */}
+        {dupeWarning}
       </form>
 
       {/* The photo is optional and last: at a desk there usually is not one. */}
@@ -2043,7 +2398,28 @@ function ManualCreate({
           Photo — optional
         </span>
         {draft.photoUrl ? (
-          <img src={draft.photoUrl} alt="" className="h-[220px] w-full rounded-[var(--radius-sm)] border border-[var(--color-rule)] object-cover" />
+          <>
+            <img src={draft.photoUrl} alt="" className="h-[220px] w-full rounded-[var(--radius-sm)] border border-[var(--color-rule)] object-cover" />
+            {/* What the camera flow's draft strip says about a held photo,
+                said here instead — this panel is the desk's view of it. */}
+            <div className="flex items-center gap-2">
+              <span className="min-w-0 flex-1 font-mono text-[9px] uppercase tracking-[0.06em] text-[var(--color-text-muted)]">
+                {photoStatus}
+              </span>
+              {/* Only the photo goes — the name, the barcode and anything
+                  Kept stay. The strip's X threw the whole draft away. */}
+              <Button type="button" size="sm" variant="ghost" className="shrink-0" onClick={onClearPhoto}>
+                <X className="h-4 w-4" />
+                Remove
+              </Button>
+            </div>
+            {reviewOffered && (
+              <button type="button" onClick={() => setReviewOpen(true)}
+                className="text-left font-mono text-[9px] uppercase tracking-[0.06em] text-[var(--color-primary)] underline">
+                review what it found
+              </button>
+            )}
+          </>
         ) : (
           <button
             type="button"
@@ -2067,6 +2443,11 @@ function ManualCreate({
             </span>
           </button>
         )}
+
+        {/* The session log, in the 320px column it already owns (#277).
+            Stacked under the form it fell below the fold at ~10 items — and a
+            fifty-item session is exactly when the log IS the work product. */}
+        {receiptsSlot}
       </div>
 
       {picking && (
