@@ -100,8 +100,7 @@ const PrintService = {
     const role = member[0]?.ROLE || null;
     if (role !== 'owner' && role !== 'editor') return { error: 'forbidden' };
 
-    // Hold the job when a roll is loaded that does not match. With no agent
-    // registered yet the job simply waits as `queued`.
+    // Hold the job when a roll is loaded that does not match.
     //
     // The UI assumes one printer per property, but printer_agents has no
     // uniqueness constraint on PROPERTY_ID. ORDER BY ID makes the held/queued
@@ -119,7 +118,20 @@ const PrintService = {
        VALUES (?, ?, ?, ?, ?, ?)`,
       [propertyId, userId, entityType, JSON.stringify(entityIds), preset, status]
     );
-    return { id: result.insertId, status };
+
+    // A property with NO registered agent still gets a `queued` row, because a
+    // printer may be registered later and the job should print when it is.
+    // But `queued` reads as "about to print", and agent claims are
+    // property-scoped by design — so with no agent the job is unclaimable by
+    // construction and will sit there indefinitely. Found in prod: job 27 sat
+    // `queued` for five days for a property with no printer, while another
+    // property's agent printed forty jobs beside it. Nothing said so.
+    //
+    // Reported rather than refused: the row is still useful, and refusing
+    // would break queueing labels ahead of setting a printer up. The caller
+    // gets the fact so the UI can say it at the moment of queueing, which is
+    // the only moment anyone is looking.
+    return { id: result.insertId, status, noAgent: agents.length === 0 };
   },
 
   async listJobs(propertyId, userId, limit = 50) {

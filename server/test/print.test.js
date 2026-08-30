@@ -222,12 +222,13 @@ test('createJob queues when the loaded roll matches and holds when it does not',
   PrintService.init({ db: mk('large'), logger, config });
   assert.deepEqual(
     await PrintService.createJob({ entityType: 'container', entityIds: [5], preset: 'large', userId: 42 }),
-    { id: 11, status: 'queued' });
+    { id: 11, status: 'queued', noAgent: false });
 
   PrintService.init({ db: mk('large'), logger, config });
   assert.deepEqual(
     await PrintService.createJob({ entityType: 'container', entityIds: [5], preset: 'medium', userId: 42 }),
-    { id: 11, status: 'held' }, 'a 3x3 job while 4x6 is loaded must be held');
+    { id: 11, status: 'held', noAgent: false },
+    'a 3x3 job while 4x6 is loaded must be held — held is about the ROLL, not a missing printer');
 });
 
 test('createJob queues normally when no agent is registered yet', async () => {
@@ -240,6 +241,15 @@ test('createJob queues normally when no agent is registered yet', async () => {
   }), logger, config });
   const out = await PrintService.createJob({ entityType: 'item', entityIds: [1], preset: 'small', userId: 42 });
   assert.equal(out.status, 'queued', 'without an agent a job waits as queued, not held');
+  // ...but `queued` reads as "about to print", and agent claims are
+  // property-scoped, so with no agent this job is unclaimable by
+  // construction. Found in prod: job 27 sat queued for FIVE DAYS for a
+  // property with no printer while another property's agent printed forty
+  // jobs beside it. The row stays (a printer may be registered later) but
+  // the caller is now told, so the UI can say it at the one moment anyone
+  // is looking.
+  assert.equal(out.noAgent, true,
+    'no registered agent → the job cannot be claimed; the caller must be told');
 });
 
 test('createJob propagates the not_found error instead of inserting', async () => {
@@ -842,3 +852,5 @@ test('requirePrintRole resolves the property per route shape and gates on role',
   // a non-member gets 404, not 403 — do not leak that the property exists
   assert.equal((await run('agent', {}, ['owner'], [])).status, 404);
 });
+
+
