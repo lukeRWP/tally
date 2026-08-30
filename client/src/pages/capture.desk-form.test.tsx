@@ -267,6 +267,32 @@ test('(5) attaching a photo does not take the session list away, and (6) the lis
   expect(screen.getByText(/added this session/i)).toBeTruthy();
 });
 
+test('(6b) the row\'s own Undo still reaches the item from the column the log moved into', async () => {
+  // #265 dropped the desk's per-commit success toast because it painted over
+  // the Name field, moving its Undo onto the receipt row. #277 then moved the
+  // whole list into the form's right column — so this is the merged contract:
+  // the only Undo a desk operator has, in its new home, still single-shot.
+  rememberBins([{ id: 42, name: 'Test Bin', areaId: 7 }]);
+  const fetchMock = makeFetchMock();
+  renderCapture(fetchMock);
+
+  fireEvent.change(screen.getByPlaceholderText('Cordless drill'), { target: { value: 'Socket Set' } });
+  fireEvent.click(screen.getByRole('button', { name: /create item/i }));
+  await screen.findByText(/TLY-I-101/);
+  // No toast at a desk — the row IS the record of the commit.
+  expect(vi.mocked(toast.success)).not.toHaveBeenCalled();
+
+  const photoPanel = screen.getByRole('button', { name: /drop one here, or choose a file/i }).parentElement!;
+  const undo = within(photoPanel).getByRole('button', { name: /undo/i });
+
+  fireEvent.click(undo);
+  await waitFor(() => expect(callsTo(fetchMock, '/api/items/_d_/101')).toHaveLength(1));
+  // Terminal: the row stays as the session's account of the scan, struck
+  // through, and nothing on it can act again.
+  await screen.findByText(/removed · in the recycle bin/i);
+  expect(screen.queryByRole('button', { name: /^undo$/i })).toBeNull();
+});
+
 test('(7) the desk form offers the same one-click recent bins the camera flow does', async () => {
   rememberBins([
     { id: 42, name: 'Test Bin', areaId: 7 },
