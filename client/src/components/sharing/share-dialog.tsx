@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Copy, Trash2, Loader2, Link2 } from 'lucide-react';
+import { Copy, Trash2, Loader2, Link2, Check } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -9,7 +9,12 @@ import {
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { ShareUrl } from './share-url';
-import { useMyShareLinks, useCreateShareLink, useRevokeShareLink } from '@/hooks/use-sharing';
+import {
+  useMyShareLinks,
+  useCreateShareLink,
+  useRevokeShareLink,
+  useShareDisclosure,
+} from '@/hooks/use-sharing';
 import { toast } from '@/components/ui/toast';
 import { cn } from '@/lib/utils';
 
@@ -39,10 +44,21 @@ function formatDate(dateStr: string) {
 export function ShareDialog({ entityType, entityId, entityName, isOpen, onOpenChange }: ShareDialogProps) {
   const [expiresInDays, setExpiresInDays] = React.useState(7);
   const [newLinkUrl, setNewLinkUrl] = React.useState<string | null>(null);
+  /**
+   * Only the categories the sharer has turned OFF. Absent means on, which is
+   * what a share link has always published — so the default state of this
+   * dialog creates precisely the link it created before #298, and `off` empty
+   * means the request carries no `disclosure` at all.
+   */
+  const [off, setOff] = React.useState<Record<string, boolean>>({});
 
   const { data: allLinks, isLoading: linksLoading } = useMyShareLinks();
+  const { data: categories } = useShareDisclosure(entityType);
   const createLink = useCreateShareLink();
   const revokeLink = useRevokeShareLink();
+
+  const always = React.useMemo(() => (categories ?? []).filter((c) => !c.optional), [categories]);
+  const optional = React.useMemo(() => (categories ?? []).filter((c) => c.optional), [categories]);
 
   // Filter links for this specific entity
   const entityLinks = React.useMemo(
@@ -58,12 +74,21 @@ export function ShareDialog({ entityType, entityId, entityName, isOpen, onOpenCh
     if (!isOpen) {
       setNewLinkUrl(null);
       setExpiresInDays(7);
+      setOff({});
     }
   }, [isOpen]);
 
   function handleGenerate() {
+    // Nothing switched off -> send no `disclosure`, so the row stored is
+    // identical to one written before this feature and the link publishes
+    // exactly what it would have published yesterday.
+    const turnedOff = optional.filter((c) => off[c.key]);
+    const disclosure = turnedOff.length
+      ? Object.fromEntries(optional.map((c) => [c.key, !off[c.key]]))
+      : undefined;
+
     createLink.mutate(
-      { entityType, entityId, expiresInDays },
+      { entityType, entityId, expiresInDays, disclosure },
       {
         onSuccess: (link) => {
           const linkData = link as unknown as { url: string };
@@ -126,6 +151,54 @@ export function ShareDialog({ entityType, entityId, entityName, isOpen, onOpenCh
             ))}
           </div>
         </div>
+
+        {/* What actually travels (#298).
+            The dialog used to promise only that "anyone can view without
+            signing in" — true, and silent about the interesting half: a
+            receipt, a street address, a price. This list is served by the
+            server from the same table that strips the public payload
+            (sharing.disclosure.js), so it cannot describe a link the server
+            does not then build. Every box starts ticked: this is a place to
+            say no, not a change to what a share publishes by default. */}
+        {!!categories?.length && (
+          <div data-testid="share-disclosure">
+            <p className="text-xs font-medium text-[var(--color-text-muted)] mb-2">
+              What the recipient will see
+            </p>
+            <ul className="flex flex-col gap-2">
+              {always.map((c) => (
+                <li key={c.key} className="flex gap-2 text-xs">
+                  <Check
+                    className="w-3.5 h-3.5 mt-0.5 shrink-0 text-[var(--color-text-muted)]"
+                    aria-hidden="true"
+                  />
+                  <span>
+                    <span className="text-[var(--color-text)]">{c.label}</span>
+                    <span className="block text-[var(--color-text-muted)]">{c.detail}</span>
+                  </span>
+                </li>
+              ))}
+              {optional.map((c) => (
+                <li key={c.key}>
+                  <label className="flex gap-2 text-xs cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={!off[c.key]}
+                      onChange={(e) =>
+                        setOff((prev) => ({ ...prev, [c.key]: !e.target.checked }))
+                      }
+                      className="accent-[var(--color-primary)] w-3.5 h-3.5 mt-0.5 shrink-0"
+                    />
+                    <span>
+                      <span className="text-[var(--color-text)]">{c.label}</span>
+                      <span className="block text-[var(--color-text-muted)]">{c.detail}</span>
+                    </span>
+                  </label>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
 
         {/* Generate button */}
         <Button

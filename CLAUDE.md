@@ -469,8 +469,11 @@ Labels can be queued for automatic printing on a USB thermal printer (Munbyn ITP
 - `POST /api/sharing/_y_/create` generates a share token with a configurable expiry (default 7 days).
 - `GET /api/sharing/_x_/:token` resolves the token and returns a read-only view of the shared entity.
 - `DELETE /api/sharing/_d_/:token` revokes a share link immediately.
-- Share links are stored in the `share_links` table with `TOKEN`, `ENTITY_TYPE`, `ENTITY_ID`, `EXPIRES_AT`, and `CREATED_BY` columns.
+- Share links are stored in the `share_links` table with `TOKEN`, `ENTITY_TYPE`, `ENTITY_ID`, `EXPIRES_AT`, `CREATED_BY`, and `DISCLOSURE` columns.
 - The client renders shared content on a standalone `/share/:token` page — no nav, no auth, no sidebar.
+- **What a link publishes is a per-link choice**, catalogued in `server/src/modules/sharing/sharing.disclosure.js` — the single source of truth for both the sharer-facing list (`GET /api/sharing/_x_/disclosure`, read by `ShareDialog`) and the strip applied when the public payload is built (`applyDisclosure`, called once in `getEntityForShare`). Add a field to the public payload → add it to that catalogue, or it can never be withheld.
+- **Every category defaults to ON.** `share_links.DISCLOSURE` NULL means "everything", and a key missing from a stored object means "on", so a link created before the column existed publishes exactly what it always did.
+- **The public payload is not a dump of the row.** Fields nothing on `/share/:token` renders are deliberately absent: no `recordedByName` on condition snapshots, no `purchasePrice` on the items of a property/area/container share (the item share carries its own, which `ItemView` shows), no depreciation fields, no `productSpecs`.
 
 ### Deployment (PW v2)
 

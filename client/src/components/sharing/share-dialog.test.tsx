@@ -6,8 +6,8 @@
  * it into a new tab by hand. These tests pin the anchor (and that copy, the
  * affordance that already worked, is still there beside it).
  */
-import { render, screen } from '@testing-library/react';
-import { expect, test, vi } from 'vitest';
+import { fireEvent, render, screen } from '@testing-library/react';
+import { beforeEach, expect, test, vi } from 'vitest';
 import { ShareDialog } from './share-dialog';
 
 const LINK = {
@@ -20,11 +20,29 @@ const LINK = {
   createdAt: '2026-08-29T00:00:00Z',
 };
 
+/**
+ * The catalogue exactly as GET /api/sharing/_x_/disclosure serves it for an
+ * item (server/src/modules/sharing/sharing.disclosure.js). The server side
+ * proves each of these categories really strips something from the payload;
+ * these tests prove the dialog states them and defaults every one to on.
+ */
+const ITEM_CATEGORIES = [
+  { key: 'contents', label: 'What is in it', detail: 'Names, descriptions…', optional: false, defaultValue: true },
+  { key: 'location', label: 'Where it is kept', detail: 'The property, room and container names…', optional: true, defaultValue: true },
+  { key: 'purchasePrice', label: 'What you paid', detail: 'The purchase price recorded for this item.', optional: true, defaultValue: true },
+  { key: 'files', label: 'Photos and receipts', detail: 'Every file attached to this item…', optional: true, defaultValue: true },
+];
+
+const createMutate = vi.fn();
+
 vi.mock('@/hooks/use-sharing', () => ({
   useMyShareLinks: () => ({ data: [LINK], isLoading: false }),
-  useCreateShareLink: () => ({ mutate: vi.fn(), isPending: false }),
+  useShareDisclosure: () => ({ data: ITEM_CATEGORIES }),
+  useCreateShareLink: () => ({ mutate: createMutate, isPending: false }),
   useRevokeShareLink: () => ({ mutate: vi.fn(), isPending: false }),
 }));
+
+beforeEach(() => createMutate.mockClear());
 
 test('an existing share link is a real anchor that opens in a new tab', () => {
   render(
@@ -57,4 +75,61 @@ test('copy is still offered alongside the anchor, not replaced by it', () => {
   );
 
   expect(screen.getByTitle('Copy link')).toBeTruthy();
+});
+
+// ── What the recipient will see (#298) ──────────────────────────────────────
+
+function open() {
+  render(
+    <ShareDialog entityType="item" entityId={1} entityName="Drill" isOpen onOpenChange={() => {}} />,
+  );
+}
+
+test('the dialog names every category the payload can carry, from the server catalogue', () => {
+  open();
+
+  // Always-shared rows are stated even though there is nothing to decide —
+  // "anyone can view without signing in" never said WHAT they can view.
+  expect(screen.getByText('What is in it')).toBeTruthy();
+
+  for (const c of ITEM_CATEGORIES.filter((x) => x.optional)) {
+    expect(screen.getByRole('checkbox', { name: new RegExp(c.label) })).toBeTruthy();
+  }
+  // …and only what applies: this is an item share, so no property address row.
+  expect(screen.queryByText('The property address')).toBeNull();
+});
+
+test('every category starts on, so an untouched dialog publishes what it always did', () => {
+  open();
+
+  for (const box of screen.getAllByRole('checkbox')) {
+    expect((box as HTMLInputElement).checked).toBe(true);
+  }
+
+  fireEvent.click(screen.getByRole('button', { name: /generate link/i }));
+  expect(createMutate).toHaveBeenCalledTimes(1);
+  // No `disclosure` at all — the server then stores NULL, which is the row a
+  // pre-#298 link has. This PR must not change what any share publishes.
+  expect(createMutate.mock.calls[0][0]).toEqual({
+    entityType: 'item',
+    entityId: 1,
+    expiresInDays: 7,
+    disclosure: undefined,
+  });
+});
+
+test('turning one category off sends the whole choice, not just the box that moved', () => {
+  open();
+
+  fireEvent.click(screen.getByRole('checkbox', { name: /What you paid/ }));
+  expect(
+    (screen.getByRole('checkbox', { name: /What you paid/ }) as HTMLInputElement).checked,
+  ).toBe(false);
+
+  fireEvent.click(screen.getByRole('button', { name: /generate link/i }));
+  expect(createMutate.mock.calls[0][0].disclosure).toEqual({
+    location: true,
+    purchasePrice: false,
+    files: true,
+  });
 });
