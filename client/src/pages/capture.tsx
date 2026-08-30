@@ -340,6 +340,12 @@ export function Capture() {
   // The name is the one field allowed to pre-fill, so it is the one field that
   // needs to look unconfirmed until someone has actually looked at it.
   const [nameIsSuggested, setNameIsSuggested] = React.useState(false);
+  /**
+   * #266: a catalogue title a lookup found but did NOT apply, because the name
+   * in the field was typed by a person. Offered behind a Keep rather than
+   * taken — see applyBarcodeLookup. Null whenever there is nothing to offer.
+   */
+  const [catalogueName, setCatalogueName] = React.useState<string | null>(null);
   const [reviewOpen, setReviewOpen] = React.useState(false);
   /**
    * Set the moment a barcode resolves to a real catalogue product.
@@ -413,6 +419,7 @@ export function Capture() {
     setVision(null);
     setVisionPending(false);
     setNameIsSuggested(false);
+    setCatalogueName(null);
     setReviewOpen(false);
     setVisionFailed(false);
     setVisionEmpty(false);
@@ -425,7 +432,7 @@ export function Capture() {
     // commit optimistic, the scanner stays live between items, and a second
     // scan callback can fire before React has re-rendered. Reading the dead
     // draft back out of the ref there would commit the same item twice.
-    stateRef.current = { ...stateRef.current, draft: { name: '' }, vision: null };
+    stateRef.current = { ...stateRef.current, draft: { name: '' }, vision: null, nameIsSuggested: false };
   }
 
   const createItem = useCreateItem();
@@ -454,8 +461,11 @@ export function Capture() {
   // snapshot: commit can be reached through that same long-lived callback, so
   // reading them off the render that created it would freeze the values from
   // whenever the camera was mounted, not from the moment of commit.
-  const stateRef = React.useRef({ dest, draft, phase, destConfirmed, vision, matchAvailable });
-  React.useEffect(() => { stateRef.current = { dest, draft, phase, destConfirmed, vision, matchAvailable }; }, [dest, draft, phase, destConfirmed, vision, matchAvailable]);
+  // nameIsSuggested rides along for the same reason the draft does: #266's
+  // "did a person type this name" test is read AFTER a lookup's round trip,
+  // and the render that started the lookup is not the render that answers it.
+  const stateRef = React.useRef({ dest, draft, phase, destConfirmed, vision, matchAvailable, nameIsSuggested });
+  React.useEffect(() => { stateRef.current = { dest, draft, phase, destConfirmed, vision, matchAvailable, nameIsSuggested }; }, [dest, draft, phase, destConfirmed, vision, matchAvailable, nameIsSuggested]);
 
   // Where you were standing when you tapped Add. A container pre-pins outright;
   // an area or property only seeds the picker, because "somewhere in the garage"
@@ -920,13 +930,33 @@ export function Capture() {
       // is long enough for the user to have typed a description, and spreading
       // a pre-await snapshot would silently discard it.
       const live = stateRef.current.draft;
+      const title = product?.shortName || product?.name || '';
+      /**
+       * #266: whether the name in the field is one a PERSON put there.
+       *
+       * At a desk both fields are on screen at once, so "name it, then scan
+       * it" is the natural order for anything the catalogue title is wrong
+       * for — "Dad's old drill", "the good extension lead". A typed name is a
+       * decision about this object; the catalogue title is a fact about the
+       * product. The fact does not get to overwrite the decision (and merely
+       * TABBING OUT of the barcode field used to be enough to make it),
+       * so the title is offered behind a Keep instead — the same consent gate
+       * VisionReview uses for everything the model guesses.
+       *
+       * A model-suggested name is not protected: it is a guess, and a
+       * catalogue hit is a better answer to the same question. That is the
+       * existing rule from the camera path, unchanged.
+       */
+      const userNamed = !!live.name.trim() && !stateRef.current.nameIsSuggested;
       setDraft({
         ...live,
         barcode: code,
-        name: product?.shortName || product?.name || live.name,
+        name: userNamed ? live.name : (title || live.name),
         fullName: product?.id ? undefined : product?.name,
         productId: product?.id,
       });
+      // Only worth offering when it says something the field does not.
+      setCatalogueName(userNamed && title && title !== live.name.trim() ? title : null);
       if (product?.name) {
         // A catalogue hit is a fact about this exact object; the photo guess
         // is an inference. Drop the guess, exactly as the camera path does.
@@ -1328,6 +1358,18 @@ export function Capture() {
           setReviewOpen={setReviewOpen}
           nameIsSuggested={nameIsSuggested}
           setNameIsSuggested={setNameIsSuggested}
+          // #266: the catalogue title a lookup found and did NOT apply over a
+          // hand-typed name, offered on the same terms as everything else this
+          // page suggests — behind a Keep.
+          catalogueName={catalogueName}
+          onKeepCatalogueName={() => {
+            if (!catalogueName) return;
+            setDraft((d) => ({ ...d, name: catalogueName }));
+            // Taken deliberately, so it is theirs now: no unconfirmed border,
+            // and nothing left to offer.
+            setNameIsSuggested(false);
+            setCatalogueName(null);
+          }}
           seedAreaId={ctxArea || dest?.areaId}
           seedPropertyId={ctxProperty || undefined}
           // Switching back to the flow must land on the LIVE camera, not
@@ -1811,6 +1853,7 @@ function ManualCreate({
   draft, setDraft, dest, onPickDest, onChoosePhoto, dragging, setDragging,
   onDropFile, onSubmit, pending, onLookupBarcode, receiptCount,
   vision, reviewOpen, setReviewOpen, nameIsSuggested, setNameIsSuggested,
+  catalogueName, onKeepCatalogueName,
   seedAreaId, seedPropertyId, onUseCamera,
 }: {
   draft: Draft;
@@ -1837,6 +1880,11 @@ function ManualCreate({
   setReviewOpen: (v: boolean) => void;
   nameIsSuggested: boolean;
   setNameIsSuggested: (v: boolean) => void;
+  /** #266: a catalogue title found by a lookup that refused to overwrite a
+   *  hand-typed name. Rendered as an offer under Name; null when there is
+   *  nothing to offer. */
+  catalogueName: string | null;
+  onKeepCatalogueName: () => void;
   seedAreaId?: number;
   seedPropertyId?: number;
   /**
@@ -1957,6 +2005,24 @@ function ManualCreate({
               setDraft((d) => ({ ...d, name: e.target.value }));
             }}
           />
+          {/* #266: the catalogue's own title for the barcode that was just
+              looked up, when it disagreed with a name a person typed. Shown
+              rather than applied — the same Keep the vision panel uses, so
+              nothing this page suggests arrives without being accepted. */}
+          {catalogueName && (
+            <div className="flex items-center gap-2 pt-0.5">
+              <p className="min-w-0 flex-1 truncate text-xs text-[var(--color-text-secondary)]">
+                <span className="font-mono text-[10px] uppercase tracking-[0.08em] text-[var(--color-text-muted)]">
+                  catalogue{' '}
+                </span>
+                {catalogueName}
+              </p>
+              <Button type="button" size="sm" variant="outline" className="shrink-0"
+                onClick={onKeepCatalogueName}>
+                Keep
+              </Button>
+            </div>
+          )}
         </div>
 
         <div className="flex flex-col gap-1">
