@@ -30,7 +30,7 @@
  *    see this page-local state at all (covered from their own side in
  *    use-bottom-stack.test.ts and toast.test.tsx).
  */
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import type { Container, Item } from '@/types/inventory';
@@ -142,8 +142,10 @@ test('#267: activating select mode blurs the toggle, so the very next Space is n
   // as a click; left focused here, the next "scroll the bin" Space keypress
   // would re-fire this exact onClick and silently empty the selection. This
   // is real jsdom focus tracking, not a layout claim — no browser needed.
+  // #288: focus doesn't land on BODY either any more — see the dedicated
+  // #288 tests below for where it actually goes and why.
   expect(document.activeElement).not.toBe(toggle);
-  expect(document.activeElement).toBe(document.body);
+  expect(document.activeElement).toBe(selectBar());
 });
 
 test('#267: exiting select mode via the same toggle still works, and re-entering blurs it again', () => {
@@ -160,6 +162,81 @@ test('#267: exiting select mode via the same toggle still works, and re-entering
   toggle.focus();
   fireEvent.click(toggle); // enter again
   expect(document.activeElement).not.toBe(toggle);
+});
+
+// ── #288: focus lands somewhere USEFUL, not BODY, when select mode turns on
+
+test('#288: activating select mode moves focus onto the select-mode bar, not BODY — the next Tab has somewhere real to continue from', () => {
+  renderPage();
+  const toggle = screen.getByRole('button', { name: 'Select' });
+  toggle.focus();
+
+  fireEvent.click(toggle);
+
+  const bar = selectBar();
+  // Pre-fix, `document.activeElement` here was `document.body` — a keyboard
+  // user who tabbed to Select and activated it lost their place entirely,
+  // and the very next Tab restarted from the top of the document.
+  expect(document.activeElement).toBe(bar);
+  expect(document.activeElement).not.toBe(document.body);
+  expect(document.activeElement).not.toBe(toggle);
+});
+
+test('#288: the landing target is a non-interactive tabIndex={-1} container, not Cancel or a row checkbox — either is a real <button> that would swallow the very next Space instead of scrolling', () => {
+  renderPage();
+  fireEvent.click(screen.getByRole('button', { name: 'Select' }));
+
+  const bar = selectBar();
+  // This is the same jsdom-native-semantics reasoning #267's own test above
+  // relies on: a real <button> (Cancel, or a row's RuledRow toggle) treats
+  // Space as a click. Landing focus on Cancel would exit select mode, and
+  // landing it on a row would toggle that row, on the very next "scroll the
+  // bin" keypress — silently, with no confirm — exactly the class of bug
+  // the toggle's own blur() exists to prevent. Confirming the actual focus
+  // target is a plain, non-interactive element (not a <button>, not in the
+  // Tab order) is what stands in for "Space still scrolls" here: nothing
+  // about a focused plain <div> intercepts Space, so the browser's default
+  // action (scroll) is left alone.
+  expect(bar.tagName).toBe('DIV');
+  expect(bar.getAttribute('tabindex')).toBe('-1');
+  expect(document.activeElement).toBe(bar);
+
+  // And Cancel/All/a row toggle are all still real, focusable, clickable
+  // buttons in their own right — nothing about landing focus on the bar
+  // container disables them.
+  expect(within(bar).getByRole('button', { name: 'Cancel' })).toBeTruthy();
+});
+
+// ── #299: the FAB is hidden by the same predicate the carry banner uses ───
+
+test('#299: the FAB stays hidden while the "put back" (lastMove) banner is up, even with nothing currently carried', () => {
+  renderPage();
+  // Nothing carried — pre-fix this alone was enough for the FAB's own
+  // `carried.length === 0` check to let it back onto the screen, landing
+  // right under the put-back banner's own dock (z-40 over the FAB's z-30).
+  expect(useCarryStore.getState().carried).toHaveLength(0);
+  expect(screen.getByRole('button', { name: 'Add' })).toBeTruthy();
+
+  act(() => {
+    useCarryStore.setState({
+      lastMove: { items: [{ id: 1, name: 'Thing' }], to: { id: 2, name: 'Bin', type: 'container' } },
+    });
+  });
+
+  expect(screen.queryByRole('button', { name: 'Add' })).toBeNull();
+
+  // And it comes back once the undo banner clears, same as an active carry.
+  act(() => { useCarryStore.setState({ lastMove: null }); });
+  expect(screen.getByRole('button', { name: 'Add' })).toBeTruthy();
+});
+
+test('#299: the FAB stays hidden while actively carrying, same as before', () => {
+  renderPage();
+  expect(screen.getByRole('button', { name: 'Add' })).toBeTruthy();
+
+  act(() => { useCarryStore.getState().pickUp([{ id: 99, name: 'Something' }]); });
+
+  expect(screen.queryByRole('button', { name: 'Add' })).toBeNull();
 });
 
 // ── #276: the count can never be squeezed, and the bar is content-sized ───
