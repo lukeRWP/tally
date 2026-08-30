@@ -50,7 +50,8 @@
   "external_secrets": [
     "ENTRA_TENANT_ID",
     "ENTRA_CLIENT_ID",
-    "ENTRA_CLIENT_SECRET"
+    "ENTRA_CLIENT_SECRET",
+    "ANTHROPIC_API_KEY"
   ],
   "environments": {
     "prod": {
