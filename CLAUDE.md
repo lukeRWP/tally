@@ -479,6 +479,65 @@ Labels can be queued for automatic printing on a USB thermal printer (Munbyn ITP
 - **A default applies at link-creation time only — never on read.** `resolve()` must never consult `defaultOn`: `share_links.DISCLOSURE` NULL means "everything" and a key missing from a stored object means "on", *permanently*, so flipping a default cannot retroactively change what an already-issued URL publishes. `sharing.disclosure.test.js` flips every default to `false` and asserts no existing link moves; do not "simplify" the NULL handling past it.
 - **The public payload is not a dump of the row.** Fields nothing on `/share/:token` renders are deliberately absent: no `recordedByName` on condition snapshots, no `purchasePrice` on the items of a property/area/container share (the item share carries its own, which `ItemView` shows), no depreciation fields, no `productSpecs`.
 
+### Diagnosing "AI photos aren't working"
+
+The feature fails **silently by design**, at two layers: `config.js` lists
+`ANTHROPIC_API_KEY` in `optionalFeatureVars`, so a missing key warns and never
+throws; `vision.http.js` then answers `200 {available:false, suggestion:null}` —
+a *successful* response. Capture keeps working and simply stops offering names.
+An upstream API failure and the model honestly declining also produce the same
+thing on screen. So "nothing happens" is the only symptom for several very
+different causes, and the order below is the cheap-to-expensive way to separate
+them.
+
+**1. Is it configured at all?** One unauthenticated request:
+
+```bash
+curl -s https://tally.razorwire-productions.com/health/ready
+# → "vision":"enabled" | "disabled"   (also "match")
+```
+
+`disabled` means no `ANTHROPIC_API_KEY` in the container. The key lives in the
+Vault bundle the deploy writes `.env` from, and is declared in `pw.json`
+`external_secrets` (NOT `secrets` — that list is auto-generated and fail-closed;
+an operator-supplied key there would be overwritten with a random string and
+would fail every deploy until populated). Fill it with:
+
+```bash
+vault kv patch secret/apps/tally/prod ANTHROPIC_API_KEY=<key>
+```
+
+**`patch`, never `put`** — `put` replaces the whole bundle and takes
+`MYSQL_ROOT_PASSWORD`, the S3 keys and `COOKIE_SECRET` with it. (KV-v2 CLI paths
+omit `data/`.) Or PW UI → tally → Secrets → prod.
+
+**2. Is it the browser, not the server?** There is a per-device on/off switch
+(`client/src/store/vision-store.ts`, persisted, default on). If it fails on one
+device and works on another, that is the cause.
+
+**3. Otherwise it is the upstream call, and only the logs distinguish why.**
+PW UI → tally → prod → Logs (service `app`), or:
+
+```bash
+curl -s "http://10.0.5.42:8500/api/_x_/apps/tally/envs/prod/server-logs/snapshot?service=app&lines=500" \
+  -H "Authorization: Bearer $ORCHESTRATOR_API_KEY" | grep -i vision
+```
+
+| Log line | Level | Means |
+|---|---|---|
+| `Vision identify failed` | error | The call threw — rejected key, model id the account cannot reach, refused request shape, or the 12s timeout. Names the model attempted. |
+| `Vision identify produced no usable result` | error | Billed, returned nothing usable (e.g. truncation). |
+| `Vision identify complete` | info | Working; the model declined this photo. **Invisible in prod** — the console transport emits at `error` only. |
+
+None of the three means the request never reached the service.
+
+**Ruled out on 2026-08-30, so don't re-derive:** the model default
+`claude-sonnet-5` is current and `VISION_MODEL` is unset in `pw.json`; the
+server image builds with `npm ci --production`, so the SDK is lockfile-pinned
+and cannot drift on a redeploy; and the 2026-08 UniFi firewall audit deleted no
+tally egress rule (its 8 deletions were `Servers→Tally :22/:80`, the IMP-side
+rules, the IMP-DEV superset, `THD to EMP_DB`, Airplay and Internal-to-Work).
+
 ### Deployment (PW v2)
 
 - Tally deploys via the **PW v2 contract** — `pw.json` in the repo root is the single deployment manifest (services `app`/`db`/`storage`/`web`, secrets, health check `/health/ready`). No `app.yml`, no dual-repo manifest sync: the orchestrator clones this repo fresh and reads `pw.json`.

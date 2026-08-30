@@ -130,6 +130,21 @@ app.get('/health/ready', async (req, res) => {
     uptime: process.uptime(),
     db: dbStatus,
     storage: storageStatus,
+    // REPORTED, NOT GATED — deliberately excluded from `ready` above.
+    //
+    // Both are optional features (config.js treats ANTHROPIC_API_KEY as an
+    // optional feature var: absent means off, not broken), so gating on them
+    // would fail the PW deploy gate on any install without a key — including
+    // a fresh one. Reporting them costs nothing and closes the hole that made
+    // this worth adding: an absent key disables photo identification with a
+    // console warning nobody reads and a 200 response carrying
+    // `available: false`, so the feature simply stops working and nothing
+    // anywhere says so. Now `curl /health/ready` says so.
+    //
+    // Only ever the derived boolean. Never the key, never its length or
+    // prefix — this endpoint is unauthenticated.
+    vision: config.vision.enabled ? 'enabled' : 'disabled',
+    match: config.match.enabled ? 'enabled' : 'disabled',
   });
 });
 
