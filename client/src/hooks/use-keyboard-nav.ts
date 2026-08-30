@@ -104,6 +104,14 @@ export interface KeyboardNavOptions {
  *
  * Writes are skipped when the value is unchanged, so a focus landing on the
  * already-current row costs no navigation at all.
+ *
+ * ONE WRITER PER PARAM, and never two in the same effect flush. React
+ * Router's functional `setSearchParams` hands the updater the params from
+ * ITS OWN render's closure, not the live URL — so two writers firing in one
+ * commit both merge from the same stale snapshot and the second silently
+ * undoes the first. A surface that must clear this cursor as part of another
+ * param change has to fold that clear into that single write (see home.tsx's
+ * URL-sync effect), not schedule a second one beside it.
  */
 export function useNavCursorParam(param: string): {
   cursor: string | null;
@@ -113,23 +121,26 @@ export function useNavCursorParam(param: string): {
   const raw = searchParams.get(param);
   const cursor = raw == null || raw === '' ? null : raw;
 
-  // Read the live params through a ref so `setCursor` keeps a STABLE identity
-  // — surfaces pass it into useCallback deps for their move handlers, and an
-  // identity that changed on every param write would churn the whole ring.
+  // Both of these are read through refs so `setCursor` can keep a genuinely
+  // stable identity — surfaces put it in the deps of their move handlers, and
+  // `setSearchParams` is itself re-created whenever `location.search` changes,
+  // i.e. on every j. Depending on it directly re-ran every effect downstream
+  // of the ring once per keypress and cost a redundant history.replace.
   const paramsRef = useRef(searchParams);
   paramsRef.current = searchParams;
+  const setParamsRef = useRef(setSearchParams);
+  setParamsRef.current = setSearchParams;
 
   const setCursor = useCallback((value: string | null) => {
-    const current = paramsRef.current.get(param);
-    if ((current ?? null) === value) return;
-    setSearchParams((prev) => {
+    if ((paramsRef.current.get(param) ?? null) === value) return;
+    setParamsRef.current((prev) => {
       const next = new URLSearchParams(prev);
       // MERGE, never rebuild — the surface's own params (q, status, tags…)
       // share this URL and must survive a cursor move.
       if (value == null) next.delete(param); else next.set(param, value);
       return next;
     }, { replace: true });
-  }, [param, setSearchParams]);
+  }, [param]);
 
   return { cursor, setCursor };
 }

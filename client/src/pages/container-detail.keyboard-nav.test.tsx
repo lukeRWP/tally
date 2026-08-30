@@ -7,7 +7,7 @@
  * the batch-select checkboxes are up ("Select" mode), since Enter jumping to
  * a whole other page would fight that flow.
  */
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import type { Container, Item } from '@/types/inventory';
@@ -188,6 +188,31 @@ test('#279: in select mode the ring still MOVES, and Enter ticks the row instead
   fireEvent.keyDown(window, { key: 'Enter' });
   expect(screen.getByText('2 selected')).toBeTruthy();
   expect(navigateSpy).not.toHaveBeenCalled();
+});
+
+test('#279: the ring goes quiet while one of this page\'s own dialogs is open', () => {
+  // Dropping the `!selecting` gate above removed something it was covering by
+  // accident: bulk delete/tag only open IN select mode, so the ring used to
+  // be off under them. Enter belongs to the dialog's buttons while one is up,
+  // and `/` must not navigate the page out from under it.
+  renderPage('/container/1?nav=container:10');
+  expect(ringOn('Nested A')).toBe(true);
+
+  fireEvent.click(screen.getByRole('button', { name: 'Select' }));
+  fireEvent.keyDown(window, { key: 'Enter' });
+  expect(screen.getByText('1 selected')).toBeTruthy();
+
+  // Scoped to the select-mode action bar — the page's own Delete is a
+  // separate control with the same label.
+  const bulkBar = screen.getByText('1 selected').parentElement!;
+  fireEvent.click(within(bulkBar).getByRole('button', { name: 'Delete' }));
+
+  fireEvent.keyDown(window, { key: 'Enter' });
+  expect(screen.getByText('1 selected')).toBeTruthy();   // toggled nothing
+  fireEvent.keyDown(window, { key: 'j' });
+  expect(ringOn('Nested A')).toBe(true);                 // moved nothing
+  fireEvent.keyDown(window, { key: '/' });
+  expect(navigateSpy).not.toHaveBeenCalled();            // went nowhere
 });
 
 test('the ring is off entirely on touch chrome', () => {

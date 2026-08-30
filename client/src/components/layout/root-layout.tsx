@@ -254,6 +254,12 @@ export function RootLayout() {
           <main> needs tabIndex={-1} to be a focus target at all. */}
       <a
         href="#main-content"
+        // The ring preventDefaults Enter whenever a cursor exists, and #270
+        // makes "Back → Tab → Enter" the ordinary path — so without this the
+        // skip link is tab stop 1 on every ringed surface and its Enter opens
+        // the highlighted ROW instead of skipping. It is not a nav row; it
+        // opts out the same way the tree's chevron does.
+        data-nav-ignore=""
         className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-[100] focus:px-3 focus:py-2 focus:rounded-[var(--radius-sm)] focus:bg-[var(--color-text)] focus:text-[var(--color-bg)] focus:font-mono focus:text-xs focus:font-bold focus:uppercase focus:tracking-[0.08em]"
       >
         Skip to content

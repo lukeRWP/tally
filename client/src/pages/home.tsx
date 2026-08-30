@@ -215,20 +215,20 @@ export function Home() {
     const n = Number(selParam);
     return Number.isFinite(n) ? n : null;
   }, [selParam]);
-  // A new query re-ranks (or replaces) the result set — a stale id surviving
-  // into it could highlight an unrelated row that happens to share an id.
-  //
-  // Keyed on the query the cursor BELONGS to rather than on "have I run
-  // before": the query the URL arrived with must not clear the cursor Back
-  // just restored (#270), and a run-counter would get that wrong under
-  // StrictMode's deliberate second mount, which replays effects with
-  // unchanged deps. Comparing values instead makes the effect idempotent.
+  /**
+   * The query the cursor belongs to. A new query re-ranks (or replaces) the
+   * result set, so a stale id surviving into it could highlight an unrelated
+   * row that happens to share an id — the cursor must be dropped.
+   *
+   * Compared by VALUE rather than counting effect runs: the query the URL
+   * arrived with must not clear the cursor Back just restored (#270), and a
+   * run-counter gets that wrong under StrictMode's deliberate second mount,
+   * which replays effects with unchanged deps.
+   *
+   * The clear itself is folded into the URL-sync effect below rather than
+   * living in an effect of its own — see there.
+   */
   const cursorQuery = React.useRef(searchQuery);
-  React.useEffect(() => {
-    if (cursorQuery.current === searchQuery) return;
-    cursorQuery.current = searchQuery;
-    setCursor(null);
-  }, [searchQuery, setCursor]);
   const moveHighlight = React.useCallback((delta: 1 | -1) => {
     if (resultIds.length === 0) return;
     const at = highlightedId == null ? -1 : resultIds.indexOf(highlightedId);
@@ -269,6 +269,17 @@ export function Home() {
   // params FROM state; nothing reads params back into state after mount, or
   // typing and navigation would fight each other.
   React.useEffect(() => {
+    // Dropping the ring's cursor on a query change belongs HERE, in the same
+    // write, not in an effect of its own (#270 review). React Router's
+    // functional setSearchParams hands the updater the params from its own
+    // render's closure rather than the live URL, so two writers landing in
+    // one effect flush both merge from the same stale snapshot — a separate
+    // `sel`-clearing effect deleted the param and this one, merging from a
+    // snapshot that still had it, put it straight back. The URL then read
+    // `?q=hammer&sel=2`: nothing ringed on screen, and Enter opening a row
+    // from the PREVIOUS result set.
+    const queryChanged = cursorQuery.current !== searchQuery;
+    cursorQuery.current = searchQuery;
     // MERGE, do not rebuild. Building a fresh URLSearchParams from just this
     // screen's own keys would silently drop any unrelated param already in
     // the URL — see search.tsx's sync effect for the same reasoning.
@@ -278,6 +289,7 @@ export function Home() {
       if (selectedTagIds.length > 0) next.set('tags', selectedTagIds.join(',')); else next.delete('tags');
       if (selectedCondition) next.set('condition', selectedCondition); else next.delete('condition');
       if (selectedStatus !== 'all') next.set('status', selectedStatus); else next.delete('status');
+      if (queryChanged) next.delete('sel');
       return next;
     }, { replace: true });
   }, [searchQuery, selectedTagIds, selectedCondition, selectedStatus, setSearchParams]);

@@ -157,6 +157,14 @@ export function ContainerDetail() {
     ? visibleOrder[visibleKeys.indexOf(highlightedKey)] ?? null
     : null;
 
+  /**
+   * Any of this page's own overlays being up. `createType` is the shared
+   * create form (one dialog for both kinds); `fabOpen` is the create menu,
+   * which owns Escape and arrow keys of its own while it is open.
+   */
+  const dialogOpen = createType !== null || fabOpen || printOpen || shareOpen
+    || deleteOpen || bulkDeleteOpen || bulkTagOpen;
+
   useKeyboardNav({
     // Off on touch chrome, where there is no keyboard to serve. Select mode
     // no longer switches the whole ring off (#279): gating `enabled` on
@@ -166,7 +174,13 @@ export function ContainerDetail() {
     // Enter must not navigate away mid-selection — and with it in place
     // moving the cursor is free, which turns "tick 12 scattered rows" into
     // j j j <Enter> with no mouse at all.
-    enabled: wide,
+    //
+    // What `!selecting` WAS incidentally covering is now covered on purpose:
+    // this page's dialogs. Bulk delete/tag only open in select mode, so the
+    // old guard kept the ring off under them by accident. Enter belongs to
+    // the dialog's own buttons while one is up, and `/` must not navigate
+    // the page out from under it. Same guard item-detail.tsx uses.
+    enabled: wide && !dialogOpen,
     onMove: moveHighlight,
     onOpen: () => {
       if (!highlighted) return false;

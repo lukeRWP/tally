@@ -7,7 +7,7 @@
  * `/` focuses the search input regardless of which view is showing, matching
  * search.tsx's own contract for it.
  */
-import { fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter, Route, Routes } from 'react-router';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
@@ -154,4 +154,33 @@ test('#270: a cursor in ?sel is live on arrival, and j continues from it', () =>
   fireEvent.keyDown(window, { key: 'j' });
   expect(ringOn('Drill Case')).toBe(true);
   expect(ringOn('Drill Bits')).toBe(false);
+});
+
+test('#270: typing a NEW query over a restored cursor drops it — nothing ringed, and Enter opens nothing', () => {
+  // The two-writer bug. React Router's functional setSearchParams hands the
+  // updater the params from its own render's closure, so a separate
+  // sel-clearing effect and this screen's URL-sync effect, landing in the
+  // same flush, both merged from the same stale snapshot — the sync effect
+  // put back the `sel` the clear had just deleted. Result: `?q=hammer&sel=2`
+  // with NOTHING ringed on screen and Enter opening item 2, a row from the
+  // previous result set. The clear now rides the sync effect's single write.
+  vi.useFakeTimers();
+  try {
+    renderHome(['/?q=drill&sel=2']);
+    expect(ringOn('Drill Bits')).toBe(true);
+
+    const input = screen.getByPlaceholderText('Search items...') as HTMLInputElement;
+    act(() => { fireEvent.change(input, { target: { value: 'hammer' } }); });
+    act(() => { vi.advanceTimersByTime(400); });   // past the 300ms debounce
+
+    for (const name of ['Drill', 'Drill Bits', 'Drill Case']) {
+      expect(ringOn(name), `${name} is still ringed after the query changed`).toBe(false);
+    }
+
+    // The invisible half: an unringed screen must not have a live cursor.
+    fireEvent.keyDown(window, { key: 'Enter' });
+    expect(navigateSpy).not.toHaveBeenCalled();
+  } finally {
+    vi.useRealTimers();
+  }
 });
