@@ -355,3 +355,21 @@ describe('with no properties', () => {
     expect(screen.queryByRole('button', { name: /insurance summary/i })).toBeNull();
   });
 });
+
+/**
+ * #315: this header is a hand-rolled copy of RuledRow's row styling (see the
+ * comment above it for why it can't just BE one) — so it hand-rolled the same
+ * focus bug too, and needs the same fix: a visible ring, not the elevated tint
+ * that also means "pressed". See ui/ruled-row.test.tsx for the sibling case.
+ */
+test('the report row header has a visible focus ring, not the pressed tint', () => {
+  renderPage();
+
+  const header = screen.getByRole('button', { name: /insurance summary/i });
+  const cls = header.className;
+
+  expect(cls).toContain('focus-visible:ring-2');
+  expect(cls).toContain('focus-visible:ring-inset');
+  expect(cls).toContain('focus-visible:ring-[var(--color-primary)]');
+  expect(cls).not.toContain('focus-visible:bg-[var(--color-elevated)]');
+});
