@@ -685,7 +685,7 @@ export function ContainerDetail() {
 
       {/* Nested Containers */}
       <section className="animate-fade-up flex flex-col" style={{ animationDelay: '150ms' }}>
-        <ColHead>Nested · {children?.length ?? 0}</ColHead>
+        <ColHead hint={wide}>Nested · {children?.length ?? 0}</ColHead>
 
         {childrenLoading && <Skeleton className="h-14 w-full mt-2" />}
 

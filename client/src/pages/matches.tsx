@@ -4,7 +4,7 @@ import { ArrowLeft, ExternalLink, Package, PackageSearch } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
-import { ColHead } from '@/components/ui/col-head';
+import { ColHead, KeyCap } from '@/components/ui/col-head';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { Skeleton } from '@/components/ui/skeleton';
 import { TitleBar } from '@/components/ui/title-bar';
@@ -14,6 +14,7 @@ import { toast } from '@/components/ui/toast';
 import { ApiError } from '@/lib/api';
 import { useProperties } from '@/hooks/use-inventory';
 import { useLayoutMode } from '@/hooks/use-layout-mode';
+import { useCoarsePointer } from '@/hooks/use-coarse-pointer';
 import { useKeyboardNav, useNavScrollIntoView } from '@/hooks/use-keyboard-nav';
 import { cn, safeExternalUrl } from '@/lib/utils';
 import {
@@ -67,10 +68,21 @@ function StatusBadge({ status, count }: { status: MatchStatus; count: number }) 
   }
 }
 
-function CandidateCard({ candidate, onPick, disabled }: {
+function CandidateCard({ candidate, index, onPick, disabled, showKeyHint }: {
   candidate: MatchCandidate;
+  /** This card's position in the panel — 0-based; the digit binding is `index + 1`. */
+  index: number;
   onPick: () => void;
   disabled: boolean;
+  /**
+   * Show the `1`/`2`/`3` key cap that names this card to handleActionKey
+   * (#295). A digit binding nobody can guess is worse than no binding — this
+   * is what turns "press 2" from a rumour into something you can read off
+   * the card it acts on. Bounded to 1-9 by the caller; a >9th candidate
+   * never happens today (maxCandidates is 3) but would simply go unlabelled
+   * rather than showing a key that does nothing.
+   */
+  showKeyHint: boolean;
 }) {
   const link = safeExternalUrl(candidate.sourceUrl);
   return (
@@ -115,21 +127,26 @@ function CandidateCard({ candidate, onPick, disabled }: {
             </a>
           )}
         </div>
-        <Button size="sm" onClick={onPick} disabled={disabled} className="shrink-0">
-          Use this
-        </Button>
+        <div className="flex shrink-0 items-center gap-1.5">
+          {showKeyHint && index < 9 && <KeyCap>{index + 1}</KeyCap>}
+          <Button size="sm" onClick={onPick} disabled={disabled}>
+            Use this
+          </Button>
+        </div>
       </div>
     </Card>
   );
 }
 
-function CandidatePanel({ match, onPick, onDismiss, resolving, onBack }: {
+function CandidatePanel({ match, onPick, onDismiss, resolving, onBack, showKeyHint }: {
   match: ProductMatch;
   onPick: (index: number) => void;
   onDismiss: () => void;
   resolving: boolean;
   /** Present only on phone, where the detail replaces the list. */
   onBack?: () => void;
+  /** See CandidateCard — the fine-pointer, ring-enabled case only. */
+  showKeyHint: boolean;
 }) {
   const working = match.status === 'queued' || match.status === 'searching';
   const stuck = match.status === 'none' || match.status === 'failed';
@@ -163,9 +180,23 @@ function CandidatePanel({ match, onPick, onDismiss, resolving, onBack }: {
       {match.status === 'ready' && (
         <div className="flex flex-col gap-2">
           {match.candidates.map((c, i) => (
-            <CandidateCard key={i} candidate={c} onPick={() => onPick(i)} disabled={resolving} />
+            <CandidateCard
+              key={i}
+              candidate={c}
+              index={i}
+              onPick={() => onPick(i)}
+              disabled={resolving}
+              showKeyHint={showKeyHint}
+            />
           ))}
-          <Button variant="outline" size="sm" onClick={onDismiss} disabled={resolving}>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={onDismiss}
+            disabled={resolving}
+            className="flex items-center justify-center gap-1.5"
+          >
+            {showKeyHint && <KeyCap>d</KeyCap>}
             None of these
           </Button>
         </div>
@@ -196,6 +227,13 @@ function CandidatePanel({ match, onPick, onDismiss, resolving, onBack }: {
 export function MatchesPage() {
   // Above every early return — hooks must run on each render.
   const split = useLayoutMode() === 'sidebar';
+  // The digit/`d` bindings and the ColHead summary hint both gate on the
+  // pointer, same reasoning as ColHead's own `hint` prop (#295): the ring
+  // here already gates on layout mode alone (`split`), so a coarse-pointer
+  // tablet wide enough for sidebar chrome would otherwise show a live-but-
+  // silent ring. Requiring BOTH signals before advertising anything keeps
+  // every hint in this file honest even where the ring's own gate is not.
+  const coarse = useCoarsePointer();
   const { data: properties } = useProperties();
   const propertyId = properties?.[0]?.id;
   const { data: matches, isLoading } = useMatches(propertyId);
@@ -463,7 +501,7 @@ export function MatchesPage() {
 
   const list = (
     <div>
-      <ColHead>{rows.length} awaiting a product</ColHead>
+      <ColHead hint={split}>{rows.length} awaiting a product</ColHead>
       {rows.map((m) => (
         <div
           key={m.id}
@@ -497,6 +535,7 @@ export function MatchesPage() {
       onDismiss={handleDismiss}
       resolving={resolve.isPending}
       onBack={!split ? () => select(null) : undefined}
+      showKeyHint={split && !coarse}
     />
   ) : (
     <SplitEmpty hint="the list stays put while you look">Pick an item to see its matches.</SplitEmpty>
