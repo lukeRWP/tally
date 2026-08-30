@@ -115,7 +115,7 @@ tally/
 │   ├── init/
 │   │   ├── 001_TALLY_Init.sql    # Full schema: 21 tables
 │   │   └── 002_apply_migrations.sh # Applies SQL/migrations/ after the base schema in local dev
-│   └── migrations/               # 001–010 (see Database → Migrations)
+│   └── migrations/               # 001–011 (see Database → Migrations)
 ├── docker-compose.yml            # 5 services: tally-db, tally-minio, tally-server, tally-client, tally-vault (no nginx locally)
 ├── Taskfile.yml
 ├── .env.template
@@ -316,6 +316,7 @@ Key design patterns:
 | 008 | product matches (vision queue) |
 | 009 | printer agent `CREATED_BY` tether |
 | 010 | items indexes |
+| 011 | share-link disclosure choices (`share_links.DISCLOSURE` JSON; NULL = share everything) |
 
 ## Authentication
 
