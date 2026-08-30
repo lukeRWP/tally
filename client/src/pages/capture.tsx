@@ -358,7 +358,25 @@ export function Capture() {
   const [visionPending, setVisionPending] = React.useState(false);
   // The name is the one field allowed to pre-fill, so it is the one field that
   // needs to look unconfirmed until someone has actually looked at it.
-  const [nameIsSuggested, setNameIsSuggested] = React.useState(false);
+  /**
+   * The name the model offered and this page actually applied — not a flag
+   * saying it did.
+   *
+   * The flag version could disagree with the field. `identifyPhoto` decides
+   * whether to apply a suggestion, then repeats the guard inside the state
+   * updater as its last line of defence ("a name typed while the request was
+   * in flight is theirs") — but the flag beside it was set unconditionally,
+   * so in exactly the race the guard exists for, the user's own name was kept
+   * AND marked suggested. #266 then reads that flag to decide whether a
+   * hand-typed name is worth protecting, so the next barcode lookup
+   * overwrote it with the catalogue title and offered no Keep.
+   *
+   * Storing the applied name makes the two agree by construction:
+   * `nameIsSuggested` below is a comparison against the live field, so a
+   * suggestion that lost the race is a name that does not match, and the
+   * flag is false without anyone having to remember to clear it.
+   */
+  const [suggestedName, setSuggestedName] = React.useState<string | null>(null);
   /**
    * #266: a catalogue title a lookup found but did NOT apply, because the name
    * in the field was typed by a person. Offered behind a Keep rather than
@@ -366,6 +384,15 @@ export function Capture() {
    */
   const [catalogueName, setCatalogueName] = React.useState<string | null>(null);
   const [reviewOpen, setReviewOpen] = React.useState(false);
+  /**
+   * Is the name in the field the model's, unread? Derived, never stored — see
+   * suggestedName. Both name fields wear the dashed "unconfirmed" border on
+   * this, and #266 reads it to tell a person's decision from a machine's
+   * guess.
+   */
+  const nameIsSuggested = suggestedName != null && draft.name === suggestedName;
+  /** Editing (or accepting) a name makes it theirs — there is no suggestion left. */
+  function clearSuggestedName() { setSuggestedName(null); }
   /**
    * Set the moment a barcode resolves to a real catalogue product.
    *
@@ -437,7 +464,7 @@ export function Capture() {
     setDupes([]);
     setVision(null);
     setVisionPending(false);
-    setNameIsSuggested(false);
+    clearSuggestedName();
     setCatalogueName(null);
     setReviewOpen(false);
     setVisionFailed(false);
@@ -924,7 +951,7 @@ export function Capture() {
         catalogueHit.current = true;
         setVision(null);
         setReviewOpen(false);
-        setNameIsSuggested(false);
+        clearSuggestedName();
         // A barcode says WHAT the thing is, never where it goes. Every item
         // earns its place by being put somewhere on step 3 — a pinned bin is a
         // shortcut for answering that question, not a reason to skip it.
@@ -1005,7 +1032,7 @@ export function Capture() {
         catalogueHit.current = true;
         setVision(null);
         setReviewOpen(false);
-        setNameIsSuggested(false);
+        clearSuggestedName();
         return 'hit';
       }
       // Same message as the camera path: half the household is in no catalogue.
@@ -1134,7 +1161,12 @@ export function Capture() {
         // The guard is repeated inside the updater as the last line of defence:
         // the decision above is a read, this is the invariant.
         setDraft((d) => (d.name.trim() ? d : { ...d, name: s.name as string }));
-        setNameIsSuggested(true);
+        // Records WHICH name was offered, not that one was — so if the
+        // updater above refused (a name typed mid-flight), the field no
+        // longer matches and `nameIsSuggested` is false on its own. Setting a
+        // boolean here instead marked the user's own name as the model's, and
+        // #266 then let the next lookup overwrite it with no Keep offered.
+        setSuggestedName(s.name);
       }
     } catch (err) {
       console.warn('[vision] identify threw', err);
@@ -1578,7 +1610,7 @@ export function Capture() {
           // receiptList.
           receiptsSlot={receiptList}
           nameIsSuggested={nameIsSuggested}
-          setNameIsSuggested={setNameIsSuggested}
+          onNameEdited={clearSuggestedName}
           // #266: the catalogue title a lookup found and did NOT apply over a
           // hand-typed name, offered on the same terms as everything else this
           // page suggests — behind a Keep.
@@ -1588,7 +1620,7 @@ export function Capture() {
             setDraft((d) => ({ ...d, name: catalogueName }));
             // Taken deliberately, so it is theirs now: no unconfirmed border,
             // and nothing left to offer.
-            setNameIsSuggested(false);
+            clearSuggestedName();
             setCatalogueName(null);
           }}
           seedAreaId={ctxArea || dest?.areaId}
@@ -1821,7 +1853,7 @@ export function Capture() {
                 className={cn(nameIsSuggested && 'border-dashed border-[var(--color-primary)]')}
                 onChange={(e) => {
                   // Editing it makes it theirs.
-                  setNameIsSuggested(false);
+                  clearSuggestedName();
                   setDraft((d) => ({ ...d, name: e.target.value }));
                 }}
                 // Typing a name and pressing enter is one gesture; making the
@@ -2069,7 +2101,7 @@ function ManualCreate({
   draft, setDraft, dest, onPickDest, recents, onChoosePhoto, dragging, setDragging,
   onDropFile, onSubmit, pending, onLookupBarcode, receiptCount,
   vision, reviewOpen, setReviewOpen, photoStatus, reviewOffered, onClearPhoto,
-  dupeWarning, receiptsSlot, nameIsSuggested, setNameIsSuggested,
+  dupeWarning, receiptsSlot, nameIsSuggested, onNameEdited,
   catalogueName, onKeepCatalogueName,
   seedAreaId, seedPropertyId, onUseCamera,
 }: {
@@ -2113,7 +2145,8 @@ function ManualCreate({
   /** The session log, rendered in this form's right column (#277). */
   receiptsSlot: React.ReactNode;
   nameIsSuggested: boolean;
-  setNameIsSuggested: (v: boolean) => void;
+  /** Called when the name stops being the model's — an edit, or a Keep. */
+  onNameEdited: () => void;
   /** #266: a catalogue title found by a lookup that refused to overwrite a
    *  hand-typed name. Rendered as an offer under Name; null when there is
    *  nothing to offer. */
@@ -2284,7 +2317,7 @@ function ManualCreate({
             className={cn(nameIsSuggested && 'border-dashed border-[var(--color-primary)]')}
             onChange={(e) => {
               // Editing it makes it theirs.
-              setNameIsSuggested(false);
+              onNameEdited();
               setDraft((d) => ({ ...d, name: e.target.value }));
             }}
           />
