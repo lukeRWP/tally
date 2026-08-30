@@ -8,6 +8,7 @@ import {
   DialogDescription,
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
+import { ShareUrl } from './share-url';
 import { useMyShareLinks, useCreateShareLink, useRevokeShareLink } from '@/hooks/use-sharing';
 import { toast } from '@/components/ui/toast';
 import { cn } from '@/lib/utils';
@@ -26,26 +27,6 @@ const EXPIRY_OPTIONS = [
   { label: '30 days', days: 30 },
   { label: '90 days', days: 90 },
 ];
-
-/**
- * The share URL as something you can actually open. Before this it was a
- * `<span>` here and a readonly `<Input>` above, and `grep -rn "share/"` found
- * no anchor to the share view anywhere in the app — so the only way to see
- * what you had just published was to copy it and paste it into a new tab.
- */
-function ShareUrl({ url }: { url: string }) {
-  return (
-    <a
-      href={url}
-      target="_blank"
-      rel="noopener noreferrer"
-      title={`Open ${url} in a new tab`}
-      className="block min-w-0 flex-1 truncate font-mono text-xs text-[var(--color-primary)] underline underline-offset-2 hover:opacity-80"
-    >
-      {url}
-    </a>
-  );
-}
 
 function formatDate(dateStr: string) {
   return new Date(dateStr).toLocaleDateString(undefined, {

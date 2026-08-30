@@ -61,6 +61,48 @@ export function usePrintJobs(propertyId?: number) {
   });
 }
 
+/**
+ * An agent stamps LAST_SEEN_AT on every claim and polls every 2s, so a minute
+ * of silence is the same "offline" threshold `/print`'s own badge uses.
+ */
+const AGENT_STALE_MS = 60_000;
+
+/**
+ * How many print jobs are waiting on a human.
+ *
+ * Carrying gets a docked banner and alerts get a count, but printing — the one
+ * queue-it-and-walk-away flow in the app — surfaced nothing outside `/print`
+ * itself, so "nothing has printed for two days" was discovered by chance
+ * (#283). Failed and held jobs always count; queued work counts only when
+ * there is nothing alive to print it, because an idle printer that is switched
+ * off is not a problem until something is waiting for it.
+ */
+export function printAttentionCount(
+  jobs: PrintJob[] | undefined,
+  printers: Printer[] | undefined,
+  now = Date.now(),
+): number {
+  const queue = jobs ?? [];
+  const failed = queue.filter((j) => j.status === 'failed').length;
+  const held = queue.filter((j) => j.status === 'held').length;
+  const waiting = queue.filter((j) => j.status === 'queued' || j.status === 'claimed').length;
+
+  const live = (printers ?? []).some(
+    (p) =>
+      p.printerState !== 'stopped' &&
+      !!p.lastSeenAt &&
+      now - new Date(p.lastSeenAt).getTime() < AGENT_STALE_MS,
+  );
+
+  return failed + held + (live ? 0 : waiting);
+}
+
+export function usePrintAttention(propertyId?: number) {
+  const { data: jobs } = usePrintJobs(propertyId);
+  const { data: printers } = usePrinters(propertyId);
+  return printAttentionCount(jobs, printers);
+}
+
 export function useCreatePrintJob() {
   const qc = useQueryClient();
   return useMutation({

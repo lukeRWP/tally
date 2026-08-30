@@ -13,6 +13,7 @@ import { PropertyChips } from '@/components/inventory/property-chips';
 import { TagManager } from '@/components/tags/tag-manager';
 import { NotificationPrefs } from '@/components/notifications/notification-prefs';
 import { PrinterSettings } from '@/components/print/printer-settings';
+import { ShareUrl } from '@/components/sharing/share-url';
 import { useMyShareLinks, useRevokeShareLink } from '@/hooks/use-sharing';
 import { toast } from '@/components/ui/toast';
 import { useVisionPref } from '@/store/vision-store';
@@ -70,7 +71,11 @@ export function ShareLinksSection() {
         >
           <span className="min-w-0 flex-1">
             <span className="block text-sm font-semibold capitalize text-[var(--color-text)]">{link.entityType}</span>
-            <span className="block truncate font-mono text-[11px] text-[var(--color-text-muted)]">{link.url}</span>
+            {/* The same anchor the share dialog got in #296, not a second
+                spelling of it (#297): this list and that dialog show the same
+                URLs, and "can I open it?" must not depend on which surface you
+                happened to be standing on when you asked. */}
+            <ShareUrl url={link.url} className="text-[11px]" />
             <span className="block font-mono text-[10px] uppercase tracking-[0.06em] text-[var(--color-text-muted)]">
               Expires {formatDate(link.expiresAt)}
             </span>
@@ -126,7 +131,7 @@ function PhotoIdentificationSection() {
   const setEnabled = useVisionPref((p) => p.setEnabled);
 
   return (
-    <section className="flex flex-col animate-fade-up" style={{ animationDelay: '200ms' }}>
+    <section className="flex flex-col animate-fade-up" style={{ animationDelay: '160ms' }}>
       <ColHead>Photo identification</ColHead>
       <div className="flex items-center gap-3 min-h-[44px] py-2">
         <span className="min-w-0 flex-1">
@@ -184,10 +189,24 @@ export function SettingsPage() {
         onChange={setSelectedPropertyId}
       />
 
-      {/* Desktop: 2-column layout / Mobile: single column */}
+      {/* Desktop: 2-column layout / Mobile: single column.
+          The split is ASSIGNED, not computed, so it is only as good as what is
+          on each side. It used to put three short sections on the left and
+          five long ones on the right: at 1440×900 the left column's last
+          content ended at y≈352 while the right ran to y≈1260, so half the
+          screen sat blank while the page still scrolled (#283).
+
+          The rule it follows now is not "shortest first" — that would need
+          re-deciding every time a section changed. FIXED-HEIGHT sections go
+          left (profile, theme, recycle bin, the six notification switches, the
+          photo-identify switch) and the ones that GROW WITH THE PROPERTY go
+          right (tags, printers, share links). The balance then cannot be
+          undone by a house that happens to have thirty tags. */}
       <div className="lg:grid lg:grid-cols-2 lg:gap-8">
-        {/* Left column */}
-        <div className="flex flex-col gap-5">
+        {/* Left column. Tagged because WHICH column a section sits in is the
+            whole of the balance fix, and jsdom does no layout — the same
+            device reports.tsx's row stacks use (#275). */}
+        <div data-settings-column="left" className="flex flex-col gap-5">
           {/* Profile */}
           <section className="flex flex-col animate-fade-up">
             <ColHead>Profile</ColHead>
@@ -250,10 +269,22 @@ export function SettingsPage() {
               meta="Deleted things, restorable for 30 days"
             />
           </section>
+
+          {/* Notifications — a per-user preference like Appearance above it,
+              rather than property data like Tags and Printing opposite. */}
+          <section className="flex flex-col animate-fade-up" style={{ animationDelay: '120ms' }}>
+            <ColHead>Notifications</ColHead>
+            <NotificationPrefs />
+          </section>
+
+          {/* Photo identification -- the user-facing off switch. Not gated on a
+              property: it is a per-device preference, not property data, which
+              is also why it belongs on this side of the fold. */}
+          <PhotoIdentificationSection />
         </div>
 
         {/* Right column */}
-        <div className="flex flex-col gap-5 mt-5 lg:mt-0">
+        <div data-settings-column="right" className="flex flex-col gap-5 mt-5 lg:mt-0">
           {/* Tags */}
           {properties.length > 0 && (
             <section className="flex flex-col gap-2 animate-fade-up" style={{ animationDelay: '40ms' }}>
@@ -262,12 +293,6 @@ export function SettingsPage() {
             </section>
           )}
 
-          {/* Notifications */}
-          <section className="flex flex-col animate-fade-up" style={{ animationDelay: '80ms' }}>
-            <ColHead>Notifications</ColHead>
-            <NotificationPrefs />
-          </section>
-
           {/* Printing -- printer registration, loaded roll, job queue */}
           {selectedPropertyId > 0 && (
             <section className="flex flex-col gap-3 animate-fade-up" style={{ animationDelay: '120ms' }}>
@@ -275,10 +300,6 @@ export function SettingsPage() {
               <PrinterSettings propertyId={selectedPropertyId} />
             </section>
           )}
-
-          {/* Photo identification -- the user-facing off switch. Not gated on a
-              property: it is a per-device preference, not property data. */}
-          <PhotoIdentificationSection />
 
           <ShareLinksSection />
         </div>

@@ -955,7 +955,11 @@ export function ContainerDetail() {
 
       {hasTags && (
         <Dialog open={bulkTagOpen} onOpenChange={(open) => { if (!tagProgress) setBulkTagOpen(open); }}>
-          <DialogContent className="max-w-sm">
+          {/* Same phone measure as the label dialog had (#283) — and this one
+              is worse off for it, because the property's tags were folded
+              behind a collapsed dropdown in a dialog that had room to list
+              them. See TagPicker: batch mode now lays them out flat. */}
+          <DialogContent className="max-w-sm sm:max-w-lg">
             <DialogHeader>
               {/* bulkTagTargets, not pickedItemsForBulk: the latter shrinks
                   as each apply succeeds and would read "Tag 0 items" right

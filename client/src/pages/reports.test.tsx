@@ -13,14 +13,24 @@
  * task report for why no production code changed here.
  */
 import { fireEvent, render, screen } from '@testing-library/react';
-import { afterEach, beforeEach, expect, test, vi } from 'vitest';
+import { MemoryRouter } from 'react-router';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { Reports } from './reports';
 
 let layoutMode: 'touch' | 'sidebar' = 'touch';
 vi.mock('@/hooks/use-layout-mode', () => ({ useLayoutMode: () => layoutMode }));
 
+// The property list the page is given, and whether it has arrived — #283 added
+// an empty state, and an empty state must never be shown for a list that is
+// merely still in flight.
+let properties: { id: number; name: string; areaCount: number; containerCount: number; itemCount: number }[] = [];
+let propertiesLoading = false;
+
 beforeEach(() => {
   layoutMode = 'touch';
+  properties = [{ id: 1, name: 'Home', areaCount: 0, containerCount: 0, itemCount: 0 }];
+  propertiesLoading = false;
+  preview = { data: { reportType: 'insurance', propertyId: 1, data: [] }, isPending: false, isError: false };
 });
 
 vi.mock('@/hooks/use-inventory', async (importOriginal) => {
@@ -28,8 +38,8 @@ vi.mock('@/hooks/use-inventory', async (importOriginal) => {
   return {
     ...actual,
     useProperties: () => ({
-      data: [{ id: 1, name: 'Home', areaCount: 0, containerCount: 0, itemCount: 0 }],
-      isLoading: false,
+      data: properties,
+      isLoading: propertiesLoading,
       isError: false,
       refetch: vi.fn(),
     }),
@@ -47,11 +57,20 @@ vi.mock('@/hooks/use-tags', async (importOriginal) => {
 });
 
 const mutateMock = vi.fn();
+// The preview query's state, swapped per test. `summariseReport` itself is the
+// real one (use-reports.test.ts covers it row shape by row shape) — what is
+// exercised here is that the page asks for it and prints the answer.
+let preview: { data: unknown; isPending: boolean; isError: boolean };
+const previewMock = vi.fn();
 vi.mock('@/hooks/use-reports', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/hooks/use-reports')>();
   return {
     ...actual,
     useGenerateReport: () => ({ mutate: mutateMock, isPending: false }),
+    useReportPreview: (...args: unknown[]) => {
+      previewMock(...args);
+      return preview;
+    },
   };
 });
 
@@ -60,7 +79,7 @@ afterEach(() => {
 });
 
 function renderPage() {
-  return render(<Reports />);
+  return render(<MemoryRouter><Reports /></MemoryRouter>);
 }
 
 test('a control inside an expanded card (CSV export) fires and the card stays expanded', () => {
@@ -205,4 +224,112 @@ test('on a phone the rows stay a single stack', () => {
   expect(columnsOf(container)).toEqual([[
     'insurance', 'total_value', 'items_by_location', 'lending', 'activity_log', 'tag',
   ]]);
+});
+
+/**
+ * #283, first finding — `useReportPreview` and its route were both built and
+ * neither was ever called: `grep -rn useReportPreview client/src` returned the
+ * definition only. A desk's one advantage over a phone is seeing a thing
+ * before committing to it, and the page spent 6% of a 1440 screen not doing so.
+ */
+describe('the preview beside Generate', () => {
+  test('an opened report asks for its own preview, and only its own', () => {
+    renderPage();
+    expect(previewMock).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: /insurance summary/i }));
+
+    // One call, for the one report being considered — not six on page load.
+    const types = new Set(previewMock.mock.calls.map((c) => c[0]));
+    expect([...types]).toEqual(['insurance']);
+    expect(previewMock.mock.calls[0][1]).toBe(1); // propertyId
+  });
+
+  test('the count and total are printed where the decision is made', () => {
+    preview = {
+      data: { reportType: 'insurance', propertyId: 1, data: [{ currentValue: 34900 }, { currentValue: 0 }] },
+      isPending: false,
+      isError: false,
+    };
+    const { container } = renderPage();
+    fireEvent.click(screen.getByRole('button', { name: /insurance summary/i }));
+
+    expect(container.querySelector('[data-report-summary]')?.textContent).toBe('2 items · $34,900');
+  });
+
+  test('the tag report previews the tags actually ticked — its answer depends on them', () => {
+    renderPage();
+    fireEvent.click(screen.getByRole('button', { name: /tag report/i }));
+    previewMock.mockClear();
+
+    fireEvent.click(screen.getByRole('button', { name: /tools/i }));
+
+    expect(previewMock.mock.calls.at(-1)?.[2]).toMatchObject({ tagIds: [7] });
+  });
+
+  test('a report with no tag selector never sends tagIds', () => {
+    renderPage();
+    fireEvent.click(screen.getByRole('button', { name: /insurance summary/i }));
+    expect(previewMock.mock.calls[0][2]).toMatchObject({ tagIds: undefined });
+  });
+
+  test('a preview that fails says so and does NOT block Generate — it is an aid, not a gate', () => {
+    preview = { data: undefined, isPending: false, isError: true };
+    const { container } = renderPage();
+    fireEvent.click(screen.getByRole('button', { name: /insurance summary/i }));
+
+    expect(container.querySelector('[data-report-summary]')?.textContent).toBe('Preview unavailable');
+    const generate = screen.getByRole('button', { name: /generate/i }) as HTMLButtonElement;
+    expect(generate.disabled).toBe(false);
+    fireEvent.click(generate);
+    expect(mutateMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * #283, second finding — every report downloaded as `tally-<type>-report.<ext>`,
+ * so two properties produced byte-different PDFs with identical names and a
+ * year of insurance reports collided in one downloads folder.
+ */
+test('Generate hands the property name down so the file can be named for it', () => {
+  renderPage();
+  fireEvent.click(screen.getByRole('button', { name: /insurance summary/i }));
+  fireEvent.click(screen.getByRole('button', { name: /generate/i }));
+
+  expect(mutateMock.mock.calls[0][0]).toMatchObject({ propertyId: 1, propertyName: 'Home' });
+});
+
+/**
+ * #283, third finding — with no properties the page printed "No properties
+ * available" and then rendered all six reports anyway. Expanding any of them
+ * said "Pick a property above to configure this report"; there was nothing
+ * above, and no route out.
+ */
+describe('with no properties', () => {
+  test('the six reports you cannot run are not offered at all', () => {
+    properties = [];
+    const { container } = renderPage();
+
+    expect(container.querySelectorAll('[data-report-row]').length).toBe(0);
+    expect(screen.queryByRole('button', { name: /insurance summary/i })).toBeNull();
+    expect(screen.queryByText(/no properties available/i)).toBeNull();
+  });
+
+  test('it names the missing link in the chain and offers the next action', () => {
+    properties = [];
+    renderPage();
+
+    expect(screen.getByText(/no property yet/i)).toBeTruthy();
+    expect(screen.getByRole('button', { name: /set up a place/i })).toBeTruthy();
+  });
+
+  test('a list that has not arrived yet is not an empty house', () => {
+    properties = [];
+    propertiesLoading = true;
+    renderPage();
+
+    // Neither the menu nor the "you have nothing" verdict — just the skeleton.
+    expect(screen.queryByText(/no property yet/i)).toBeNull();
+    expect(screen.queryByRole('button', { name: /insurance summary/i })).toBeNull();
+  });
 });
