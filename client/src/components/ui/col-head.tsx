@@ -35,7 +35,7 @@ export function ColHead({
           <button
             type="button"
             onClick={onAction}
-            className="shrink-0 -my-1 px-1 min-h-[28px] inline-flex items-center font-bold text-[var(--color-primary)] hover:opacity-80"
+            className="shrink-0 -my-1 px-1 min-h-[max(28px,var(--tap-min))] inline-flex items-center font-bold text-[var(--color-primary)] hover:opacity-80"
           >
             {action}
           </button>

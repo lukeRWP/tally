@@ -665,7 +665,7 @@ export function PutDown() {
               type="button"
               aria-label="Put down without moving"
               onClick={() => { clear(); navigate(-1); }}
-              className="shrink-0 min-w-[36px] min-h-[36px] flex items-center justify-center text-[var(--color-primary)]"
+              className="shrink-0 min-w-[max(36px,var(--tap-min))] min-h-[max(36px,var(--tap-min))] flex items-center justify-center text-[var(--color-primary)]"
             >
               <X className="w-4 h-4" />
             </button>

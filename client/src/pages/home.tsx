@@ -366,7 +366,14 @@ export function Home() {
             type="button"
             onClick={clearSearch}
             aria-label="Clear search"
-            className="absolute right-10 top-1/2 -translate-y-1/2 flex items-center justify-center w-8 h-8 -mr-1.5 rounded-[var(--radius-sm)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors duration-200"
+            // Height only, not both axes: these two controls are absolutely
+            // positioned 12px and 34px in from the field's right edge, so a
+            // 44px-WIDE floor would put the filter toggle underneath Clear.
+            // The field is 44px tall on a coarse pointer, so growing them to
+            // fill it is free — and the horizontal geometry is untouched.
+            // (Squaring them off needs a real layout change to that overlay;
+            // tracked separately.) See globals.css → Touch targets.
+            className="absolute right-10 top-1/2 -translate-y-1/2 flex items-center justify-center w-8 h-8 min-h-[var(--tap-min)] -mr-1.5 rounded-[var(--radius-sm)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors duration-200"
           >
             <X className="w-4 h-4" />
           </button>
@@ -376,6 +383,7 @@ export function Home() {
           onClick={() => setFiltersOpen((v) => !v)}
           className={cn(
             'absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-0.5 text-xs transition-colors duration-200',
+            'min-h-[var(--tap-min)]',
             filtersOpen || hasActiveFilters
               ? 'text-[var(--color-primary)]'
               : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]',

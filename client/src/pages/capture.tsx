@@ -1508,7 +1508,7 @@ export function Capture() {
             />
           </span>
           <button type="button" aria-label="Discard" onClick={() => { resetDraft(); setPhase('photo'); }}
-            className="min-w-[36px] min-h-[36px] flex items-center justify-center text-[var(--color-text-muted)]">
+            className="min-w-[max(36px,var(--tap-min))] min-h-[max(36px,var(--tap-min))] flex items-center justify-center text-[var(--color-text-muted)]">
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -1714,7 +1714,7 @@ export function Capture() {
                   type="button"
                   aria-label="Close"
                   onClick={() => setIdentifying(false)}
-                  className="min-w-[32px] min-h-[32px] flex items-center justify-center text-[var(--color-text-muted)]"
+                  className="min-w-[max(32px,var(--tap-min))] min-h-[max(32px,var(--tap-min))] flex items-center justify-center text-[var(--color-text-muted)]"
                 >
                   <X className="w-4 h-4" />
                 </button>
@@ -1809,7 +1809,7 @@ export function Capture() {
                           else setPhase('photo');
                         }}
                         className={cn(
-                          'font-mono text-[10px] uppercase tracking-[0.06em] rounded-full px-3 min-h-[32px] border',
+                          'font-mono text-[10px] uppercase tracking-[0.06em] rounded-full px-3 min-h-[max(32px,var(--tap-min))] border',
                           current
                             ? 'border-[var(--color-primary)] text-[var(--color-primary)] font-bold'
                             : 'border-[var(--color-rule)] text-[var(--color-text)]',
@@ -1928,7 +1928,13 @@ function CompletenessPills({ value, onToggle, className }: {
           aria-pressed={value === option}
           onClick={() => onToggle(option)}
           className={cn(
+            // --tap-min-dense, not --tap-min: these two live inside the draft
+            // strip, and step 2 really is exactly one screen tall on a PHONE
+            // (which is coarse too), so a 44px floor would add 24px to the one
+            // row with none to give. 32px still doubles the pill's area and
+            // clears the 24px WCAG floor. See globals.css → Touch targets.
             'font-mono text-[9px] uppercase tracking-[0.06em] px-1.5 py-0.5 rounded-full border',
+            'inline-flex items-center min-h-[var(--tap-min-dense)]',
             value === option
               ? 'bg-[var(--color-text)] text-[var(--color-bg)] border-[var(--color-text)]'
               : 'border-[var(--color-rule)] text-[var(--color-text-muted)]',
@@ -1967,7 +1973,7 @@ function DupeWarning({ dupes, onDismiss }: { dupes: Dupe[]; onDismiss: () => voi
             // noopener because the opened tab must not hold a handle on this
             // one — and min-h because a 20px row is not a target on a tablet.
             onClick={() => window.open(`/item/${d.id}`, '_blank', 'noopener')}
-            className="flex w-full min-h-[36px] items-baseline gap-1 text-left text-sm underline decoration-dotted"
+            className="flex w-full min-h-[max(36px,var(--tap-min))] items-baseline gap-1 text-left text-sm underline decoration-dotted"
           >
             <span className="truncate">{d.name}</span>
             <span className="truncate font-mono text-[10px] text-[var(--color-text-muted)]">
@@ -1980,7 +1986,7 @@ function DupeWarning({ dupes, onDismiss }: { dupes: Dupe[]; onDismiss: () => voi
         </span>
       </span>
       <button type="button" aria-label="Dismiss" onClick={onDismiss}
-        className="min-w-[32px] min-h-[32px] flex items-center justify-center text-[var(--color-text-muted)]">
+        className="min-w-[max(32px,var(--tap-min))] min-h-[max(32px,var(--tap-min))] flex items-center justify-center text-[var(--color-text-muted)]">
         <X className="w-4 h-4" />
       </button>
     </div>
@@ -2466,7 +2472,7 @@ function ManualCreate({
                   type="button"
                   onClick={() => onPickDest(r)}
                   className={cn(
-                    'font-mono text-[10px] uppercase tracking-[0.06em] rounded-full px-3 min-h-[32px] border',
+                    'font-mono text-[10px] uppercase tracking-[0.06em] rounded-full px-3 min-h-[max(32px,var(--tap-min))] border',
                     dest?.id === r.id
                       ? 'border-[var(--color-primary)] text-[var(--color-primary)] font-bold'
                       : 'border-[var(--color-rule)] text-[var(--color-text)]',

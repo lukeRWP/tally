@@ -18,7 +18,9 @@ export function Header() {
         <button
           type="button"
           aria-label="Search"
-          className="p-2"
+          // 36px square from p-2 + a 20px icon at a desk; a finger target on
+          // touch (globals.css → Touch targets). Both axes: this is an icon.
+          className="p-2 inline-flex items-center justify-center min-h-[var(--tap-min)] min-w-[var(--tap-min)]"
           onClick={() => navigate('/search')}
         >
           <Search className="w-5 h-5 text-[var(--color-text-secondary)]" />
@@ -30,7 +32,7 @@ export function Header() {
         <button
           type="button"
           aria-label="Scan a label"
-          className="p-2"
+          className="p-2 inline-flex items-center justify-center min-h-[var(--tap-min)] min-w-[var(--tap-min)]"
           onClick={() => navigate('/scan')}
         >
           <ScanLine className="w-5 h-5 text-[var(--color-text-secondary)]" />

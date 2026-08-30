@@ -23,7 +23,10 @@ export const Select = React.forwardRef<HTMLSelectElement, SelectProps>(
         <select
           ref={ref}
           className={cn(
+            // Same floor as Input, for the same reason — the two are meant to
+            // line up in a form row.
             'w-full appearance-none bg-[var(--color-card)] border border-[var(--color-border)] rounded-[var(--radius-md)] pl-3 pr-9 py-2 text-sm text-[var(--color-text)]',
+            'min-h-[var(--tap-min)]',
             'focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] focus:ring-offset-1',
             'disabled:opacity-50 disabled:cursor-not-allowed',
             className

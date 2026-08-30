@@ -34,6 +34,51 @@
   --color-purple-bg: oklch(0.6 0.17 300 / 0.08);
 }
 
+/* ── Touch targets ───────────────────────────────────────────────────────
+ *
+ * The app has always known which pointer it is being driven by — in JS.
+ * use-coarse-pointer.ts forks the capture flow, the scanner and the picker's
+ * j/k ring on `(pointer: coarse)`. What it never had was a CSS counterpart,
+ * so every CONTROL kept its desk geometry on a tablet: the button primitive's
+ * `sm` is 32px, `md` 36px, an Input 38px, and no coarse flow asks for `lg`.
+ * Nothing a finger touches reached the ~44px comfortable target — including
+ * the destination chip in capture step 3, where one tap files the item.
+ *
+ * These two tokens are that counterpart, and they use the SAME media query
+ * the hook does so the two cannot disagree. They are a FLOOR, not a size:
+ *
+ *   fine pointer   0px  — every control's declared height is the used height,
+ *                         so a mouse desk renders exactly as it did before.
+ *   coarse pointer 44px — the floor lifts, and the control grows to meet it.
+ *
+ * Call sites express it as `min-h-[max(<desk px>,var(--tap-min))]` (or
+ * `h-[max(…)]` where a fixed height is already declared), which keeps each
+ * control's own desk geometry readable AT the call site instead of hiding it
+ * inside a token nobody can read back — and means a `max()` can never make a
+ * control smaller than it is today, in either mode.
+ *
+ * --tap-min-dense is the same idea for the handful of chips that live inside
+ * a strip which must stay one screen tall on a PHONE (capture's draft strip,
+ * which is coarse too). 32px doubles a 20px pill's area and clears the
+ * 24px WCAG 2.2 AA floor without adding 24px to a row that has none to give.
+ * Reaching for it is a layout decision, not a shortcut: everything on a
+ * primary flow gets --tap-min.
+ *
+ * Deliberately NOT a Tailwind `pointer-coarse:` variant: that emits no CSS in
+ * this project's build (verified — see use-layout-mode.ts's own note).
+ */
+:root {
+  --tap-min: 0px;
+  --tap-min-dense: 0px;
+}
+
+@media (pointer: coarse) {
+  :root {
+    --tap-min: 2.75rem;
+    --tap-min-dense: 2rem;
+  }
+}
+
 /* Dark mode */
 .dark {
   --color-bg: oklch(0.145 0 0);
@@ -232,6 +277,22 @@ html {
    but never `display`, and this rule is unlayered (it follows
    `@import "tailwindcss"`), so it outranks every layered utility. */
 #qr-shaded-region > div { display: none; }
+
+/* ── Toast actions ───────────────────────────────────────────────────────
+ *
+ * The one control the tap floor cannot reach through a prop: sonner renders
+ * a toast's action button itself, at its own 24px height. That button is
+ * "Undo" — the whole safety net behind /move's landings and capture's
+ * commits, and it expires on a timer, so it is the least forgiving target in
+ * the app to have to hit twice. Unlayered, so it outranks sonner's own rule;
+ * `--tap-min` is 0 at a desk, which leaves sonner's height untouched there.
+ */
+@media (pointer: coarse) {
+  [data-sonner-toast] [data-button] {
+    min-height: var(--tap-min);
+    padding-inline: 0.75rem;
+  }
+}
 
 /*
  * Tailwind v4's preflight sets `cursor: default` on buttons, reversing v3.

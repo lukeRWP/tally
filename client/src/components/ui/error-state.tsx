@@ -48,7 +48,7 @@ export function SectionError({
       <button
         type="button"
         onClick={onRetry}
-        className="-my-1 px-1 min-h-[28px] inline-flex items-center font-mono text-[11px] uppercase tracking-[0.06em] font-bold text-[var(--color-primary)] hover:opacity-80"
+        className="-my-1 px-1 min-h-[max(28px,var(--tap-min))] inline-flex items-center font-mono text-[11px] uppercase tracking-[0.06em] font-bold text-[var(--color-primary)] hover:opacity-80"
       >
         Retry
       </button>

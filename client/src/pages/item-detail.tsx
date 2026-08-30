@@ -265,7 +265,7 @@ function Section({
           type="button"
           onClick={() => setOpen((v) => !v)}
           aria-expanded={open}
-          className="flex items-center gap-1.5 min-h-[32px] -my-1 truncate font-mono uppercase tracking-[0.1em]"
+          className="flex items-center gap-1.5 min-h-[max(32px,var(--tap-min))] -my-1 truncate font-mono uppercase tracking-[0.1em]"
         >
           <ChevronRight className={cn('w-3 h-3 shrink-0 transition-transform', open && 'rotate-90')} />
           <span className="truncate">{title}</span>
@@ -278,7 +278,7 @@ function Section({
           <button
             type="button"
             onClick={(e) => { e.stopPropagation(); onAction(); }}
-            className="shrink-0 -my-1 px-1 min-h-[28px] inline-flex items-center font-bold text-[var(--color-primary)] hover:opacity-80"
+            className="shrink-0 -my-1 px-1 min-h-[max(28px,var(--tap-min))] inline-flex items-center font-bold text-[var(--color-primary)] hover:opacity-80"
           >
             {action}
           </button>
@@ -587,7 +587,7 @@ export function ItemDetail() {
                 onError: (e: Error) => toast.error(e.message || 'Could not rename it'),
               },
             )}
-            className="flex items-start gap-1.5 text-left min-h-[32px] font-mono text-[10px] uppercase tracking-[0.06em] text-[var(--color-primary)] disabled:opacity-45"
+            className="flex items-start gap-1.5 text-left min-h-[max(32px,var(--tap-min))] font-mono text-[10px] uppercase tracking-[0.06em] text-[var(--color-primary)] disabled:opacity-45"
           >
             <Scissors className="w-3.5 h-3.5 shrink-0 mt-[1px]" />
             <span className="min-w-0">Shorten to “{item.suggestedName}”</span>
@@ -688,7 +688,7 @@ export function ItemDetail() {
                 onError: (e: Error) => toast.error(e.message || 'Could not rename it'),
               },
             )}
-            className="flex items-start gap-1.5 text-left min-h-[32px] font-mono text-[10px] uppercase tracking-[0.06em] text-[var(--color-primary)] disabled:opacity-45"
+            className="flex items-start gap-1.5 text-left min-h-[max(32px,var(--tap-min))] font-mono text-[10px] uppercase tracking-[0.06em] text-[var(--color-primary)] disabled:opacity-45"
           >
             <Scissors className="w-3.5 h-3.5 shrink-0 mt-[1px]" />
             <span className="min-w-0">Shorten to “{item.suggestedName}”</span>
@@ -983,7 +983,7 @@ export function ItemDetail() {
                       href={safeExternalUrl(link.url)}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1 border border-[var(--color-rule)] rounded-[var(--radius-sm)] px-2 min-h-[28px] font-mono text-[10px] uppercase tracking-[0.06em] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)]"
+                      className="inline-flex items-center gap-1 border border-[var(--color-rule)] rounded-[var(--radius-sm)] px-2 min-h-[max(28px,var(--tap-min))] font-mono text-[10px] uppercase tracking-[0.06em] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)]"
                     >
                       <span className="truncate max-w-[110px]">{link.retailer}</span>
                       {link.price != null && <span>${link.price.toFixed(2)}</span>}

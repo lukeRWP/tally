@@ -204,7 +204,7 @@ export function TagManager({ propertyId }: TagManagerProps) {
                       size="sm"
                       onClick={() => confirmDelete(tag)}
                       disabled={deleteTag.isPending}
-                      className="h-7 text-xs px-2.5"
+                      className="h-[max(1.75rem,var(--tap-min))] text-xs px-2.5"
                     >
                       Delete
                     </Button>
@@ -213,7 +213,7 @@ export function TagManager({ propertyId }: TagManagerProps) {
                       variant="outline"
                       size="sm"
                       onClick={() => setDeletingId(null)}
-                      className="h-7 text-xs px-2.5"
+                      className="h-[max(1.75rem,var(--tap-min))] text-xs px-2.5"
                     >
                       Cancel
                     </Button>
