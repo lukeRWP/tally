@@ -14,6 +14,36 @@ on:
   schedule:
     - cron: '17 4 * * 1'   # Mondays 04:17 UTC
 
+env:
+  # Genuine Trivy environment variables (trivy.dev/docs/configuration): every
+  # trivy invocation in the job picks these up, including the ones inside
+  # trivy-action's composite steps.
+  #
+  # The two scans share one cache directory and NEITHER of them downloads
+  # anything. The ~110 MB DB and the ~235 KiB misconfig checks bundle are each
+  # pulled exactly once, in the single retried step below, so a network blip
+  # during a download can no longer redden a security gate for a reason that has
+  # nothing to do with security. What that costs is Trivy's own staleness
+  # handling — and for both artifacts Trivy's handling is silent: a stale DB
+  # scans clean, and a missing checks bundle logs one ERROR line and scans on
+  # with the narrower checks compiled into the binary, exit 0 (#334). That is
+  # why the freshness assertion below is not optional — see
+  # .github/scripts/trivy-cache-fresh.py.
+  TRIVY_CACHE_DIR: ${{ github.workspace }}/.cache/trivy
+  TRIVY_SKIP_DB_UPDATE: 'true'
+  TRIVY_SKIP_CHECK_UPDATE: 'true'
+
+  # Ours. Deliberately NOT TRIVY_-prefixed: that namespace belongs to Trivy's
+  # flags, and TRIVY_VERSION in particular collides with `--version`.
+  #
+  # The version is trivy-action v0.36.0's own default, pinned here so the cache
+  # key can name the binary that produced the DB — the DB carries a schema
+  # version tied to the reader. Bumping the CLI (prevailing-winds#315 P1 wants
+  # v0.71.2) is a deliberate act that invalidates the cache, as it should.
+  SCAN_TRIVY_VERSION: v0.70.0
+  DB_MAX_AGE_HOURS: '48'
+  CHECKS_MAX_AGE_HOURS: '48'
+
 jobs:
   # Distinct check context: gitleaks also reports a job named "scan" — the
   # duplicate context defeated a required trivy gate (#208). Required on master.
@@ -25,6 +55,156 @@ jobs:
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v4.x
 
+      # Installed here rather than by trivy-action (which is told to skip its
+      # own setup below) because a trivy binary has to exist BEFORE the scans:
+      # the DB pull and the freshness assertion both need one.
+      - name: Install Trivy
+        uses: aquasecurity/setup-trivy@3fb12ec12f41e471780db15c232d5dd185dcb514 # v0.2.6
+        with:
+          version: ${{ env.SCAN_TRIVY_VERSION }}
+          cache: true
+
+      - name: Cache key date (UTC)
+        id: dbkey
+        run: echo "date=$(date -u +'%Y-%m-%d')" >> "$GITHUB_OUTPUT"
+
+      # Date-keyed. Upstream rebuilds trivy-db every few hours and Trivy's own
+      # metadata marks a DB due for refresh 24h after it was built, so one key
+      # per UTC day is the coarsest key that still tracks the data.
+      #
+      # restore-keys deliberately lets an older day through. A near-miss cache
+      # is still a useful head start, and letting it through is safe *here*
+      # precisely because the next step decides out loud whether it is fresh
+      # enough to scan against, instead of the cache making that call silently.
+      #
+      # Only db/ and policy/ are cached — the DB and the misconfig check bundle,
+      # both of which are upstream artifacts. Trivy's scan-derived state under
+      # the same directory is left out on purpose: caching analysis results
+      # across commits is how a cache starts answering questions about the code
+      # rather than about the vulnerability data.
+      #
+      # restore/save are split (rather than the combined actions/cache) so the
+      # save can be made conditional on the assertion having passed. The
+      # combined action's post-job save fires even when the job failed, which
+      # would publish an unverified DB under today's key for every later run in
+      # the repo to hit.
+      - name: Restore Trivy DB cache
+        id: db-cache
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            ${{ env.TRIVY_CACHE_DIR }}/db
+            ${{ env.TRIVY_CACHE_DIR }}/policy
+          key: trivy-db-${{ env.SCAN_TRIVY_VERSION }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.dbkey.outputs.date }}
+          restore-keys: |
+            trivy-db-${{ env.SCAN_TRIVY_VERSION }}-${{ runner.os }}-${{ runner.arch }}-
+
+      # The ONLY step in this workflow that retries anything. It downloads scan
+      # data and evaluates nothing, so a retry here cannot convert a real
+      # finding into a pass. The scans are never retried.
+      - name: Ensure a fresh vulnerability DB and checks bundle (retry downloads only)
+        env:
+          # The one step allowed to download either — the whole point of the
+          # job-level skips is to funnel every fetch through here.
+          TRIVY_SKIP_DB_UPDATE: 'false'
+          TRIVY_SKIP_CHECK_UPDATE: 'false'
+          CACHE_HIT: ${{ steps.db-cache.outputs.cache-hit }}
+          CACHE_MATCHED_KEY: ${{ steps.db-cache.outputs.cache-matched-key }}
+        run: |
+          set -uo pipefail
+          echo "Cache: exact-hit=${CACHE_HIT:-false} matched-key=${CACHE_MATCHED_KEY:-<none>}"
+
+          # One download, three attempts, 10s then 20s of backoff. $1 is the
+          # subject trivy-cache-fresh.py knows it by, $2 the cache subdirectory
+          # holding it, and the rest is the trivy command that fetches it.
+          #
+          # Success is decided by re-running the freshness CHECK, never by
+          # trivy's exit code. A checks-bundle fetch that fails writes no
+          # policy/ directory at all and still exits 0 (#334) — trusting the
+          # exit code here would report success for the exact failure this step
+          # exists to catch. For the DB the check is merely the stricter of the
+          # two, which is why both go through the same loop.
+          fetch() {
+            local subject="$1" dir="$2"
+            shift 2
+            # Delete first, so this really is a live pull. Trivy decides whether
+            # to download by its own staleness rules, which are not the question
+            # this workflow is asking: hand it data it considers current but we
+            # have judged unusable and the fetch is a no-op that exits 0,
+            # leaving the assertion below to fail a job that no retry can
+            # rescue. Removing the directory takes that decision away from it.
+            rm -rf "${TRIVY_CACHE_DIR:?TRIVY_CACHE_DIR must be set}/${dir}"
+            for attempt in 1 2 3; do
+              if [ "$attempt" -gt 1 ]; then
+                backoff=$(( (attempt - 1) * 10 ))
+                echo "Retrying in ${backoff}s."
+                sleep "$backoff"
+              fi
+              # `|| true` because the runner's default shell is `bash -e` and a
+              # failed download is this loop's business, not a reason to abandon
+              # the step.
+              "$@" || true
+              if python3 .github/scripts/trivy-cache-fresh.py "$subject"; then
+                echo "Trivy '${subject}' data downloaded on attempt ${attempt}."
+                return 0
+              fi
+              echo "::warning::Trivy '${subject}' download failed (attempt ${attempt}/3)."
+            done
+            echo "::error::Trivy '${subject}' download failed 3 times. This is a download, not a finding — re-run the job."
+            return 1
+          }
+
+          status=0
+
+          if python3 .github/scripts/trivy-cache-fresh.py db; then
+            echo "The cache served a usable DB. No download needed."
+          else
+            echo "Falling back to a live DB pull."
+            fetch db db trivy fs --download-db-only --no-progress || status=1
+          fi
+
+          # v0.70.0 has no --download-checks-only, so the bundle is pulled by
+          # running a misconfig scan over an empty directory and keeping the
+          # cache it leaves behind. --skip-db-update is passed explicitly (a
+          # flag outranks the env var above) so this throwaway scan cannot
+          # decide to re-pull the 110 MB database on its own.
+          if python3 .github/scripts/trivy-cache-fresh.py checks; then
+            echo "The cache served a usable checks bundle. No download needed."
+          else
+            echo "Falling back to a live checks-bundle pull."
+            empty="$(mktemp -d)"
+            fetch checks policy \
+              trivy fs --scanners misconfig --skip-db-update --no-progress "$empty" || status=1
+          fi
+
+          exit "$status"
+
+      # THE MASKING GUARD. Nothing above is taken on trust: not the cache hit,
+      # not the downloads' exit codes. If this cannot prove that BOTH the
+      # database and the misconfig checks the scans are about to read are
+      # present and recent, the job stops here and no scan runs at all.
+      #
+      # A red build is recoverable. A green scan against a stale DB is a gate
+      # that quietly stopped covering everything disclosed since that DB was
+      # built; a green scan against the embedded checks is a gate that quietly
+      # stopped covering whatever the published bundle added. Nobody finds out
+      # about either from a green tick.
+      - name: Assert the DB and checks the scans will use are fresh
+        id: cache-assert
+        run: |
+          # Both are checked before deciding, so one run's log names everything
+          # that is wrong rather than only the first thing.
+          usable=0
+          python3 .github/scripts/trivy-cache-fresh.py db || usable=1
+          python3 .github/scripts/trivy-cache-fresh.py checks || usable=1
+          if [ "$usable" -ne 0 ]; then
+            echo "::error::Refusing to scan: the vulnerability DB or the misconfig checks bundle could not be shown to be fresh (see above). A scan against unverified data would report a false all-clear."
+            exit 1
+          fi
+          # For the record, in the log, on every run: the DB timestamps and the
+          # checks-bundle digest the scans below actually ran against.
+          trivy --version
+
       # GATE: this is the pass/fail check. Use table output, which honors the
       # `severity` filter AND `.trivyignore` correctly. (The sarif format path
       # in trivy-action builds "all severities" and trips exit-code regardless
@@ -32,6 +212,13 @@ jobs:
       - name: Trivy scan (gate)
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
+          # Both disabled in favour of the explicit steps above. The action's
+          # built-in cache is an actions/cache with `restore-keys: cache-trivy-`
+          # and no consumer-side check, so it can hand any DB still inside the
+          # 7-day cache lifetime to a scan that will not comment on its age.
+          skip-setup-trivy: true
+          cache: false
+          cache-dir: ${{ env.TRIVY_CACHE_DIR }}
           scan-type: fs
           scan-ref: .
           scanners: vuln,secret,misconfig   # CVEs + leaked secrets + IaC/Dockerfile misconfigs
@@ -45,10 +232,18 @@ jobs:
 
       # REPORT: non-gating SARIF for the Code Scanning tab (sarif's all-severity
       # behavior is fine here since exit-code is 0).
+      #
+      # Runs whatever the gate concluded (a report is most wanted when the gate
+      # is red) but NOT when the freshness assertion failed: publishing a stale
+      # scan to the Code Scanning tab is the same false all-clear, just filed
+      # somewhere it will be believed for longer.
       - name: Trivy scan (SARIF report)
-        if: always()
+        if: ${{ !cancelled() && steps.cache-assert.outcome == 'success' }}
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
+          skip-setup-trivy: true
+          cache: false
+          cache-dir: ${{ env.TRIVY_CACHE_DIR }}
           scan-type: fs
           scan-ref: .
           scanners: vuln,secret,misconfig
@@ -59,8 +254,24 @@ jobs:
           trivyignores: .trivyignore
 
       - name: Upload SARIF to Code Scanning
-        if: always()
+        if: ${{ !cancelled() && steps.cache-assert.outcome == 'success' }}
         uses: github/codeql-action/upload-sarif@52485aec7be33610227643b0fe83936b8b5f061a # v3
         with:
           sarif_file: trivy-results.sarif
           category: trivy
+
+      # Last, so the misconfig check bundle the scans pull is saved alongside
+      # the DB. Skipped on an exact-key hit (nothing new to store) and whenever
+      # the DB was not proven fresh (never publish what was refused).
+      - name: Save Trivy DB cache
+        if: ${{ !cancelled() && steps.cache-assert.outcome == 'success' && steps.db-cache.outputs.cache-hit != 'true' }}
+        # A save that fails costs the next run a cold pull and nothing else. It
+        # must not redden a security gate, and it cannot hide anything: the
+        # freshness assertion is re-derived from the metadata on every run.
+        continue-on-error: true
+        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            ${{ env.TRIVY_CACHE_DIR }}/db
+            ${{ env.TRIVY_CACHE_DIR }}/policy
+          key: trivy-db-${{ env.SCAN_TRIVY_VERSION }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.dbkey.outputs.date }}
