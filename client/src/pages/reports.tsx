@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { useNavigate } from 'react-router';
 import {
   FileText,
   DollarSign,
@@ -12,13 +13,16 @@ import {
 import { Button } from '@/components/ui/button';
 import { TitleBar } from '@/components/ui/title-bar';
 import { ColHead } from '@/components/ui/col-head';
+import { Skeleton } from '@/components/ui/skeleton';
 import { useLayoutMode } from '@/hooks/use-layout-mode';
 import { PropertyChips } from '@/components/inventory/property-chips';
 import { useProperties } from '@/hooks/use-inventory';
 import { usePropertyTags } from '@/hooks/use-tags';
 import {
   REPORT_GROUP_BY,
+  summariseReport,
   useGenerateReport,
+  useReportPreview,
   type ReportGroupBy,
   type ReportTypeId,
 } from '@/hooks/use-reports';
@@ -160,6 +164,13 @@ function ReportOptionsPanel({
   const [groupBy, setGroupBy] = React.useState<ReportGroupBy>('area');
   const [tagIds, setTagIds] = React.useState<number[]>([]);
 
+  // Only the OPEN panel is mounted, so this is one request for the one report
+  // being considered — not six on page load.
+  const preview = useReportPreview(report.id, propertyId, {
+    tagIds: report.hasTagSelect ? tagIds : undefined,
+  });
+  const summary = preview.data ? summariseReport(report.id, preview.data.data) : null;
+
   return (
     // No rule along the top: the row this panel hangs off already carries one,
     // and a second would double up inside a single cell.
@@ -207,20 +218,33 @@ function ReportOptionsPanel({
         </div>
       )}
 
-      <Button
-        onClick={() => onGenerate(format, report.hasGroupBy ? groupBy : undefined, report.hasTagSelect ? tagIds : undefined)}
-        disabled={isPending}
-        className="w-full sm:w-auto sm:self-start"
-      >
-        {isPending ? (
-          <>
-            <Loader2 className="w-4 h-4 animate-spin" />
-            Generating...
-          </>
-        ) : (
-          'Generate'
-        )}
-      </Button>
+      {/* What you are about to generate, beside the button that generates it.
+          The preview never gates Generate: it is an aid, so a preview that
+          fails to load says so and gets out of the way (#283). */}
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+        <Button
+          onClick={() => onGenerate(format, report.hasGroupBy ? groupBy : undefined, report.hasTagSelect ? tagIds : undefined)}
+          disabled={isPending}
+          className="w-full sm:w-auto"
+        >
+          {isPending ? (
+            <>
+              <Loader2 className="w-4 h-4 animate-spin" />
+              Generating...
+            </>
+          ) : (
+            'Generate'
+          )}
+        </Button>
+        <span
+          data-report-summary=""
+          className="font-mono text-[11px] uppercase tracking-[0.06em] text-[var(--color-text-muted)]"
+        >
+          {preview.isPending && 'Counting…'}
+          {preview.isError && 'Preview unavailable'}
+          {summary}
+        </span>
+      </div>
     </div>
   );
 }
@@ -228,7 +252,8 @@ function ReportOptionsPanel({
 export function Reports() {
   // Above every early return — hooks must run on each render.
   const wide = useLayoutMode() === 'sidebar';
-  const { data: properties = [] } = useProperties();
+  const navigate = useNavigate();
+  const { data: properties = [], isLoading: propertiesLoading } = useProperties();
 
   const [propertyId, setPropertyId] = React.useState<number>(0);
   const [expandedReport, setExpandedReport] = React.useState<ReportTypeId | null>(null);
@@ -263,6 +288,9 @@ export function Reports() {
         format,
         groupBy,
         tagIds,
+        // Names the file only — see reportFilename. Two properties used to
+        // produce byte-different PDFs called exactly the same thing.
+        propertyName: properties.find((p) => p.id === propertyId)?.name,
       },
       {
         onSuccess: () => toast.success(`${report.label} downloaded`),
@@ -286,12 +314,32 @@ export function Reports() {
       <h1 className="animate-fade-up"><TitleBar>Reports</TitleBar></h1>
 
       <PropertyChips properties={properties} value={propertyId} onChange={setPropertyId} />
-      {properties.length === 0 && (
-        <p className="font-mono text-[11px] uppercase tracking-[0.06em] text-[var(--color-text-muted)]">
-          No properties available
-        </p>
+
+      {/* No property means no report can be run at all, so the six rows are
+          six dead ends: expanding any of them said "Pick a property above" and
+          there was nothing above, and no route out (#283). Every other empty
+          state in this cluster names the missing link in the chain and offers
+          the next action — home.tsx's EmptyHouse, areas.tsx's "Add a property".
+          Guarded on isLoading for the reason home.tsx spells out: an empty
+          list that has not arrived yet is not an empty house. */}
+      {propertiesLoading && <Skeleton className="h-40 w-full" />}
+
+      {!propertiesLoading && properties.length === 0 && (
+        <section className="flex flex-col items-center gap-3 py-12 text-center animate-fade-up">
+          <p className="font-mono text-[11px] uppercase tracking-[0.1em] text-[var(--color-text-muted)]">
+            No property yet
+          </p>
+          <p className="max-w-xs text-sm text-[var(--color-text-secondary)]">
+            Every report covers one property. Start with the building — areas,
+            bins and the things in them hang off it.
+          </p>
+          <Button size="sm" onClick={() => navigate('/areas')}>
+            Set up a place
+          </Button>
+        </section>
       )}
 
+      {!propertiesLoading && properties.length > 0 && (
       <section className="flex flex-col">
         <ColHead>Reports · {REPORT_TYPES.length}</ColHead>
 
@@ -381,6 +429,7 @@ export function Reports() {
         ))}
         </div>
       </section>
+      )}
     </div>
   );
 }

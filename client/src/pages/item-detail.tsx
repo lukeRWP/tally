@@ -316,6 +316,7 @@ function LedgerRow({
   onEdit,
   wrap,
   inherited,
+  pending,
 }: {
   label: string;
   value?: React.ReactNode;
@@ -328,10 +329,35 @@ function LedgerRow({
    * marked: the ledger must never claim the user told it something they didn't.
    */
   inherited?: string;
+  /**
+   * This row's own query has not settled, so nothing here is known yet — not
+   * the value, and for a user-named date not even the label.
+   *
+   * The rows fed by the item's SECONDARY queries used to render their
+   * fallbacks meanwhile: a row labelled "Warranty" offering "+ add" on an item
+   * that already has a "Service due" date, and "Lent to · Someone", a
+   * placeholder that reads exactly like a real answer. Both were clickable in
+   * that window, so "+ add" opened the add-date dialog for an item that
+   * already had one — a mis-click hazard, not just a flicker (#283). Measured
+   * at 125ms whenever /api/items answers faster than /api/dates.
+   */
+  pending?: boolean;
 }) {
   const filled = value !== null && value !== undefined && value !== '';
   // min-h on the ROW, not on the button — otherwise an empty row stands taller
   // than a filled one and the rule stops being even.
+  if (pending) {
+    // The row keeps its slot so the ledger's height does not jump when the
+    // answer lands (the constraint #238 protects on the search lists), but it
+    // states no fact it does not have and offers no control to mis-click.
+    return (
+      <div className="flex items-center gap-3 min-h-[44px] border-b border-[var(--color-rule)] last:border-b-0">
+        <Skeleton className="h-3 w-20" />
+        <span className="flex-1" />
+        <Skeleton className="h-3 w-24" />
+      </div>
+    );
+  }
   return (
     <div className="flex items-center gap-3 min-h-[44px] border-b border-[var(--color-rule)] last:border-b-0">
       {/* The label is user-controlled for dates, so it must be able to give way
@@ -843,14 +869,22 @@ export function ItemDetail() {
         )}
 
         {/* Dates are user-named, so the row shows the soonest one and the
-            section below lists the rest when there is more than one. */}
+            section below lists the rest when there is more than one. Both this
+            row and the one below are fed by a query of their own, and neither
+            may state a fallback while that query is still in flight — see
+            LedgerRow's `pending`. */}
         <LedgerRow
+          pending={itemDates === undefined}
           label={itemDates?.[0]?.dateType || 'Warranty'}
           value={itemDates?.[0] ? new Date(itemDates[0].dateValue).toLocaleDateString() : null}
           onAdd={() => setDateFormOpen(true)}
         />
 
         <LedgerRow
+          // The item itself says it is lent; only the loan says to WHOM. Until
+          // the loan lands, "Someone" is a placeholder wearing the clothes of
+          // an answer, so the row waits instead.
+          pending={item.status === 'lent' && lendingHistory === undefined}
           label="Lent to"
           value={item.status === 'lent' ? (openLoan?.lentTo ?? 'Someone') : null}
           onEdit={() => setLendFormOpen(true)}

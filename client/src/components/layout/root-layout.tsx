@@ -4,7 +4,8 @@ import { Home, Search, Bell, Settings, Printer, DoorOpen, BarChart2, Plus, ScanL
 import { useAuth } from '@/hooks/use-auth';
 import { useAuthStore } from '@/store/auth-store';
 import { useUnreadCount } from '@/hooks/use-notifications';
-import { useArea, useContainer } from '@/hooks/use-inventory';
+import { useArea, useContainer, useProperties } from '@/hooks/use-inventory';
+import { usePrintAttention } from '@/hooks/use-print';
 import { Header } from './header';
 import { BottomNav, isNavActive } from './bottom-nav';
 import { CarryBanner } from '@/components/inventory/carry-banner';
@@ -81,6 +82,23 @@ const navItems = [
   { path: '/settings', icon: Settings, label: 'Settings' },
 ];
 
+/**
+ * The rail's one signal that a destination wants you. Kept as one component so
+ * a second global state cannot be added with markup that drifts from the first
+ * — which is how printing ended up with no badge at all (#283).
+ *
+ * The count is aria-hidden and restated in full for a screen reader: "Print 2"
+ * says nothing about what the 2 is.
+ */
+function NavBadge({ count, label }: { count: number; label: string }) {
+  return (
+    <span className="min-w-[18px] h-[18px] px-1 rounded-full bg-[var(--color-red)] text-white text-[10px] font-bold flex items-center justify-center leading-none">
+      <span aria-hidden="true">{count > 99 ? '99+' : count}</span>
+      <span className="sr-only">{label}</span>
+    </span>
+  );
+}
+
 function Sidebar() {
   const location = useLocation();
   // Scan is dropped where there is no camera to scan with. Asked of the device
@@ -91,6 +109,10 @@ function Sidebar() {
   const { user } = useAuthStore();
   const { data: unreadCount } = useUnreadCount();
   const unread = typeof unreadCount === 'number' ? unreadCount : 0;
+  // Print jobs are property-scoped and the rail has no property context, so it
+  // watches the first one — the same default /reports and /settings land on.
+  const { data: properties } = useProperties();
+  const printAttention = usePrintAttention(properties?.[0]?.id);
   const routeSeed = useRouteSeed(location.pathname);
   const [createContainerOpen, setCreateContainerOpen] = useState(false);
 
@@ -164,9 +186,10 @@ function Sidebar() {
               <Icon className="w-5 h-5 shrink-0" />
               <span className="flex-1 text-left">{item.label}</span>
               {item.path === '/notifications' && unread > 0 && (
-                <span className="min-w-[18px] h-[18px] px-1 rounded-full bg-[var(--color-red)] text-white text-[10px] font-bold flex items-center justify-center leading-none">
-                  {unread > 99 ? '99+' : unread}
-                </span>
+                <NavBadge count={unread} label={`${unread} unread`} />
+              )}
+              {item.path === '/print' && printAttention > 0 && (
+                <NavBadge count={printAttention} label={`${printAttention} needing attention`} />
               )}
             </button>
           );

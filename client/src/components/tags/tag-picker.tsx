@@ -123,6 +123,8 @@ export function TagPicker({ entityType, entityId, propertyId, batchMode }: TagPi
     );
   }
 
+  const busy = !!batchMode?.busy;
+
   return (
     <div className="flex flex-wrap items-center gap-1.5">
       {/* Applied tags — meaningless in batch mode: there is no single entity
@@ -136,12 +138,36 @@ export function TagPicker({ entityType, entityId, propertyId, batchMode }: TagPi
         />
       ))}
 
+      {/* Batch mode is a dialog whose ONLY job is picking a tag, so the choice
+          is laid out flat rather than folded behind a disclosure: the dialog
+          had room for the whole list and spent a click hiding it (#283).
+          Outside batch mode the picker sits inline on a detail page beside the
+          tags already applied, where a dropdown is the right shape. */}
+      {batchMode && availableTags.map((tag) => (
+        <button
+          key={tag.id}
+          type="button"
+          disabled={busy}
+          onClick={() => handleAddTag(tag.id)}
+          className="inline-flex items-center gap-1.5 rounded-full border border-[var(--color-rule)] px-3 min-h-[max(32px,var(--tap-min))] font-mono text-[10px] uppercase tracking-[0.08em] text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--color-elevated)] disabled:opacity-50"
+        >
+          {/* The tag's own colour is identity, not state — a user hex can't be
+              trusted to stay legible as a fill on either ground. */}
+          <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: tag.color }} aria-hidden="true" />
+          {tag.name}
+        </button>
+      ))}
+      {batchMode && availableTags.length === 0 && (
+        <p className="text-xs text-[var(--color-text-muted)]">No tags in this property yet</p>
+      )}
+
       {/* Add tag dropdown trigger */}
       <div className="relative" ref={dropdownRef}>
         <Button
           type="button"
           variant="outline"
           size="sm"
+          disabled={busy}
           onClick={() => setDropdownOpen((v) => !v)}
           // This height OVERRIDES the sm variant's (tailwind-merge keeps the
           // last `h-*`), so it has to carry the tap floor itself or the one
@@ -149,13 +175,15 @@ export function TagPicker({ entityType, entityId, propertyId, batchMode }: TagPi
           className="h-[max(1.5rem,var(--tap-min))] px-2 text-xs gap-1"
         >
           <Plus className="w-3 h-3" />
-          Add tag
+          {batchMode ? 'New tag' : 'Add tag'}
           <ChevronDown className={cn('w-3 h-3 transition-transform duration-200', dropdownOpen && 'rotate-180')} />
         </Button>
 
         {dropdownOpen && (
           <div className="absolute left-0 top-full mt-1 z-50 min-w-[220px] bg-[var(--color-card)] border border-[var(--color-border)] rounded-[var(--radius-lg)] shadow-[0_4px_16px_rgba(0,0,0,0.08)] p-2 flex flex-col gap-1 animate-scale-in">
-            {availableTags.length > 0 ? (
+            {/* In batch mode the list is already on the page above; the
+                dropdown is only the quick-create form. */}
+            {batchMode ? null : availableTags.length > 0 ? (
               <>
                 <p className="text-[10px] uppercase tracking-wide text-[var(--color-text-muted)] px-1 mb-0.5 font-medium">
                   Apply tag
@@ -214,7 +242,7 @@ export function TagPicker({ entityType, entityId, propertyId, batchMode }: TagPi
                 type="button"
                 size="sm"
                 onClick={handleCreateTag}
-                disabled={!newTagName.trim() || createTag.isPending}
+                disabled={busy || !newTagName.trim() || createTag.isPending}
                 className="h-[max(1.75rem,var(--tap-min))] text-xs w-full"
               >
                 <Plus className="w-3 h-3" />

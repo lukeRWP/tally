@@ -129,7 +129,12 @@ export function LabelPrintDialog({ entities, entityType, isOpen, onOpenChange, p
 
   return (
     <Dialog open={isOpen} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-sm w-full mx-4">
+      {/* max-w-sm is a phone measure. At 1440 it was 384px — 27% of the
+          viewport — holding a to-scale label preview and nine 32px controls
+          while the screen it was called from sat empty around it (#283). The
+          phone width is kept below sm; everything wider gets the primitive's
+          own 512. */}
+      <DialogContent className="max-w-sm sm:max-w-lg w-full mx-4">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Printer className="w-4 h-4" />

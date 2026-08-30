@@ -37,6 +37,8 @@ vi.mock('@/hooks/use-inventory', () => ({
   useProperties: () => ({ data: [] }),
   useCreateContainer: () => ({ mutateAsync: vi.fn(), isPending: false }),
 }));
+// The rail carries a print badge (#283), which polls two queries.
+vi.mock('@/hooks/use-print', () => ({ usePrintAttention: () => 0 }));
 vi.mock('@/hooks/use-layout-mode', () => ({ useLayoutMode: () => 'sidebar' }));
 vi.mock('@/hooks/use-has-camera', () => ({ useHasCamera: () => true }));
 vi.mock('@/hooks/use-scroll-restoration', () => ({ useScrollRestoration: () => {} }));
