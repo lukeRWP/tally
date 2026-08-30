@@ -510,7 +510,19 @@ export function ContainerDetail() {
     + (bulkDeleteCascades ? ' Nested bins bring their contents with them.' : '');
 
   return (
-    <div className="flex flex-col gap-4 pb-16">
+    <div className={cn(
+      'flex flex-col gap-4',
+      // The select-mode bar is `fixed`, so — same idiom as the carry-banner
+      // reserve in root-layout.tsx's <main> (a state-keyed padding swap,
+      // rather than inventing a new one) — reserve extra bottom clearance
+      // only while it's actually on screen. It buries the final row
+      // otherwise (#276): the baseline pb-16 sits within single-digit
+      // pixels of the bar's own footprint on desk/tablet-landscape once
+      // it's back to one line, and phone width wraps six controls plus the
+      // count onto two lines, needing the same extra room by a different
+      // route. Measured (see PR body) rather than eyeballed on both chromes.
+      selecting ? 'pb-32' : 'pb-16',
+    )}>
       {/* Breadcrumbs */}
       <Breadcrumbs items={breadcrumbItems} />
 
@@ -566,12 +578,27 @@ export function ContainerDetail() {
           <Button
             variant={selecting ? 'default' : 'outline'}
             size="sm"
-            onClick={() => {
+            onClick={(e) => {
               // The FAB is hidden while selecting but its open-menu state is
               // not — without this it reappears pre-expanded after Cancel.
               setFabOpen(false);
               if (selecting) exitSelectMode();
-              else setSelecting(true);
+              else {
+                setSelecting(true);
+                // #267: Space is this page's scroll key, and a focused
+                // <button> treats Space as a click. Left focused here, the
+                // very next "scroll down the bin" keypress re-fires this
+                // onClick and silently discards the whole selection — no
+                // confirm, no undo. Blurring the toggle the moment select
+                // mode turns on hands Space back to the page immediately,
+                // which is the only fix that doesn't also break Space as a
+                // scroll key: disarming Space on the button (or gating it
+                // behind a confirm) would still swallow the keypress instead
+                // of scrolling, and preserving the selection on re-entry
+                // would leave the same keypress silently flipping the mode
+                // on and off.
+                (e.currentTarget as HTMLButtonElement).blur();
+              }
             }}
           >
             <CheckSquare className="w-4 h-4" />
@@ -670,8 +697,8 @@ export function ContainerDetail() {
           flex-wrap: Move/Tag/Delete/Queue plus All/Cancel no longer fit one
           line on a phone now that Tag and Delete joined Move and Queue. */}
       {selecting && (
-        <div className="fixed bottom-[calc(5.5rem+env(safe-area-inset-bottom))] lg:bottom-8 left-4 right-4 lg:left-auto lg:right-8 lg:w-[26rem] z-30 bg-[var(--color-card)] border-2 border-[var(--color-text)] rounded-[var(--radius-md)] shadow-lg px-3 py-2.5 flex flex-wrap items-center gap-2">
-          <p className="font-mono text-xs uppercase tracking-[0.06em] text-[var(--color-text)] flex-1 min-w-0 truncate tabular-nums">
+        <div className="fixed bottom-[calc(5.5rem+env(safe-area-inset-bottom))] lg:bottom-8 left-4 right-4 lg:left-auto lg:right-8 lg:w-auto lg:max-w-[46rem] z-30 bg-[var(--color-card)] border-2 border-[var(--color-text)] rounded-[var(--radius-md)] shadow-lg px-3 py-2.5 flex flex-wrap items-center gap-2">
+          <p className="font-mono text-xs uppercase tracking-[0.06em] text-[var(--color-text)] shrink-0 whitespace-nowrap tabular-nums">
             {selected.size} selected
           </p>
           <Button variant="ghost" size="sm" onClick={handleSelectAll} disabled={bulkRunning}>
