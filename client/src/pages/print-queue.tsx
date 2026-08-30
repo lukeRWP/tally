@@ -8,6 +8,7 @@ import { TitleBar } from '@/components/ui/title-bar';
 import { toast } from '@/components/ui/toast';
 import { useProperties } from '@/hooks/use-inventory';
 import { useLayoutMode } from '@/hooks/use-layout-mode';
+import { barOffsetCss, useCarryBannerShowing, useRegisterBottomBar } from '@/hooks/use-bottom-stack';
 import { cn } from '@/lib/utils';
 import {
   usePrinters, usePrintJobs, useCreatePrintJob, useCancelPrintJob,
@@ -89,6 +90,24 @@ export function PrintQueuePage() {
   const [selected, setSelected] = React.useState<Set<string>>(new Set());
   const sending = !!sendProgress;
   const printer = printers?.[0];
+
+  // Whatever CarryBanner itself renders for (the "put back" banner counts
+  // too) — this page's own two fixed bottom bars (select-mode, and the
+  // pinned send button) both dock in the same corner CarryBanner does, and
+  // neither is hidden while carrying (unlike container-detail's FAB, which
+  // sidesteps the whole problem by disappearing whenever a carry is live).
+  // Carrying something, leaving /move, and landing on /print with a staged
+  // batch is fully reachable, so both bars need the same shared offset
+  // model container-detail.tsx's and recycle-bin-list.tsx's select bars use
+  // (use-bottom-stack.ts) rather than a private hardcoded offset.
+  const carryBannerShowing = useCarryBannerShowing();
+  // Global chrome mounted elsewhere (the toast layer, `<main>`'s own scroll
+  // reserve) has no other way to see that one of THIS page's own bars is up
+  // — register for as long as either one can be on screen. Exactly one of
+  // the two bars renders whenever `staged.length > 0` (select-mode's
+  // auto-exit effect below guarantees `selecting` never outlives a staged
+  // batch), so that single condition covers both.
+  useRegisterBottomBar(staged.length > 0);
 
   const online = !!printer?.lastSeenAt && Date.now() - new Date(printer.lastSeenAt).getTime() < 60_000;
   const problem = printer?.printerState === 'stopped'
@@ -521,7 +540,16 @@ export function PrintQueuePage() {
           container-detail's and recycle-bin-list's, and mutually exclusive
           with the send bar below (there is nothing to send mid-trim). */}
       {selecting && (
-        <div className="fixed bottom-[calc(5.5rem+env(safe-area-inset-bottom))] lg:bottom-8 left-4 right-4 lg:left-auto lg:right-8 lg:w-[22rem] z-30 bg-[var(--color-card)] border-2 border-[var(--color-text)] rounded-[var(--radius-md)] shadow-lg px-3 py-2.5 flex flex-wrap items-center gap-2">
+        <div
+          className="fixed left-4 right-4 lg:left-auto lg:right-8 lg:w-[22rem] z-30 bg-[var(--color-card)] border-2 border-[var(--color-text)] rounded-[var(--radius-md)] shadow-lg px-3 py-2.5 flex flex-wrap items-center gap-2"
+          // Shared with container-detail.tsx's and recycle-bin-list.tsx's
+          // select bars (use-bottom-stack.ts) — CarryBanner docks in this
+          // same bottom-right corner on both chromes and neither yields to
+          // the other on its own, so this stacks above the banner's dock
+          // instead of overlapping it. Inline style, not a class: the model
+          // computes a runtime value Tailwind's build-time scanner can't see.
+          style={{ bottom: barOffsetCss({ touch: !wide, carrying: carryBannerShowing }) }}
+        >
           <p className="font-mono text-xs uppercase tracking-[0.06em] text-[var(--color-text)] flex-1 min-w-0 truncate tabular-nums">
             {selected.size} selected
           </p>
@@ -555,7 +583,14 @@ export function PrintQueuePage() {
           3.4 screens of scrolling down on a 50-label batch (#281). Every
           sibling batch surface pins its primary action; this now does too. */}
       {!selecting && staged.length > 0 && (
-        <div className="fixed bottom-[calc(5.5rem+env(safe-area-inset-bottom))] lg:bottom-8 left-4 right-4 lg:left-auto lg:right-8 lg:w-[22rem] z-30 bg-[var(--color-card)] border-2 border-[var(--color-text)] rounded-[var(--radius-md)] shadow-lg px-3 py-2.5 flex flex-col gap-1.5">
+        <div
+          className="fixed left-4 right-4 lg:left-auto lg:right-8 lg:w-[22rem] z-30 bg-[var(--color-card)] border-2 border-[var(--color-text)] rounded-[var(--radius-md)] shadow-lg px-3 py-2.5 flex flex-col gap-1.5"
+          // Same shared model as the select-mode bar above — this bar is
+          // not hidden while carrying (unlike container-detail's FAB), so
+          // it needs the same carry-aware offset to avoid landing on top
+          // of CarryBanner's own dock.
+          style={{ bottom: barOffsetCss({ touch: !wide, carrying: carryBannerShowing }) }}
+        >
           <Button className="w-full" onClick={handlePrintAll} disabled={sending || !printer}>
             <Send className="w-4 h-4" />
             {sendProgress ? `Sending… ${sendProgress.i} of ${sendProgress.n}`

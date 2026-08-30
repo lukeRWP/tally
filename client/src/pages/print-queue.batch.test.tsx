@@ -18,11 +18,23 @@
  * so assertions read raw DOM properties instead of `toHaveTextContent`/`toBeDisabled`.
  */
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { MemoryRouter } from 'react-router';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { usePrintQueueStore } from '@/store/print-queue-store';
 import type { StagedLabel } from '@/store/print-queue-store';
 import type { Printer, PrintJob } from '@/hooks/use-print';
 import { PrintQueuePage } from './print-queue';
+
+// PrintQueuePage now reads useCarryBannerShowing() (use-bottom-stack.ts),
+// which calls useLocation() unconditionally — needs a Router, same as
+// recycle-bin-list.test.tsx's renderWith.
+function renderPage() {
+  return render(
+    <MemoryRouter>
+      <PrintQueuePage />
+    </MemoryRouter>,
+  );
+}
 
 // jsdom has no matchMedia; container-detail.bulk.test.tsx stubs the same way.
 vi.mock('@/hooks/use-layout-mode', () => ({ useLayoutMode: () => 'touch' }));
@@ -99,7 +111,7 @@ test('Select mode adds checkboxes and a bulk Remove that drops exactly the selec
     label({ id: 2, name: 'Item Two' }),
     label({ id: 3, name: 'Item Three' }),
   ]);
-  render(<PrintQueuePage />);
+  renderPage();
 
   // No selection idiom at all was the headline defect — before Select is
   // clicked there is nothing to toggle.
@@ -129,7 +141,7 @@ test('Select mode adds checkboxes and a bulk Remove that drops exactly the selec
 
 test('per-row controls disappear while selecting so a tap cannot fire two actions at once', () => {
   seedStaged([label({ id: 1, name: 'Item One' })]);
-  render(<PrintQueuePage />);
+  renderPage();
 
   // Two "2×1" buttons exist before selecting: the printer's own Loaded Roll
   // picker up top, plus this row's preset picker.
@@ -150,7 +162,7 @@ test('select-mode roll setter retargets exactly the selected rows, leaving the r
     label({ id: 2, name: 'Item Two', preset: 'small' }),
     label({ id: 3, name: 'Item Three', preset: 'small' }),
   ]);
-  render(<PrintQueuePage />);
+  renderPage();
 
   fireEvent.click(screen.getByRole('button', { name: 'Select' }));
   fireEvent.click(screen.getByLabelText('Select Item One'));
@@ -180,7 +192,7 @@ test('a send shows a truthful N of M counter instead of a bare "Sending…"', as
   const second = deferred<{ id: number; status: string }>();
   createJobMutateAsync.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
 
-  render(<PrintQueuePage />);
+  renderPage();
 
   const sendButton = screen.getByRole('button', { name: /label/ });
   expect(sendButton.textContent).toContain('Print 3 labels');
