@@ -2,7 +2,7 @@ module.exports = function reportsRoutes({ app, db, logger, config }) {
   const ReportsService = require('./reports.service');
   ReportsService.init({ db, logger, config });
 
-  const { generateReport } = require('./reports.schema');
+  const { generateReport, REPORT_TYPES } = require('./reports.schema');
   const { success, error } = require('../../utils/response');
 
   // ── Generate Report (PDF / CSV) ──────────────────────────────────────────
@@ -64,8 +64,9 @@ module.exports = function reportsRoutes({ app, db, logger, config }) {
     app.locals.resolvePropertyRole,
     async (req, res) => {
       const { reportType, propertyId } = req.params;
-      const validTypes = ['insurance', 'total_value', 'items_by_location', 'lending', 'activity_log', 'tag'];
-      if (!validTypes.includes(reportType)) {
+      // Same vocabulary as the generate schema — a second copy is how the two
+      // ends of a contract drift apart without anyone noticing.
+      if (!REPORT_TYPES.includes(reportType)) {
         return error(res, 'Invalid report type', 400);
       }
 
