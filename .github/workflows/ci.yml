@@ -49,6 +49,46 @@ jobs:
         run: npm test
         working-directory: server
 
+  migration-gate:
+    name: Migration Gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v6
+        with:
+          # The gate compares against the PR base to decide whether SQL/ was
+          # touched, so the base commit has to be in the local history.
+          fetch-depth: 0
+      # This job is a REQUIRED check, so it must report a conclusion on every
+      # PR — a `paths:` filter on the workflow would leave it permanently
+      # pending on PRs that don't touch SQL/ and block them forever. Instead it
+      # always runs and short-circuits to green when there is nothing to gate.
+      - name: Does this PR touch SQL/?
+        id: changes
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          if git diff --name-only "$BASE_SHA" "$HEAD_SHA" -- SQL/ | grep -q .; then
+            echo "sql=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "sql=false" >> "$GITHUB_OUTPUT"
+            echo "No SQL/ changes — nothing to gate."
+          fi
+      # Boots MySQL 8.4 (prod's catalog version and docker-compose's pin),
+      # applies SQL/init + the whole SQL/migrations chain, applies the chain
+      # AGAIN and requires it to succeed, then byte-compares the resulting
+      # schema against SQL/expected-schema.sql. See the script header and
+      # CLAUDE.md CI/CD rule 9.
+      #
+      # ubuntu-latest is GitHub-hosted (only build.yml uses the self-hosted
+      # runner), so docker is available and the script brings its own MySQL —
+      # no service container, and the mysql/mysqldump used to produce the dump
+      # are the ones from the 8.4 image, not whatever the runner has installed.
+      - name: Migrations apply twice and match the expected schema
+        if: steps.changes.outputs.sql == 'true'
+        run: SQL/ci/migration-gate.sh
+
   security-audit:
     name: Security Audit
     runs-on: ubuntu-latest
