@@ -415,18 +415,19 @@ export function MatchesPage() {
    * could not do on the same frame, which is also what keeps a single-row
    * dismiss no less safe than its button. (#278's confirm belongs to the BULK
    * clear, which acts on rows you are not looking at; this one acts on the
-   * one panel in front of you, and the hook drops auto-repeat so a leaned-on
-   * key cannot walk down the backlog.)
+   * one panel in front of you.)
+   *
+   * The hook supplies the two guards a BUTTON gets for free and a key does
+   * not: auto-repeat is dropped, so a leaned-on key cannot walk down the
+   * backlog, and a key only fires when it arrives alone — this page has no
+   * text field for `isTyping` to catch a USB scanner in, and a barcode is a
+   * burst of digits aimed straight at these bindings. See ACTION_BURST_MS.
    */
-  function handleActionKey(key: string): boolean {
-    if (!current || current.status !== 'ready' || resolve.isPending) return false;
-    if (key === 'd') { handleDismiss(); return true; }
+  function handleActionKey(key: string): void {
+    if (!current || current.status !== 'ready' || resolve.isPending) return;
+    if (key === 'd') { handleDismiss(); return; }
     const nth = Number(key);
-    if (Number.isInteger(nth) && nth >= 1 && nth <= current.candidates.length) {
-      handlePick(nth - 1);
-      return true;
-    }
-    return false;
+    if (Number.isInteger(nth) && nth >= 1 && nth <= current.candidates.length) handlePick(nth - 1);
   }
 
   // Sequential, not Promise.all — these share the same underlying dismiss
