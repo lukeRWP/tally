@@ -28,7 +28,11 @@ const { REPORT_TYPES, GROUP_BY } = require('../src/modules/reports/reports.schem
 // it mirrors.
 const CLIENT_OFFERS = Object.freeze({
   reportTypes: ['insurance', 'total_value', 'items_by_location', 'lending', 'activity_log', 'tag'],
-  groupBy: ['property', 'area', 'tag'],
+  // `condition` is here because the server implements it now (#285) — the
+  // grouping key became a function of an item row rather than a SELECT of its
+  // own, so a fourth grouping is a fourth key extractor. It is the one value on
+  // this list that once shipped to users doing nothing at all.
+  groupBy: ['property', 'area', 'tag', 'condition'],
 });
 
 // …and because a hand-copy is exactly what went wrong the first time, the two
@@ -194,15 +198,38 @@ test('the four hyphenated ids that shipped in the bundle are still rejected', as
   assert.equal(fetchData.mock.callCount(), 0, 'an invalid type must never reach the service');
 });
 
-test('the groupBy values that used to be offered are rejected, condition included', async (t) => {
+test('a groupBy with no implementation is still rejected rather than substituted', async (t) => {
   stubService(t);
 
+  // `location` is the client's old name for `area`; `category` never existed.
+  // `condition` used to be on this list and has been implemented (#285) — the
+  // rule is unchanged, only its membership: a grouping the server cannot
+  // perform must 422, never quietly become `property`.
   await withServer(async (base) => {
-    for (const groupBy of ['location', 'condition']) {
+    for (const groupBy of ['location', 'category']) {
       const res = await generate(base, { reportType: 'total_value', propertyId: 1, groupBy });
       assert.equal(res.status, 422, `groupBy=${groupBy} has no implementation and must not be accepted`);
     }
   });
+});
+
+test('the PREVIEW takes the same groupBy, and rejects one it cannot perform', async (t) => {
+  // #310's secondary half: this route defaulted to `property` for anything it
+  // was sent, and the hook sent nothing — so the figure printed beside Generate
+  // was computed for a different grouping than the one about to be generated.
+  const seen = [];
+  t.mock.method(ReportsService, '_fetchReportData', async (type, id, opts) => { seen.push(opts.groupBy); return []; });
+
+  await withServer(async (base) => {
+    for (const groupBy of CLIENT_OFFERS.groupBy) {
+      const res = await fetch(`${base}/api/reports/_x_/preview/total_value/1?groupBy=${groupBy}`);
+      assert.equal(res.status, 200, `preview groupBy=${groupBy}`);
+    }
+    const bad = await fetch(`${base}/api/reports/_x_/preview/total_value/1?groupBy=location`);
+    assert.equal(bad.status, 400, 'an unknown grouping must not silently become "property"');
+  });
+
+  assert.deepEqual(seen, CLIENT_OFFERS.groupBy);
 });
 
 // ── defaults and guards the client depends on ───────────────────────────────
@@ -275,7 +302,17 @@ const FIXTURES = {
     purchasePrice: 129, currentValue: 90, valueBasis: 'declared',
     completeness: 'complete', condition: 'good', areaName: 'Garage', containerName: 'Tote',
   }],
-  total_value: [{ group: 'Garage', itemCount: 12, purchaseTotal: 2400, currentTotal: 1780, excludedCount: 1 }],
+  // An envelope, not a list: the groups can overlap (an item with three tags is
+  // in three of them) so the property's own totals travel beside them (#310).
+  total_value: {
+    groupBy: 'tag',
+    groups: [
+      { group: 'Tools', itemCount: 12, purchaseTotal: 2400, currentTotal: 1780, excludedCount: 1 },
+      { group: 'Untagged', itemCount: 3, purchaseTotal: 300, currentTotal: 210, excludedCount: 0 },
+    ],
+    totals: { groupCount: 2, itemCount: 14, purchaseTotal: 2600, currentTotal: 1900, excludedCount: 1 },
+    overlapping: true,
+  },
   items_by_location: [{
     areaId: 1, areaName: 'Garage',
     containers: [{
@@ -340,6 +377,6 @@ test('total_value renders a document for every groupBy, and names the scope in t
     }
   });
 
-  assert.equal(pdf.mock.callCount(), 3);
-  assert.deepEqual(scopes, ['by property', 'by area', 'by tag']);
+  assert.equal(pdf.mock.callCount(), CLIENT_OFFERS.groupBy.length);
+  assert.deepEqual(scopes, CLIENT_OFFERS.groupBy.map(g => `by ${g}`));
 });

@@ -20,8 +20,16 @@ export type ReportTypeId =
   | 'activity_log'
   | 'tag';
 
-/** How `total_value` aggregates. `property` is a single grand total. */
-export const REPORT_GROUP_BY = ['property', 'area', 'tag'] as const;
+/**
+ * How `total_value` aggregates. `property` is a single grand total.
+ *
+ * Mirrors `GROUP_BY` in `reports.schema.js`; `server/test/reports.routes.test.js`
+ * reads this array back out of this file, so the two cannot drift. `condition`
+ * is here because the server now implements it (#285) — it was offered by this
+ * page for years with no server branch at all, and #263 removed it rather than
+ * leave a button that 422s.
+ */
+export const REPORT_GROUP_BY = ['property', 'area', 'tag', 'condition'] as const;
 export type ReportGroupBy = (typeof REPORT_GROUP_BY)[number];
 
 interface ReportBody {
@@ -133,16 +141,22 @@ interface ReportPreview {
 export function useReportPreview(
   reportType: ReportTypeId | '',
   propertyId: number,
-  opts: { tagIds?: number[]; enabled?: boolean } = {},
+  opts: { tagIds?: number[]; groupBy?: ReportGroupBy; enabled?: boolean } = {},
 ) {
   // The tag report's answer depends on which tags are ticked, so the preview
   // has to ask the same question Generate will. Every other report ignores it.
   const tagIds = opts.tagIds?.length ? [...opts.tagIds].sort((a, b) => a - b).join(',') : null;
+  // Same reason, and it was missing: Total Value's answer depends on the
+  // grouping, the route defaults to `property` when nothing is sent, and this
+  // hook sent nothing — so with "tag" selected the line beside Generate was the
+  // figure for a DIFFERENT report (#310).
+  const groupBy = opts.groupBy ?? null;
+  const query = [tagIds && `tagIds=${tagIds}`, groupBy && `groupBy=${groupBy}`].filter(Boolean).join('&');
   return useQuery({
-    queryKey: ['reports', 'preview', reportType, propertyId, tagIds],
+    queryKey: ['reports', 'preview', reportType, propertyId, tagIds, groupBy],
     queryFn: () =>
       api.get<ReportPreview>(
-        `/api/reports/_x_/preview/${reportType}/${propertyId}${tagIds ? `?tagIds=${tagIds}` : ''}`,
+        `/api/reports/_x_/preview/${reportType}/${propertyId}${query ? `?${query}` : ''}`,
       ),
     enabled: (opts.enabled ?? true) && !!reportType && !!propertyId,
     // A glance before committing, not a live figure: re-asking on every
@@ -174,6 +188,29 @@ function countTreeItems(containers: unknown): number {
  * count beside Generate is worse than no count at all.
  */
 export function summariseReport(reportType: ReportTypeId, data: unknown): string | null {
+  // Total Value is the one report whose payload is an envelope rather than a
+  // list of rows: its groups can overlap (an item with three tags is in three
+  // of them), so the property's own totals travel beside them and are what this
+  // line reads. Summing the groups is exactly the arithmetic #310 was about.
+  if (reportType === 'total_value') {
+    const view = data as {
+      totals?: { itemCount?: number; currentTotal?: number; excludedCount?: number };
+      overlapping?: boolean;
+    } | null;
+    const totals = view && typeof view === 'object' ? view.totals : null;
+    if (!totals) return null;
+    const excluded = totals.excludedCount ?? 0;
+    return [
+      plural(totals.itemCount ?? 0, 'item'),
+      money(totals.currentTotal ?? 0),
+      // A box or a bag of spares carries the price of an object that is in use
+      // somewhere else, so the report leaves it out — silently, unless said.
+      excluded ? `${excluded} part-only excluded` : null,
+      // A grouped subtotal that overlaps is honest only if it says so.
+      view?.overlapping ? 'groups overlap' : null,
+    ].filter(Boolean).join(' · ');
+  }
+
   if (!Array.isArray(data)) return null;
 
   switch (reportType) {
@@ -181,15 +218,6 @@ export function summariseReport(reportType: ReportTypeId, data: unknown): string
       const rows = data as { currentValue?: number | null }[];
       const total = rows.reduce((s, r) => s + (r.currentValue ?? 0), 0);
       return `${plural(rows.length, 'item')} · ${money(total)}`;
-    }
-    case 'total_value': {
-      const groups = data as { itemCount?: number; currentTotal?: number; excludedCount?: number }[];
-      const items = groups.reduce((s, g) => s + (g.itemCount ?? 0), 0);
-      const total = groups.reduce((s, g) => s + (g.currentTotal ?? 0), 0);
-      const excluded = groups.reduce((s, g) => s + (g.excludedCount ?? 0), 0);
-      // A box or a bag of spares carries the price of an object that is in use
-      // somewhere else, so the report leaves it out — silently, unless said.
-      return `${plural(items, 'item')} · ${money(total)}${excluded ? ` · ${excluded} part-only excluded` : ''}`;
     }
     case 'items_by_location': {
       const areas = data as { containers?: unknown }[];
@@ -204,8 +232,21 @@ export function summariseReport(reportType: ReportTypeId, data: unknown): string
     case 'activity_log':
       return plural(data.length, 'change');
     case 'tag': {
-      const groups = data as { items?: unknown[] }[];
-      const items = groups.reduce((s, g) => s + (Array.isArray(g.items) ? g.items.length : 0), 0);
+      // Distinct items, not listings: a thing carrying three tags appears in
+      // three sections of that report on purpose, and counting the sections up
+      // told a property of twelve things it had thirty (#310, second place).
+      const groups = data as { items?: { itemId?: number }[] }[];
+      const seen = new Set<number>();
+      let items = 0;
+      for (const group of groups) {
+        for (const item of Array.isArray(group.items) ? group.items : []) {
+          if (item && item.itemId != null) {
+            if (seen.has(item.itemId)) continue;
+            seen.add(item.itemId);
+          }
+          items += 1;
+        }
+      }
       return `${plural(groups.length, 'tag')} · ${plural(items, 'item')}`;
     }
     default:
