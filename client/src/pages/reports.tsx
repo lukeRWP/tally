@@ -16,12 +16,18 @@ import { useLayoutMode } from '@/hooks/use-layout-mode';
 import { PropertyChips } from '@/components/inventory/property-chips';
 import { useProperties } from '@/hooks/use-inventory';
 import { usePropertyTags } from '@/hooks/use-tags';
-import { useGenerateReport } from '@/hooks/use-reports';
+import {
+  REPORT_GROUP_BY,
+  useGenerateReport,
+  type ReportGroupBy,
+  type ReportTypeId,
+} from '@/hooks/use-reports';
 import { toast } from '@/components/ui/toast';
 import { cn } from '@/lib/utils';
 
 interface ReportType {
-  id: string;
+  // The server's spelling, not a display id — it is posted verbatim (#263).
+  id: ReportTypeId;
   label: string;
   description: string;
   icon: React.ElementType;
@@ -39,14 +45,14 @@ const REPORT_TYPES: ReportType[] = [
     icon: FileText,
   },
   {
-    id: 'total-value',
+    id: 'total_value',
     label: 'Total Value',
-    description: 'Aggregate by location or tag',
+    description: 'Aggregate by property, area, or tag',
     icon: DollarSign,
     hasGroupBy: true,
   },
   {
-    id: 'by-location',
+    id: 'items_by_location',
     label: 'Items by Location',
     description: 'Hierarchical inventory view',
     icon: Layers,
@@ -58,13 +64,13 @@ const REPORT_TYPES: ReportType[] = [
     icon: HandCoins,
   },
   {
-    id: 'activity',
+    id: 'activity_log',
     label: 'Activity Log',
     description: 'Who did what, when',
     icon: History,
   },
   {
-    id: 'tags',
+    id: 'tag',
     label: 'Tag Report',
     description: 'Items by selected tags',
     icon: Tag,
@@ -144,11 +150,14 @@ function ReportOptionsPanel({
 }: {
   report: ReportType;
   propertyId: number;
-  onGenerate: (format: 'pdf' | 'csv', groupBy?: string, tagIds?: number[]) => void;
+  onGenerate: (format: 'pdf' | 'csv', groupBy?: ReportGroupBy, tagIds?: number[]) => void;
   isPending: boolean;
 }) {
   const [format, setFormat] = React.useState<'pdf' | 'csv'>('pdf');
-  const [groupBy, setGroupBy] = React.useState('location');
+  // 'area' is the server's name for what this control used to call 'location'.
+  // The third old option, 'condition', was never grouped by anything on the
+  // server — see #263.
+  const [groupBy, setGroupBy] = React.useState<ReportGroupBy>('area');
   const [tagIds, setTagIds] = React.useState<number[]>([]);
 
   return (
@@ -176,7 +185,7 @@ function ReportOptionsPanel({
         <div className="flex flex-col gap-1.5">
           <FieldLabel>Group by</FieldLabel>
           <div className="flex gap-2">
-            {(['location', 'tag', 'condition'] as const).map((opt) => (
+            {REPORT_GROUP_BY.map((opt) => (
               <Button
                 key={opt}
                 size="sm"
@@ -222,7 +231,7 @@ export function Reports() {
   const { data: properties = [] } = useProperties();
 
   const [propertyId, setPropertyId] = React.useState<number>(0);
-  const [expandedReport, setExpandedReport] = React.useState<string | null>(null);
+  const [expandedReport, setExpandedReport] = React.useState<ReportTypeId | null>(null);
 
   const generateReport = useGenerateReport();
 
@@ -233,14 +242,14 @@ export function Reports() {
     }
   }, [properties, propertyId]);
 
-  function toggleReport(reportId: string) {
+  function toggleReport(reportId: ReportTypeId) {
     setExpandedReport((prev) => (prev === reportId ? null : reportId));
   }
 
   function handleGenerate(
     report: ReportType,
     format: 'pdf' | 'csv',
-    groupBy?: string,
+    groupBy?: ReportGroupBy,
     tagIds?: number[],
   ) {
     if (!propertyId) {
@@ -262,6 +271,16 @@ export function Reports() {
     );
   }
 
+  // See the note over the menu below. Column 'a' keeps its key across a
+  // breakpoint flip, so the rows in it (and an options panel open in one of
+  // them) are preserved rather than remounted.
+  const columns: [string, ReportType[]][] = wide
+    ? [
+        ['a', REPORT_TYPES.filter((_, i) => i % 2 === 0)],
+        ['b', REPORT_TYPES.filter((_, i) => i % 2 === 1)],
+      ]
+    : [['a', REPORT_TYPES]];
+
   return (
     <div className="flex flex-col gap-5">
       <h1 className="animate-fade-up"><TitleBar>Reports</TitleBar></h1>
@@ -278,16 +297,39 @@ export function Reports() {
 
         {/* Two columns at a desk. Six rows is a MENU, not a list, and stretching
             a menu to 1400px puts the chevron a screen away from the label it
-            belongs to. Each report still expands in place — its options panel
-            stays inside its own column rather than spanning both. */}
+            belongs to.
+
+            The two columns are INDEPENDENT stacks, not cells of one row-major
+            grid. In a grid every row is as tall as its tallest cell, so opening
+            a panel in the right column pushed the whole next row down and left
+            an equally tall hole in the left one — measured at 1440×900, four
+            rows jumped 239px and the facing column went blank (#275). Spanning
+            the open row across both columns does not fix that: a two-column
+            item cannot start in column 2, so it drops to a row of its own,
+            still leaving the hole and moving the rows below by 301px instead of
+            239. Splitting the list into per-column stacks does fix it — the
+            facing column never moves at all, and only the rows below the open
+            one in its own column shift, which is what an accordion is for.
+
+            Reading order is unchanged: column A takes reports 1/3/5 and column
+            B takes 2/4/6, so each pair still lands side by side exactly where
+            the grid put it. */}
         <div className={cn(wide && 'grid grid-cols-2 gap-x-6 items-start')}>
-        {REPORT_TYPES.map((report, idx) => {
+        {columns.map(([colKey, column]) => (
+        <div key={colKey} className="flex flex-col">
+        {column.map((report) => {
           const Icon = report.icon;
           const isExpanded = expandedReport === report.id;
+          // Keyed off the canonical order so the entry stagger still reads
+          // row by row rather than down one column and then the other.
+          const idx = REPORT_TYPES.indexOf(report);
 
           return (
             <div
               key={report.id}
+              // Which stack a row sits in is the whole of the #275 fix, and it
+              // is invisible to a DOM-only test without this.
+              data-report-row={report.id}
               className="border-b border-[var(--color-rule)] last:border-b-0 animate-fade-up"
               style={{ animationDelay: `${idx * 40}ms` }}
             >
@@ -335,6 +377,8 @@ export function Reports() {
             </div>
           );
         })}
+        </div>
+        ))}
         </div>
       </section>
     </div>

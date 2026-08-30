@@ -1,11 +1,34 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { api, getCsrfToken } from '@/lib/api';
 
+/**
+ * The report ids, spelled exactly as the server's Joi enum spells them
+ * (`server/src/modules/reports/reports.schema.js` → `REPORT_TYPES`).
+ *
+ * This page used to carry its own hyphenated spellings — `total-value`,
+ * `by-location`, `activity`, `tags` — and posted them verbatim, so four of the
+ * six reports answered 422 "Validation failed" and had never once generated a
+ * file (#263). These strings are the service's own switch keys, so the client
+ * adopts them rather than the reverse; typing them as a union means a future
+ * typo is a compile error instead of a toast.
+ */
+export type ReportTypeId =
+  | 'insurance'
+  | 'total_value'
+  | 'items_by_location'
+  | 'lending'
+  | 'activity_log'
+  | 'tag';
+
+/** How `total_value` aggregates. `property` is a single grand total. */
+export const REPORT_GROUP_BY = ['property', 'area', 'tag'] as const;
+export type ReportGroupBy = (typeof REPORT_GROUP_BY)[number];
+
 interface ReportParams {
-  reportType: string;
+  reportType: ReportTypeId;
   propertyId: number;
   format: 'pdf' | 'csv';
-  groupBy?: string;
+  groupBy?: ReportGroupBy;
   tagIds?: number[];
   startDate?: string;
   endDate?: string;
