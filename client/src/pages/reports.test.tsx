@@ -154,11 +154,12 @@ test('Total Value offers only groupBy values the server implements', () => {
   renderPage();
   fireEvent.click(screen.getByRole('button', { name: /total value/i }));
 
-  // 'condition' was offered for as long as the page has existed and was never
-  // grouped by anything on the server — it is not a rename, it never worked.
-  expect(screen.queryByRole('button', { name: /^condition$/i })).toBeNull();
+  // 'location' is the client's old name for 'area' and never existed on the
+  // server. 'condition' is on this list because the server implements it now
+  // (#285) — it was offered here for years doing nothing, and #263 pulled it
+  // rather than leave a button that 422s.
   expect(screen.queryByRole('button', { name: /^location$/i })).toBeNull();
-  for (const opt of ['property', 'area', 'tag']) {
+  for (const opt of ['property', 'area', 'tag', 'condition']) {
     expect(screen.getByRole('button', { name: new RegExp(`^${opt}$`, 'i') })).toBeTruthy();
   }
 
@@ -271,6 +272,27 @@ describe('the preview beside Generate', () => {
     renderPage();
     fireEvent.click(screen.getByRole('button', { name: /insurance summary/i }));
     expect(previewMock.mock.calls[0][2]).toMatchObject({ tagIds: undefined });
+  });
+
+  /**
+   * #310, secondary half — the preview sent the tags but never the grouping,
+   * and the route defaults to `property`, so with "tag" selected the number
+   * beside Generate was the total for a report nobody was about to generate.
+   */
+  test('Total Value previews the grouping actually selected', () => {
+    renderPage();
+    fireEvent.click(screen.getByRole('button', { name: /total value/i }));
+    expect(previewMock.mock.calls.at(-1)?.[2]).toMatchObject({ groupBy: 'area' });
+
+    previewMock.mockClear();
+    fireEvent.click(screen.getByRole('button', { name: /^tag$/i }));
+    expect(previewMock.mock.calls.at(-1)?.[2]).toMatchObject({ groupBy: 'tag' });
+  });
+
+  test('a report with no grouping control never sends groupBy', () => {
+    renderPage();
+    fireEvent.click(screen.getByRole('button', { name: /insurance summary/i }));
+    expect(previewMock.mock.calls[0][2]).toMatchObject({ groupBy: undefined });
   });
 
   test('a preview that fails says so and does NOT block Generate — it is an aid, not a gate', () => {

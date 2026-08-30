@@ -63,18 +63,54 @@ describe('summariseReport', () => {
     ).toBe('3 items · $34,900');
   });
 
-  test('total_value adds the groups up and says what the report leaves out', () => {
+  test('total_value reads the property total, and says what the report leaves out', () => {
     expect(
-      summariseReport('total_value', [
-        { group: 'Garage', itemCount: 400, currentTotal: 30000, excludedCount: 3 },
-        { group: 'Office', itemCount: 82, currentTotal: 4900, excludedCount: 0 },
-      ]),
+      summariseReport('total_value', {
+        groups: [
+          { group: 'Garage', itemCount: 400, currentTotal: 30000, excludedCount: 3 },
+          { group: 'Office', itemCount: 82, currentTotal: 4900, excludedCount: 0 },
+        ],
+        totals: { itemCount: 482, currentTotal: 34900, excludedCount: 3 },
+        overlapping: false,
+      }),
     ).toBe('482 items · $34,900 · 3 part-only excluded');
   });
 
   test('total_value stays quiet when nothing was excluded', () => {
-    expect(summariseReport('total_value', [{ itemCount: 2, currentTotal: 10, excludedCount: 0 }]))
-      .toBe('2 items · $10');
+    expect(
+      summariseReport('total_value', {
+        groups: [{ group: 'Garage', itemCount: 2, currentTotal: 10, excludedCount: 0 }],
+        totals: { itemCount: 2, currentTotal: 10, excludedCount: 0 },
+        overlapping: false,
+      }),
+    ).toBe('2 items · $10');
+  });
+
+  /**
+   * #310 — grouped by tag, an item with three tags used to be counted three
+   * times and an untagged one dropped entirely. The line beside Generate is the
+   * first place anyone would see that, and it got there by SUMMING THE GROUPS,
+   * which is the arithmetic that was wrong. It reads the totals now.
+   */
+  test('total_value never sums overlapping groups — the totals are the property', () => {
+    expect(
+      summariseReport('total_value', {
+        // The drill is in all three tags; the property owns four things.
+        groups: [
+          { group: 'Tools', itemCount: 2, currentTotal: 110, excludedCount: 0 },
+          { group: 'Insured', itemCount: 1, currentTotal: 90, excludedCount: 0 },
+          { group: 'Power tools', itemCount: 1, currentTotal: 90, excludedCount: 0 },
+          { group: 'Untagged', itemCount: 2, currentTotal: 60, excludedCount: 0 },
+        ],
+        totals: { itemCount: 4, currentTotal: 170, excludedCount: 0 },
+        overlapping: true,
+      }),
+    ).toBe('4 items · $170 · groups overlap');
+  });
+
+  test('total_value answers nothing rather than guessing at a payload with no totals', () => {
+    expect(summariseReport('total_value', [{ itemCount: 2, currentTotal: 10 }])).toBe(null);
+    expect(summariseReport('total_value', undefined)).toBe(null);
   });
 
   test('items_by_location counts items down the whole container tree', () => {
@@ -105,6 +141,18 @@ describe('summariseReport', () => {
     expect(
       summariseReport('tag', [{ items: [{}, {}] }, { items: [{}] }]),
     ).toBe('2 tags · 3 items');
+  });
+
+  test('tag counts an item once even when it is listed under three tags', () => {
+    // The listing repeats a multi-tagged item on purpose; the COUNT is of
+    // things you own, not of lines printed (#310, second place).
+    expect(
+      summariseReport('tag', [
+        { items: [{ itemId: 1 }, { itemId: 3 }] },
+        { items: [{ itemId: 1 }] },
+        { items: [{ itemId: 1 }] },
+      ]),
+    ).toBe('3 tags · 2 items');
   });
 
   test('an empty report says so rather than saying nothing — that IS the warning', () => {

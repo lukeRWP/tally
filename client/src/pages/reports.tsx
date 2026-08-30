@@ -51,7 +51,7 @@ const REPORT_TYPES: ReportType[] = [
   {
     id: 'total_value',
     label: 'Total Value',
-    description: 'Aggregate by property, area, or tag',
+    description: 'Aggregate by property, area, tag, or condition',
     icon: DollarSign,
     hasGroupBy: true,
   },
@@ -159,15 +159,21 @@ function ReportOptionsPanel({
 }) {
   const [format, setFormat] = React.useState<'pdf' | 'csv'>('pdf');
   // 'area' is the server's name for what this control used to call 'location'.
-  // The third old option, 'condition', was never grouped by anything on the
-  // server — see #263.
+  // 'condition' is back, and grouped by something this time (#285) — it was
+  // offered here for years with no server branch at all, so #263 removed it.
   const [groupBy, setGroupBy] = React.useState<ReportGroupBy>('area');
   const [tagIds, setTagIds] = React.useState<number[]>([]);
 
   // Only the OPEN panel is mounted, so this is one request for the one report
   // being considered — not six on page load.
+  //
+  // The preview is sent the SAME options Generate will post. It used to send
+  // the tags but not the grouping, and the route defaults to `property`, so
+  // with "tag" selected the line beside the button was the total for a
+  // different report than the one about to be produced (#310).
   const preview = useReportPreview(report.id, propertyId, {
     tagIds: report.hasTagSelect ? tagIds : undefined,
+    groupBy: report.hasGroupBy ? groupBy : undefined,
   });
   const summary = preview.data ? summariseReport(report.id, preview.data.data) : null;
 

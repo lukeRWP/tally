@@ -54,6 +54,11 @@ function _calcDepreciatedValue(purchasePrice, depreciationRate, purchaseDate) {
   return parseFloat((purchasePrice * Math.pow(1 - depreciationRate, years)).toFixed(2));
 }
 
+/** Money, to the cent — every total in a report is accumulated then rounded once. */
+function _round2(n) {
+  return parseFloat(n.toFixed(2));
+}
+
 function _fmtCurrency(val) {
   if (val == null) return '—';
   // Grouped, because these are read as money on a claim form: "$22,590.00" is
@@ -66,6 +71,29 @@ function _fmtCurrency(val) {
 function _fmtDate(d) {
   if (!d) return '-';
   return new Date(d).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+}
+
+/**
+ * The total-value payload as the renderers want it: `{ groups, totals,
+ * overlapping }`.
+ *
+ * `totalValue()` returns exactly that. A bare array of groups is still accepted
+ * — it is what the shape was before #310, and an empty array is what every
+ * "renders with no rows" test passes — and is read as non-overlapping, its
+ * totals summed from the groups. A document must never be the thing that throws.
+ */
+function _totalValueView(data) {
+  const groups = Array.isArray(data) ? data : (data && Array.isArray(data.groups) ? data.groups : []);
+  const summed = groups.reduce((acc, g) => ({
+    groupCount: groups.length,
+    itemCount: acc.itemCount + (g.itemCount || 0),
+    purchaseTotal: acc.purchaseTotal + (g.purchaseTotal || 0),
+    currentTotal: acc.currentTotal + (g.currentTotal || 0),
+    excludedCount: acc.excludedCount + (g.excludedCount || 0),
+  }), { groupCount: groups.length, itemCount: 0, purchaseTotal: 0, currentTotal: 0, excludedCount: 0 });
+
+  const totals = (!Array.isArray(data) && data && data.totals) ? { ...summed, ...data.totals } : summed;
+  return { groups, totals, overlapping: !Array.isArray(data) && !!(data && data.overlapping) };
 }
 
 // ── PDF layout ───────────────────────────────────────────────────────────────
@@ -317,7 +345,15 @@ const ReportsService = {
     );
 
     const items = [];
+    // One row per item, whatever the joins do. Two of them can fan out: a
+    // second "Purchased" date (DATE_TYPE is free text a user types, with no
+    // uniqueness) and two condition snapshots sharing one CREATED_AT. Either
+    // one prints the item twice and adds its value to the totals twice — the
+    // same shape of bug as #310, on the same insurance-facing document.
+    const seen = new Set();
     for (const row of rows) {
+      if (seen.has(row.ITEM_ID)) continue;
+      seen.add(row.ITEM_ID);
       const depRate = row.ITEM_DEPRECIATION_RATE || row.PRODUCT_DEPRECIATION_RATE || 0;
       const purchaseDate = row.PURCHASE_DATE || row.ITEM_CREATED_AT;
       const purchasePrice = row.PURCHASE_PRICE ? parseFloat(row.PURCHASE_PRICE) : null;
@@ -370,87 +406,75 @@ const ReportsService = {
 
   // ── Total Value ──────────────────────────────────────────────────────────
 
+  /**
+   * The property's value, grouped for presentation.
+   *
+   * THE INVARIANT: `totals` describes the property, not the grouping. Whatever
+   * `groupBy` is, `totals.currentTotal` is the same number — every active item
+   * counted exactly once. Only `groups` changes shape.
+   *
+   * That was not true before #310. The grouping was done in SQL, and the tag
+   * grouping bought its GROUP_NAME with an INNER JOIN onto `entity_tags`: an
+   * item carrying three tags arrived as three rows and was added three times,
+   * an item carrying none never arrived at all. The one report you would hand
+   * an insurer could be inflated and incomplete at the same time, and the
+   * caller summed the groups to get a grand total, so the error was invisible.
+   *
+   * So: one query for the money, one map from item to tag names, and the
+   * grouping key chosen in JS from columns the first query already carries.
+   * Groups may share an item (a thing with three tags is listed under all
+   * three — that is what the reader asked to see); `totals` is computed from
+   * the de-duplicated item set instead of from the groups, and `overlapping`
+   * says out loud when the two disagree.
+   */
   async totalValue(propertyId, { groupBy = 'property' } = {}) {
-    let sql;
-    const params = [propertyId];
+    const rows = await _db.query(
+      `SELECT
+         i.ID AS ITEM_ID,
+         a.NAME AS AREA_NAME,
+         i.CONDITION AS ITEM_CONDITION,
+         i.PURCHASE_PRICE,
+         i.CURRENT_VALUE,
+         i.COMPLETENESS,
+         i.DEPRECIATION_ENABLED,
+         i.DEPRECIATION_RATE AS ITEM_DEP_RATE,
+         p.DEPRECIATION_RATE AS PRODUCT_DEP_RATE,
+         i.CREATED_AT AS ITEM_CREATED_AT,
+         id_purchase.DATE_VALUE AS PURCHASE_DATE
+       FROM TALLY.items i
+       JOIN TALLY.containers c ON c.ID = i.CONTAINER_ID
+       JOIN TALLY.areas a ON a.ID = c.AREA_ID
+       LEFT JOIN TALLY.products p ON p.ID = i.PRODUCT_ID
+       LEFT JOIN TALLY.item_dates id_purchase ON id_purchase.ITEM_ID = i.ID AND LOWER(id_purchase.DATE_TYPE) IN ('purchased', 'purchase')
+       WHERE a.PROPERTY_ID = ?
+         AND i.STATUS = 'active'
+         AND i.DELETED_AT IS NULL
+         AND c.DELETED_AT IS NULL
+         AND a.DELETED_AT IS NULL
+       ORDER BY a.NAME, i.NAME`,
+      [propertyId],
+    );
 
-    if (groupBy === 'area') {
-      sql = `SELECT
-               a.NAME AS GROUP_NAME,
-               i.PURCHASE_PRICE,
-               i.CURRENT_VALUE,
-               i.COMPLETENESS,
-               i.DEPRECIATION_ENABLED,
-               i.DEPRECIATION_RATE AS ITEM_DEP_RATE,
-               p.DEPRECIATION_RATE AS PRODUCT_DEP_RATE,
-               i.CREATED_AT AS ITEM_CREATED_AT,
-               id_purchase.DATE_VALUE AS PURCHASE_DATE
-             FROM TALLY.items i
-             JOIN TALLY.containers c ON c.ID = i.CONTAINER_ID
-             JOIN TALLY.areas a ON a.ID = c.AREA_ID
-             LEFT JOIN TALLY.products p ON p.ID = i.PRODUCT_ID
-             LEFT JOIN TALLY.item_dates id_purchase ON id_purchase.ITEM_ID = i.ID AND LOWER(id_purchase.DATE_TYPE) IN ('purchased', 'purchase')
-             WHERE a.PROPERTY_ID = ?
-               AND i.STATUS = 'active'
-               AND i.DELETED_AT IS NULL
-               AND c.DELETED_AT IS NULL
-               AND a.DELETED_AT IS NULL`;
-    } else if (groupBy === 'tag') {
-      sql = `SELECT
-               t.NAME AS GROUP_NAME,
-               i.PURCHASE_PRICE,
-               i.CURRENT_VALUE,
-               i.COMPLETENESS,
-               i.DEPRECIATION_ENABLED,
-               i.DEPRECIATION_RATE AS ITEM_DEP_RATE,
-               p.DEPRECIATION_RATE AS PRODUCT_DEP_RATE,
-               i.CREATED_AT AS ITEM_CREATED_AT,
-               id_purchase.DATE_VALUE AS PURCHASE_DATE
-             FROM TALLY.items i
-             JOIN TALLY.containers c ON c.ID = i.CONTAINER_ID
-             JOIN TALLY.areas a ON a.ID = c.AREA_ID
-             LEFT JOIN TALLY.products p ON p.ID = i.PRODUCT_ID
-             LEFT JOIN TALLY.item_dates id_purchase ON id_purchase.ITEM_ID = i.ID AND LOWER(id_purchase.DATE_TYPE) IN ('purchased', 'purchase')
-             JOIN TALLY.entity_tags et ON et.ENTITY_ID = i.ID AND et.ENTITY_TYPE = 'item'
-             JOIN TALLY.tags t ON t.ID = et.TAG_ID
-             WHERE a.PROPERTY_ID = ?
-               AND i.STATUS = 'active'
-               AND i.DELETED_AT IS NULL
-               AND c.DELETED_AT IS NULL
-               AND a.DELETED_AT IS NULL`;
-    } else {
-      // groupBy === 'property' (single total)
-      sql = `SELECT
-               'Total' AS GROUP_NAME,
-               i.PURCHASE_PRICE,
-               i.CURRENT_VALUE,
-               i.COMPLETENESS,
-               i.DEPRECIATION_ENABLED,
-               i.DEPRECIATION_RATE AS ITEM_DEP_RATE,
-               p.DEPRECIATION_RATE AS PRODUCT_DEP_RATE,
-               i.CREATED_AT AS ITEM_CREATED_AT,
-               id_purchase.DATE_VALUE AS PURCHASE_DATE
-             FROM TALLY.items i
-             JOIN TALLY.containers c ON c.ID = i.CONTAINER_ID
-             JOIN TALLY.areas a ON a.ID = c.AREA_ID
-             LEFT JOIN TALLY.products p ON p.ID = i.PRODUCT_ID
-             LEFT JOIN TALLY.item_dates id_purchase ON id_purchase.ITEM_ID = i.ID AND LOWER(id_purchase.DATE_TYPE) IN ('purchased', 'purchase')
-             WHERE a.PROPERTY_ID = ?
-               AND i.STATUS = 'active'
-               AND i.DELETED_AT IS NULL
-               AND c.DELETED_AT IS NULL
-               AND a.DELETED_AT IS NULL`;
-    }
+    // `item_dates` is user-defined free text with no uniqueness of its own, so
+    // two rows typed "Purchased" on one item fan this LEFT JOIN out exactly the
+    // way the tag join did. Keying by item id makes the value set a SET, which
+    // is the only thing that makes the invariant above provable.
+    const items = new Map();
+    for (const row of rows) if (!items.has(row.ITEM_ID)) items.set(row.ITEM_ID, row);
 
-    const rows = await _db.query(sql, params);
+    const tagNames = groupBy === 'tag' ? await ReportsService._itemTagNames(propertyId) : null;
 
-    // Aggregate in JS to compute depreciated values
-    const groups = {};
-    for (const row of rows) {
-      const group = row.GROUP_NAME || 'Untagged';
-      if (!groups[group]) {
-        groups[group] = { group, purchaseTotal: 0, currentTotal: 0, itemCount: 0, excludedCount: 0 };
+    const groups = new Map();
+    const bucket = (name) => {
+      if (!groups.has(name)) {
+        groups.set(name, { group: name, purchaseTotal: 0, currentTotal: 0, itemCount: 0, excludedCount: 0 });
       }
+      return groups.get(name);
+    };
+    const totals = { itemCount: 0, purchaseTotal: 0, currentTotal: 0, excludedCount: 0 };
+
+    for (const row of items.values()) {
+      const names = ReportsService._groupNamesFor(row, groupBy, tagNames);
 
       // A box or a bag of spares carries the price of the object it came from,
       // and that object is in use somewhere else. The insurance report has
@@ -460,32 +484,95 @@ const ReportsService = {
       // Counted separately rather than filtered in SQL: an exclusion nobody can
       // see is indistinguishable from data that was never entered.
       if (_isPartial({ completeness: row.COMPLETENESS })) {
-        groups[group].excludedCount += 1;
+        totals.excludedCount += 1;
+        for (const name of names) bucket(name).excludedCount += 1;
         continue;
       }
 
       const purchasePrice = row.PURCHASE_PRICE ? parseFloat(row.PURCHASE_PRICE) : 0;
-      groups[group].purchaseTotal += purchasePrice;
-      groups[group].itemCount += 1;
-
+      let currentValue;
       if (row.DEPRECIATION_ENABLED && purchasePrice) {
         const depRate = parseFloat(row.ITEM_DEP_RATE || row.PRODUCT_DEP_RATE || 0);
         const purchaseDate = row.PURCHASE_DATE || row.ITEM_CREATED_AT;
-        groups[group].currentTotal += _calcDepreciatedValue(purchasePrice, depRate, purchaseDate);
+        currentValue = _calcDepreciatedValue(purchasePrice, depRate, purchaseDate);
       } else if (row.CURRENT_VALUE != null) {
-        groups[group].currentTotal += parseFloat(row.CURRENT_VALUE);
+        currentValue = parseFloat(row.CURRENT_VALUE);
       } else {
-        groups[group].currentTotal += purchasePrice;
+        currentValue = purchasePrice;
+      }
+
+      totals.itemCount += 1;
+      totals.purchaseTotal += purchasePrice;
+      totals.currentTotal += currentValue;
+
+      for (const name of names) {
+        const g = bucket(name);
+        g.itemCount += 1;
+        g.purchaseTotal += purchasePrice;
+        g.currentTotal += currentValue;
       }
     }
 
-    return Object.values(groups).map(g => ({
+    const groupList = [...groups.values()].map(g => ({
       group: g.group,
-      purchaseTotal: parseFloat(g.purchaseTotal.toFixed(2)),
-      currentTotal: parseFloat(g.currentTotal.toFixed(2)),
+      purchaseTotal: _round2(g.purchaseTotal),
+      currentTotal: _round2(g.currentTotal),
       itemCount: g.itemCount,
       excludedCount: g.excludedCount,
     }));
+
+    return {
+      groupBy,
+      groups: groupList,
+      totals: {
+        groupCount: groupList.length,
+        itemCount: totals.itemCount,
+        purchaseTotal: _round2(totals.purchaseTotal),
+        currentTotal: _round2(totals.currentTotal),
+        excludedCount: totals.excludedCount,
+      },
+      // Measured, not assumed: only tag grouping CAN overlap, and it only does
+      // when some item actually carries more than one tag. Consumers use this
+      // to label the subtotals rather than to correct them.
+      overlapping: groupList.reduce((s, g) => s + g.itemCount, 0) > totals.itemCount,
+    };
+  },
+
+  /** The grouping bucket(s) one item belongs to. Tags are the only many. */
+  _groupNamesFor(row, groupBy, tagNames) {
+    if (groupBy === 'area') return [row.AREA_NAME || 'Unassigned'];
+    // #285: condition is a first-class item column, so this is one key
+    // extractor rather than a fourth SELECT. NULL is a real answer — "how much
+    // of the property is in poor condition" is only worth reading beside how
+    // much of it nobody has rated.
+    if (groupBy === 'condition') return [row.ITEM_CONDITION || 'Unrated'];
+    if (groupBy === 'tag') {
+      // An explicit bucket, because an item with no tags is not a rounding
+      // error — before #310 it was dropped from the report altogether.
+      const names = tagNames && tagNames.get(row.ITEM_ID);
+      return names && names.length ? names : ['Untagged'];
+    }
+    return ['Total'];
+  },
+
+  /** item id → its tag names, for the whole property, in one query. */
+  async _itemTagNames(propertyId) {
+    const rows = await _db.query(
+      `SELECT et.ENTITY_ID AS ITEM_ID, t.NAME AS TAG_NAME
+         FROM TALLY.entity_tags et
+         JOIN TALLY.tags t ON t.ID = et.TAG_ID
+        WHERE et.ENTITY_TYPE = 'item'
+          AND t.PROPERTY_ID = ?
+        ORDER BY t.NAME`,
+      [propertyId],
+    );
+    const byItem = new Map();
+    for (const row of rows) {
+      const names = byItem.get(row.ITEM_ID) || [];
+      if (!names.includes(row.TAG_NAME)) names.push(row.TAG_NAME);
+      byItem.set(row.ITEM_ID, names);
+    }
+    return byItem;
   },
 
   // ── Items by Location ────────────────────────────────────────────────────
@@ -917,7 +1004,7 @@ const ReportsService = {
     return `${_plural(items.length, 'ITEM')} · ${counted.length} COUNTED`;
   },
 
-  _renderTotalValuePdf(doc, groups) {
+  _renderTotalValuePdf(doc, data) {
     const cols = [
       { label: 'Group',    x: M,       w: 230 },
       { label: 'Items',    x: M + 236, w: 50, align: 'right' },
@@ -925,16 +1012,22 @@ const ReportsService = {
       { label: 'Value',    x: M + 398, w: 114, align: 'right' },
     ];
 
+    const { groups, totals, overlapping } = _totalValueView(data);
+
     // Sorted, because the question this report answers is "where is the money"
     // and the answer should be the first row rather than something you find by
     // comparing four-figure numbers by eye.
     const sorted = [...groups].sort((a, b) => (b.currentTotal || 0) - (a.currentTotal || 0));
-    const items = sorted.reduce((s, g) => s + (g.itemCount || 0), 0);
-    const paid = sorted.reduce((s, g) => s + (g.purchaseTotal || 0), 0);
-    const value = sorted.reduce((s, g) => s + (g.currentTotal || 0), 0);
     const max = Math.max(1, ...sorted.map(g => g.currentTotal || 0));
 
-    const excluded = sorted.reduce((s2, g) => s2 + (g.excludedCount || 0), 0);
+    // The band is the property, NOT the sum of the column beneath it. Under a
+    // tag grouping those are different numbers by design — a thing with three
+    // tags is listed three times and owned once — and the band is the one an
+    // insurer is handed (#310).
+    const items = totals.itemCount;
+    const paid = totals.purchaseTotal;
+    const value = totals.currentTotal;
+    const excluded = totals.excludedCount;
     _band(doc, [
       { k: 'Groups', v: String(sorted.length) },
       { k: 'Items', v: String(items) },
@@ -942,6 +1035,20 @@ const ReportsService = {
       { k: 'Current total', v: _fmtCurrency(value) },
       excluded ? { k: 'Excluded', v: String(excluded) } : null,
     ]);
+
+    // Said before the rows, not after them: a reader who adds the Value column
+    // up and gets a bigger number than the band has to be told why on the way
+    // in, or they will trust the arithmetic they did themselves.
+    if (overlapping) {
+      _ensureRoom(doc, 22);
+      doc.font('Helvetica-Oblique').fontSize(7.5).fillColor(INK)
+        .text(
+          'Groups overlap — an item with three tags is listed under all three. The subtotals below ' +
+          'therefore add up to more than the property is worth; the totals above count each item once.',
+          M, doc.y + 6, { width: W },
+        );
+      doc.y += 2;
+    }
 
     if (!sorted.length) return _empty(doc, 'Nothing to total in this property.');
 
@@ -982,9 +1089,11 @@ const ReportsService = {
           M, doc.y + 8, { width: W },
         );
     }
-    return excluded
-      ? `BAR = SHARE OF THE LARGEST GROUP · ${excluded} EXCLUDED`
-      : 'BAR = SHARE OF THE LARGEST GROUP';
+    return [
+      'BAR = SHARE OF THE LARGEST GROUP',
+      overlapping ? 'SUBTOTALS OVERLAP · TOTALS COUNT EACH ITEM ONCE' : null,
+      excluded ? `${excluded} EXCLUDED` : null,
+    ].filter(Boolean).join(' · ');
   },
 
   _renderLocationPdf(doc, areas) {
@@ -1184,9 +1293,23 @@ const ReportsService = {
   },
 
   _renderTagPdf(doc, tagGroups) {
-    const items = tagGroups.reduce((s, g) => s + (g.items || []).length, 0);
-    const value = tagGroups.reduce(
-      (s, g) => s + (g.items || []).reduce((t, i) => t + (i.purchasePrice || 0), 0), 0);
+    // The per-tag LISTING repeats a multi-tagged item on purpose — that is what
+    // a tag report is for. The BAND is a property-level total, so it counts
+    // each item once; summing the sections was the #310 error in a second
+    // place. An id-less row (a fixture, a hand-built payload) counts as itself.
+    let items = 0, value = 0, rows = 0;
+    const seen = new Set();
+    for (const group of tagGroups) {
+      for (const item of group.items || []) {
+        rows += 1;
+        if (item.itemId != null) {
+          if (seen.has(item.itemId)) continue;
+          seen.add(item.itemId);
+        }
+        items += 1;
+        value += item.purchasePrice || 0;
+      }
+    }
 
     _band(doc, [
       { k: 'Tags', v: String(tagGroups.length) },
@@ -1227,7 +1350,9 @@ const ReportsService = {
       });
     }
 
-    return `${_plural(items, 'ITEM')} ACROSS ${_plural(tagGroups.length, 'TAG')}`;
+    return rows > items
+      ? `${_plural(items, 'ITEM')} ACROSS ${_plural(tagGroups.length, 'TAG')} · ${rows} LISTINGS (MULTI-TAGGED ITEMS REPEAT)`
+      : `${_plural(items, 'ITEM')} ACROSS ${_plural(tagGroups.length, 'TAG')}`;
   },
 
   // ── CSV Generation ───────────────────────────────────────────────────────
@@ -1269,7 +1394,7 @@ const ReportsService = {
         }));
         break;
 
-      case 'total_value':
+      case 'total_value': {
         stringifier = createObjectCsvStringifier({
           header: [
             { id: 'group', title: 'Group' },
@@ -1281,8 +1406,24 @@ const ReportsService = {
             { id: 'excludedCount', title: 'Excluded (box/spares)' },
           ],
         });
-        records = data.map(g => ({ ...g, excludedCount: g.excludedCount ?? 0 }));
+        const view = _totalValueView(data);
+        records = view.groups.map(g => ({ ...g, excludedCount: g.excludedCount ?? 0 }));
+        // The property's own total travels WITH the groups, as a labelled last
+        // row. Under a tag grouping, SUM() over the column above it is not the
+        // answer — a thing with three tags is in three of those rows — and a
+        // spreadsheet is exactly where someone would sum it and believe the
+        // result (#310).
+        records.push({
+          group: view.overlapping
+            ? 'TOTAL (each item once — groups above overlap)'
+            : 'TOTAL (each item once)',
+          itemCount: view.totals.itemCount,
+          purchaseTotal: view.totals.purchaseTotal,
+          currentTotal: view.totals.currentTotal,
+          excludedCount: view.totals.excludedCount,
+        });
         break;
+      }
 
       case 'items_by_location':
         stringifier = createObjectCsvStringifier({

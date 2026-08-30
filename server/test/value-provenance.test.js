@@ -5,6 +5,7 @@ const path = require('node:path');
 const Items = require('../src/modules/inventory/items.service');
 const Reports = require('../src/modules/reports/reports.service');
 const Audit = require('../src/modules/audit/audit.service');
+const { GROUP_BY } = require('../src/modules/reports/reports.schema');
 
 const noop = { warn() {}, info() {}, error() {} };
 
@@ -296,19 +297,26 @@ test('the insurance CSV carries completeness, so a spreadsheet total agrees', ()
 
 // ── total value agrees with the insurance summary ─────────────────────────
 
-/** Runs totalValue over fabricated rows and returns the single group. */
-async function totalOf(rows) {
-  Reports.init({ db: { query: async () => rows }, logger: noop, config: {} });
-  const [group] = await Reports.totalValue(1, { groupBy: 'property' });
-  return group;
+/**
+ * Runs totalValue over fabricated item rows and returns the single group.
+ *
+ * Each row is one item, so each gets an id: since #310 the service keys on
+ * `ITEM_ID` to make its value set a SET — a duplicated row is a join fanning
+ * out, not a second thing you own.
+ */
+async function totalOf(rows, groupBy = 'property') {
+  const items = rows.map((r, i) => ({ ITEM_ID: i + 1, ...r }));
+  Reports.init({ db: { query: async () => items }, logger: noop, config: {} });
+  const { groups } = await Reports.totalValue(1, { groupBy });
+  return groups[0];
 }
 
 test('total value skips box/spares rows, as the insurance summary does', async () => {
   // The two reports describing the same property must not disagree about what
   // it is worth. This counted boxes at full price until now.
   const group = await totalOf([
-    { GROUP_NAME: 'Total', PURCHASE_PRICE: '189.00', CURRENT_VALUE: '142.00', COMPLETENESS: 'complete' },
-    { GROUP_NAME: 'Total', PURCHASE_PRICE: '1400.00', CURRENT_VALUE: '1400.00', COMPLETENESS: 'box_only' },
+    { PURCHASE_PRICE: '189.00', CURRENT_VALUE: '142.00', COMPLETENESS: 'complete' },
+    { PURCHASE_PRICE: '1400.00', CURRENT_VALUE: '1400.00', COMPLETENESS: 'box_only' },
   ]);
   assert.equal(group.currentTotal, 142);
   assert.equal(group.purchaseTotal, 189);
@@ -316,9 +324,9 @@ test('total value skips box/spares rows, as the insurance summary does', async (
 
 test('an excluded row is counted and reported, not silently dropped', async () => {
   const group = await totalOf([
-    { GROUP_NAME: 'Total', PURCHASE_PRICE: '189.00', CURRENT_VALUE: '142.00', COMPLETENESS: 'complete' },
-    { GROUP_NAME: 'Total', PURCHASE_PRICE: '1400.00', CURRENT_VALUE: '1400.00', COMPLETENESS: 'box_only' },
-    { GROUP_NAME: 'Total', PURCHASE_PRICE: '30.00', CURRENT_VALUE: null, COMPLETENESS: 'accessories_only' },
+    { PURCHASE_PRICE: '189.00', CURRENT_VALUE: '142.00', COMPLETENESS: 'complete' },
+    { PURCHASE_PRICE: '1400.00', CURRENT_VALUE: '1400.00', COMPLETENESS: 'box_only' },
+    { PURCHASE_PRICE: '30.00', CURRENT_VALUE: null, COMPLETENESS: 'accessories_only' },
   ]);
   assert.equal(group.itemCount, 1, 'an excluded row still counted toward itemCount');
   assert.equal(group.excludedCount, 2);
@@ -328,7 +336,7 @@ test('rows predating the completeness column still count', async () => {
   // COMPLETENESS is NOT NULL DEFAULT 'complete', but a fake/legacy row may
   // arrive undefined. Treating that as partial would zero the whole report.
   const group = await totalOf([
-    { GROUP_NAME: 'Total', PURCHASE_PRICE: '50.00', CURRENT_VALUE: '40.00' },
+    { PURCHASE_PRICE: '50.00', CURRENT_VALUE: '40.00' },
   ]);
   assert.equal(group.currentTotal, 40);
   assert.equal(group.itemCount, 1);
@@ -342,11 +350,21 @@ test('the total-value CSV carries the excluded count', () => {
   assert.match(csv.split('\n')[0], /Excluded \(box\/spares\)/);
 });
 
-test('every totalValue grouping reads COMPLETENESS', () => {
-  // Three near-identical queries; adding the column to two of them would leave
-  // "by tag" quietly counting boxes.
-  const src = fs.readFileSync(path.join(__dirname, '../src/modules/reports/reports.service.js'), 'utf8');
-  const body = src.slice(src.indexOf('async totalValue('), src.indexOf('const rows = await _db.query(sql, params)'));
-  assert.equal((body.match(/i\.COMPLETENESS/g) || []).length, 3,
-    'a grouping is missing the column and will count packaging at full value');
+test('every totalValue grouping excludes packaging — asserted by running them', async () => {
+  // This used to grep the source for three copies of `i.COMPLETENESS`, because
+  // the grouping was three near-identical SELECTs and adding the column to two
+  // of them would leave "by tag" quietly counting boxes. #310 collapsed those
+  // into one query with the grouping key chosen in JS, so the honest form of
+  // the same guard is to run every grouping the schema offers.
+  const rows = [
+    { PURCHASE_PRICE: '189.00', CURRENT_VALUE: '142.00', COMPLETENESS: 'complete' },
+    { PURCHASE_PRICE: '1400.00', CURRENT_VALUE: '1400.00', COMPLETENESS: 'box_only' },
+  ];
+  for (const groupBy of GROUP_BY) {
+    const items = rows.map((r, i) => ({ ITEM_ID: i + 1, ...r }));
+    Reports.init({ db: { query: async () => items }, logger: noop, config: {} });
+    const { totals } = await Reports.totalValue(1, { groupBy });
+    assert.equal(totals.currentTotal, 142, `groupBy=${groupBy} counted packaging at full value`);
+    assert.equal(totals.excludedCount, 1, `groupBy=${groupBy} lost the exclusion`);
+  }
 });

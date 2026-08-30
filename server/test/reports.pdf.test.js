@@ -25,9 +25,18 @@ const FIXTURES = {
     completeness: i % 17 === 0 ? 'box_only' : 'complete',
     condition: 'good', areaName: 'Garage', containerName: 'Tote',
   })),
-  total_value: many(6, i => ({
-    group: `Area ${i}`, itemCount: i * 3, purchaseTotal: i * 900, currentTotal: i * 640,
-  })),
+  // The envelope `totalValue()` returns since #310, with overlapping groups —
+  // so the renderer draws its "groups overlap" notice here rather than only in
+  // production, where it would be a page-break nobody had ever laid out.
+  total_value: {
+    groupBy: 'tag',
+    groups: many(6, i => ({
+      group: `Tag ${i}`, itemCount: i * 3, purchaseTotal: i * 900, currentTotal: i * 640,
+      excludedCount: i % 3 === 0 ? 1 : 0,
+    })),
+    totals: { groupCount: 6, itemCount: 30, purchaseTotal: 9000, currentTotal: 6400, excludedCount: 2 },
+    overlapping: true,
+  },
   items_by_location: many(4, a => ({
     areaName: `Area ${a}`,
     containers: many(3, c => ({
