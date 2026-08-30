@@ -44,7 +44,14 @@ jobs:
       - name: Syntax check all JS files
         run: node --check index.js && find src -name '*.js' -exec node --check {} +
         working-directory: server
-      - run: tar -czf tally-server.tar.gz -C server index.js package.json package-lock.json src/
+      # Equivalent of the pw.json server build step (CI/CD rule 5: the two
+      # pipelines must produce equivalent results) — stamps the commit this
+      # build was produced from into version.json so it ships with the
+      # server. Never fails the job; see write-version.js's own contract.
+      - name: Generate build version stamp
+        run: node scripts/write-version.js
+        working-directory: server
+      - run: tar -czf tally-server.tar.gz -C server index.js package.json package-lock.json src/ version.json
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: tally-server

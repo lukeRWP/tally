@@ -15,6 +15,7 @@ const db = require('./src/infrastructure/db');
 const storage = require('./src/infrastructure/storage');
 const logger = require('./src/utils/logger');
 const errorHandler = require('./src/middleware/error-handler');
+const { getBuildInfo } = require('./src/utils/version');
 
 const app = express();
 app.set('trust proxy', 1); // Trust first proxy (Nginx)
@@ -99,10 +100,11 @@ app.get('/health/live', async (req, res) => {
   }
 
   const healthy = dbStatus === 'connected';
+  const build = getBuildInfo();
   res.status(healthy ? 200 : 503).json({
     status: healthy ? 'ok' : 'degraded',
-    version: process.env.APP_VERSION || 'unknown',
-    sha: process.env.APP_SHA || 'unknown',
+    version: build.version,
+    sha: build.sha,
     uptime: process.uptime(),
     db: dbStatus,
   });
@@ -120,10 +122,11 @@ app.get('/health/ready', async (req, res) => {
     storage.checkConnection().then(() => { storageStatus = 'reachable'; }).catch(() => {}),
   ]);
   const ready = dbStatus === 'connected' && storageStatus === 'reachable';
+  const build = getBuildInfo();
   res.status(ready ? 200 : 503).json({
     status: ready ? 'ok' : 'degraded',
-    version: process.env.APP_VERSION || 'unknown',
-    sha: process.env.APP_SHA || 'unknown',
+    version: build.version,
+    sha: build.sha,
     uptime: process.uptime(),
     db: dbStatus,
     storage: storageStatus,
