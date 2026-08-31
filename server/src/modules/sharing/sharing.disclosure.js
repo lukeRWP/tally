@@ -24,9 +24,11 @@
  * price, change the `defaultOn: true,` line inside the `purchasePrice`
  * category. Nothing else — not the client, not the schema, not a migration.
  *
- * Every category ships `defaultOn: true` today. What a share SHOULD publish by
- * default is still an open question on #298 and is deliberately not answered
- * here; this file only makes answering it a one-line edit.
+ * Every category ships `defaultOn: true` today. #298 asked whether the
+ * property address and the purchase price should be among them; Luke's answer
+ * was yes to both — a share defaults to disclosing, and a sharer who wants
+ * either withheld opts out per link. That decision is recorded, not deferred:
+ * see the `defaultOn: true,` line inside `address` and inside `purchasePrice`.
  *
  * ── THE INVARIANT: an existing link is frozen ───────────────────────────────
  *
@@ -85,9 +87,9 @@ const CATEGORIES = [
     detail: 'The street address recorded for this property.',
     appliesTo: ['property'],
     optional: true,
-    // ↓ THE ADDRESS DEFAULT. Change this one line to `false` to stop new
-    //   property shares publishing the street address. #298 is where that
-    //   call gets made; nobody has made it, so it stays `true`.
+    // ↓ THE ADDRESS DEFAULT. #298: Luke decided a new property share
+    //   publishes the street address by default; a sharer can still turn it
+    //   off per link. Change this one line to `false` to reverse that call.
     defaultOn: true,
     strip(envelope) {
       if (envelope.property) envelope.property.address = null;
@@ -115,8 +117,9 @@ const CATEGORIES = [
     detail: 'The purchase price recorded for this item.',
     appliesTo: ['item'],
     optional: true,
-    // ↓ THE PURCHASE-PRICE DEFAULT. Change this one line to `false` to stop
-    //   new item shares publishing what you paid. Also #298's call to make.
+    // ↓ THE PURCHASE-PRICE DEFAULT. #298: Luke decided a new item share
+    //   publishes what you paid by default; a sharer can still turn it off
+    //   per link. Change this one line to `false` to reverse that call.
     defaultOn: true,
     strip(envelope) {
       if (envelope.item) envelope.item.purchasePrice = null;

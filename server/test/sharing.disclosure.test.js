@@ -16,7 +16,9 @@ const disclosure = require('../src/modules/sharing/sharing.disclosure');
  *  2. EVERYTHING ELSE STILL SHIPS BY DEFAULT. The per-link disclosure choice
  *     starts fully on, a NULL column means "everything", and a link created
  *     before this feature publishes exactly what it published before. What a
- *     share SHOULD publish by default is still Luke's call on #298.
+ *     share SHOULD publish by default was Luke's call to make on #298: both
+ *     the property address and the purchase price default to on, same as
+ *     every other category.
  */
 
 const logger = { info() {}, warn() {}, error() {}, debug() {} };
@@ -288,17 +290,31 @@ test('every optional category declares an explicit boolean default', () => {
   }
 });
 
-test('every default is still ON — this PR decides nothing on #298', () => {
+test('every default is ON, address and purchasePrice included — #298 decided both', () => {
   for (const type of disclosure.ENTITY_TYPES) {
     for (const [key, on] of Object.entries(disclosure.defaultChoice(type))) {
       assert.equal(
         on,
         true,
-        `${type}.${key} must still default to on — turning one off is a separate, ` +
-          'deliberate decision that is Luke\'s to make',
+        `${type}.${key} must default to on — a category flipping off is a separate, ` +
+          'deliberate decision, not something this test should let slide by silently',
       );
     }
   }
+});
+
+// #298 named two categories as genuinely undecided while every other category
+// shipped on by default without controversy: `address` (a property's street
+// address) and `purchasePrice` (what an item cost). Luke's answer was on for
+// both — a share defaults to disclosing, and a sharer who wants either
+// withheld opts out per link. This pins that specific decision, separately
+// from "every default is on" above, so a future edit to just these two lines
+// fails a test with #298's reasoning attached, not a generic assertion.
+test('address and purchasePrice default ON — the #298 decision, not a placeholder', () => {
+  const address = disclosure.CATEGORIES.find((c) => c.key === 'address');
+  const purchasePrice = disclosure.CATEGORIES.find((c) => c.key === 'purchasePrice');
+  assert.equal(address.defaultOn, true, 'a property share publishes the address by default');
+  assert.equal(purchasePrice.defaultOn, true, 'an item share publishes the purchase price by default');
 });
 
 test('the catalogue the dialog pre-ticks from reports the server\'s actual default', async () => {
