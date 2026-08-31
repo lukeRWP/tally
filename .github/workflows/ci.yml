@@ -24,7 +24,7 @@ jobs:
     name: Test Client
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
       - uses: ./.github/actions/setup-node
       - run: npm ci
         working-directory: client
@@ -43,7 +43,7 @@ jobs:
     name: Test Server
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
       - uses: ./.github/actions/setup-node
       # test/labels.geometry.test.js rasterises the real label PDFs with
       # `pdftoppm -r 203` and checks the printed QR / Code 128 module grid
@@ -108,7 +108,7 @@ jobs:
     name: Security Audit
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
       - uses: ./.github/actions/setup-node
       - name: Audit server
         run: npm audit --production --audit-level=high

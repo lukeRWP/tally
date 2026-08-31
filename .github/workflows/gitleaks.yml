@@ -19,7 +19,7 @@ jobs:
       # the PR commits; without this it 403s on pull_request events.
       pull-requests: read
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v4.x
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4.x
         with:
           # Full history needed so gitleaks scans every commit on PRs,
           # not just the diff. Slower (~1 min) but catches secrets that
