@@ -19,10 +19,19 @@ module.exports = function productsRoutes({ app, db, logger, config }) {
   const perUser = (req) => (req.user?.id ? `u:${req.user.id}` : ipKeyGenerator(req.ip));
 
   // A per-minute cap bounds a runaway loop; only a long window bounds a bill.
+  //
+  // The burst limiter stays in memory: a 60-second window rarely spans a
+  // restart, and a runaway client loop is what it exists for.
   const visionBurst = rateLimit({ windowMs: 60 * 1000, max: 20,
     keyGenerator: perUser, standardHeaders: true, legacyHeaders: false });
-  const visionDaily = rateLimit({ windowMs: 24 * 60 * 60 * 1000, max: config.vision.dailyPerUser,
-    keyGenerator: perUser, standardHeaders: true, legacyHeaders: false });
+  // The DAILY cap is database-backed (#340). As an in-memory limiter it reset
+  // on every deploy — roughly twelve on 2026-08-30 — so the window that was
+  // supposed to bound the bill bounded nothing. Fail-open by design; see the
+  // module header for why this gate differs from the auth path.
+  const { makeVisionDailyLimit } = require('./vision-daily-limit');
+  const visionDaily = makeVisionDailyLimit({
+    db, logger, max: config.vision.dailyPerUser,
+  });
 
   // POST /api/products/_y_/identify-photo
   // requireAuth only, and no property scoping: this route issues zero SQL
