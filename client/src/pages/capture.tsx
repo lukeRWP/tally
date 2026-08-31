@@ -468,6 +468,15 @@ export function Capture() {
   // A failed identify used to be indistinguishable from a disabled feature and
   // from an honest 'cannot tell'. All three showed nothing.
   const [visionFailed, setVisionFailed] = React.useState(false);
+  /**
+   * A 429 is not a failure to read the photo — it read nothing, because the
+   * request never reached the model. Folding it into visionFailed told the
+   * user "couldn't read it", which is both wrong and unactionable: the fix is
+   * to wait, not to retake the photo. Vision is capped per USER (20/min,
+   * 250/day), so this also arrives on every device at once, which makes a
+   * generic failure message actively misleading.
+   */
+  const [visionLimited, setVisionLimited] = React.useState(false);
   // The model was asked and had nothing useful to say. Distinct from failure
   // (the request broke) and from the feature being off (nothing was asked).
   const [visionEmpty, setVisionEmpty] = React.useState(false);
@@ -1149,6 +1158,7 @@ export function Capture() {
     const gen = ++identifyGen.current;
     setVisionPending(true);
     setVisionFailed(false);
+    setVisionLimited(false);
     setVisionEmpty(false);
     try {
       const sendable = await asSendableImage(blob);
@@ -1165,7 +1175,9 @@ export function Capture() {
       });
       if (!res.ok) {
         console.warn('[vision] identify failed', res.status, blob.type, sendable.type);
-        if (gen === identifyGen.current) setVisionFailed(true);
+        if (gen === identifyGen.current) {
+          if (res.status === 429) setVisionLimited(true); else setVisionFailed(true);
+        }
         return;
       }
       const data = await parseEnvelope<{
@@ -1305,6 +1317,7 @@ export function Capture() {
    * would drift on exactly the states that are hardest to see.
    */
   const photoStatus = visionPending ? 'photo held — looking at it…'
+    : visionLimited ? 'photo held — naming limit reached, try later'
     : visionFailed ? "photo held — couldn't read it"
     : visionEmpty ? 'photo held — nothing recognised'
     : vision ? `photo held — ${vision.confidence === 'high' ? 'read' : 'guessed'} from the photo`
