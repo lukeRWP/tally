@@ -1,4 +1,4 @@
-const multer = require('multer');
+const { memoryUpload, single } = require('../../utils/upload');
 
 const ALLOWED_MIMES = new Set([
   'image/jpeg', 'image/png', 'image/webp', 'image/gif',
@@ -9,14 +9,7 @@ const ALLOWED_MIMES = new Set([
   'application/vnd.ms-excel', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
 ]);
 
-const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 20 * 1024 * 1024 },
-  fileFilter: (req, file, cb) => {
-    if (ALLOWED_MIMES.has(file.mimetype)) cb(null, true);
-    else cb(new Error('File type not allowed'), false);
-  },
-});
+const upload = memoryUpload({ accepted: ALLOWED_MIMES, maxBytes: 20 * 1024 * 1024, message: 'File type not allowed' });
 
 module.exports = function filesRoutes({ app, db, logger, config }) {
   const FilesService = require('./files.service');
@@ -46,7 +39,7 @@ module.exports = function filesRoutes({ app, db, logger, config }) {
   });
 
   // POST /api/files/_y_/item/:itemId/upload — upload file (owner/editor)
-  app.post('/api/files/_y_/item/:itemId/upload', requireAuth, resolvePropertyFromItem, resolvePropertyRole, requireRole('owner', 'editor'), upload.single('file'), async (req, res) => {
+  app.post('/api/files/_y_/item/:itemId/upload', requireAuth, resolvePropertyFromItem, resolvePropertyRole, requireRole('owner', 'editor'), single(upload, 'file'), async (req, res) => {
     if (!req.file) return error(res, 'No file provided', 400);
     // Validate fileType against the known set before it's interpolated into the
     // storage object key — an arbitrary/unsanitized value would otherwise let a

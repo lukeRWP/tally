@@ -10,6 +10,7 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog';
 import { cn } from '@/lib/utils';
+import { prepareImage } from '@/lib/image';
 import { toast } from '@/components/ui/toast';
 import { useCreateCondition } from '@/hooks/use-files';
 import type { ConditionSnapshot } from '@/types/files';
@@ -39,8 +40,11 @@ export function ConditionForm({ itemId, isOpen, onOpenChange, onComplete }: Cond
 
   const createCondition = useCreateCondition();
 
-  function handlePhotoChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0] ?? null;
+  async function handlePhotoChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const picked = e.target.files?.[0] ?? null;
+    // Prepared at pick, not at submit, so the preview shows what will be sent
+    // — and a HEIC from the iOS picker becomes a jpeg the route takes (#346).
+    const file = picked ? await prepareImage(picked) : null;
     setPhoto(file);
     if (file) {
       const url = URL.createObjectURL(file);

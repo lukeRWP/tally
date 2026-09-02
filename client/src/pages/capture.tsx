@@ -11,6 +11,7 @@ import { Input } from '@/components/ui/input';
 import { ColHead } from '@/components/ui/col-head';
 import { toast } from '@/components/ui/toast';
 import { api, getCsrfToken, parseEnvelope } from '@/lib/api';
+import { asSendableImage, extFor, prepareImage } from '@/lib/image';
 import { findOrCreateLooseContainer } from '@/hooks/use-put-down';
 import { DestinationPicker } from '@/components/inventory/destination-picker';
 import { useCreateItem, useDeleteItem } from '@/hooks/use-inventory';
@@ -278,21 +279,6 @@ type Phase = 'photo' | 'identify' | 'place';
 // Only steps BEHIND the current one ever use this — see the dots' render.
 const STEP_PHASE: Record<1 | 2 | 3, Phase> = { 1: 'photo', 2: 'identify', 3: 'place' };
 const STEP_LABEL: Record<1 | 2 | 3, string> = { 1: 'picture', 2: 'identify', 3: 'place' };
-
-/** Downscale to keep uploads small on garage wifi (and dodge the 20MB cap). */
-async function downscale(file: File, max = 1600): Promise<Blob> {
-  const bitmap = await createImageBitmap(file).catch(() => null);
-  if (!bitmap) return file;
-  const scale = Math.min(1, max / Math.max(bitmap.width, bitmap.height));
-  if (scale === 1 && file.size < 1_500_000) return file;
-  const canvas = document.createElement('canvas');
-  canvas.width = Math.round(bitmap.width * scale);
-  canvas.height = Math.round(bitmap.height * scale);
-  canvas.getContext('2d')?.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-  return new Promise((resolve) =>
-    canvas.toBlob((b) => resolve(b ?? file), 'image/jpeg', 0.82),
-  );
-}
 
 export function Capture() {
   const navigate = useNavigate();
@@ -864,7 +850,9 @@ export function Capture() {
     try {
       await uploadFile.mutateAsync({
         itemId,
-        file: new File([photo], `capture-${itemId}.jpg`, { type: 'image/jpeg' }),
+        // The label has to match the bytes: the server sniffs them and 400s on
+        // a mismatch, and a small PNG passes through prepareImage untouched.
+        file: new File([photo], `capture-${itemId}.${extFor(photo.type || 'image/jpeg')}`, { type: photo.type || 'image/jpeg' }),
         fileType: 'photo',
       });
       // The blob was held on the snapshot only so a retry could re-run from
@@ -1111,30 +1099,6 @@ export function Capture() {
    * did not ask for this, so it cannot interrupt them by failing.
    */
   /**
-   * The vision route accepts jpeg/png/webp only, and rejects anything else with
-   * a 415 before spending a token. downscale() has three paths that hand back
-   * the ORIGINAL File untouched — bitmap decode failure, the small-image
-   * passthrough, and toBlob returning null — and on iOS `accept="image/*"` can
-   * hand us HEIC. So the blob reaching here is not reliably a jpeg.
-   *
-   * Re-encode when the type is not one the route takes. The item photo upload
-   * is a different route with a different accept list, which is why that path
-   * never surfaced this.
-   */
-  async function asSendableImage(blob: Blob): Promise<Blob> {
-    if (['image/jpeg', 'image/png', 'image/webp'].includes(blob.type)) return blob;
-    const bitmap = await createImageBitmap(blob).catch(() => null);
-    if (!bitmap) return blob;   // let the server reject it and say so
-    const canvas = document.createElement('canvas');
-    canvas.width = bitmap.width;
-    canvas.height = bitmap.height;
-    canvas.getContext('2d')?.drawImage(bitmap, 0, 0);
-    return new Promise((resolve) =>
-      canvas.toBlob((b) => resolve(b ?? blob), 'image/jpeg', 0.82),
-    );
-  }
-
-  /**
    * Ask what the photo shows. Fired unawaited: the answer is a convenience, and
    * the flow must reach step 2 at the same speed whether or not it arrives.
    *
@@ -1244,7 +1208,7 @@ export function Capture() {
    * drift on the part that matters least visibly: whether identification runs.
    */
   async function acceptPhotoFile(file: File) {
-    const blob = await downscale(file);
+    const blob = await prepareImage(file);
     setDraft((d) => ({ ...d, photo: blob, photoUrl: URL.createObjectURL(blob) }));
     setPhase('identify');
     // Not awaited: step 2 is already on screen and the camera scanner is live.
