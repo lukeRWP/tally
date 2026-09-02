@@ -343,7 +343,10 @@ const ReportsService = {
        -- entered and every report's purchase date comes back empty.
        LEFT JOIN TALLY.item_dates id_purchase ON id_purchase.ITEM_ID = i.ID AND LOWER(id_purchase.DATE_TYPE) IN ('purchased', 'purchase')
        WHERE a.PROPERTY_ID = ?
-         AND i.STATUS = 'active'
+         -- Not 'active': an item out on loan is STATUS 'lent' (lending.service)
+         -- and the property still owns it. Filtering on 'active' dropped every
+         -- lent item from the money, silently (#344).
+         AND i.STATUS <> 'removed'
          AND i.DELETED_AT IS NULL
          AND c.DELETED_AT IS NULL
          AND a.DELETED_AT IS NULL
@@ -454,7 +457,10 @@ const ReportsService = {
        LEFT JOIN TALLY.products p ON p.ID = i.PRODUCT_ID
        LEFT JOIN TALLY.item_dates id_purchase ON id_purchase.ITEM_ID = i.ID AND LOWER(id_purchase.DATE_TYPE) IN ('purchased', 'purchase')
        WHERE a.PROPERTY_ID = ?
-         AND i.STATUS = 'active'
+         -- Not 'active': an item out on loan is STATUS 'lent' (lending.service)
+         -- and the property still owns it. Filtering on 'active' dropped every
+         -- lent item from the money, silently (#344).
+         AND i.STATUS <> 'removed'
          AND i.DELETED_AT IS NULL
          AND c.DELETED_AT IS NULL
          AND a.DELETED_AT IS NULL
