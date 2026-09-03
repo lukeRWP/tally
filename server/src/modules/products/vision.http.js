@@ -1,4 +1,4 @@
-const multer = require('multer');
+const { memoryUpload, single } = require('../../utils/upload');
 const { sniffMime } = require('../../utils/fileType');
 const { success, error } = require('../../utils/response');
 const { identifyPhoto } = require('./vision.schema');
@@ -13,25 +13,16 @@ const { identifyPhoto } = require('./vision.schema');
 const MAX_BYTES = 6 * 1024 * 1024;
 const ACCEPTED = new Set(['image/jpeg', 'image/png', 'image/webp']);
 
-const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: MAX_BYTES, files: 1, fields: 4 },
-  fileFilter: (req, file, cb) => {
-    if (ACCEPTED.has(file.mimetype)) return cb(null, true);
-    // Carry a status or the global handler falls through to 500 -- which is
-    // what a rejected upload returns on the files and condition routes today.
-    cb(Object.assign(new Error('Unsupported image type'), { statusCode: 415 }));
-  },
+// The 415/413/400 mapping lived here first; it is utils/upload now, shared
+// with the files and condition routes so all three say the same thing.
+const upload = memoryUpload({
+  accepted: ACCEPTED,
+  maxBytes: MAX_BYTES,
+  message: 'Unsupported image type',
+  limits: { files: 1, fields: 4 },
 });
 
-function photoUpload(req, res, next) {
-  upload.single('file')(req, res, (err) => {
-    if (!err) return next();
-    if (err.code === 'LIMIT_FILE_SIZE') err.statusCode = 413;
-    if (!err.statusCode) err.statusCode = 400;
-    next(err);
-  });
-}
+const photoUpload = single(upload, 'file');
 
 function makeHandler(VisionService, config) {
   return async function identifyPhotoHandler(req, res) {

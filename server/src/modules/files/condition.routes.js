@@ -1,17 +1,10 @@
-const multer = require('multer');
+const { memoryUpload, single } = require('../../utils/upload');
 
 const ALLOWED_IMAGE_MIMES = new Set([
   'image/jpeg', 'image/png', 'image/webp', 'image/gif',
 ]);
 
-const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 20 * 1024 * 1024 },
-  fileFilter: (req, file, cb) => {
-    if (ALLOWED_IMAGE_MIMES.has(file.mimetype)) cb(null, true);
-    else cb(new Error('Only image files are allowed'), false);
-  },
-});
+const upload = memoryUpload({ accepted: ALLOWED_IMAGE_MIMES, maxBytes: 20 * 1024 * 1024, message: 'Only image files are allowed' });
 
 module.exports = function conditionRoutes({ app, db, logger }) {
   const ConditionService = require('./condition.service');
@@ -37,7 +30,7 @@ module.exports = function conditionRoutes({ app, db, logger }) {
   });
 
   // POST /api/conditions/_y_/item/:itemId — create snapshot (owner/editor)
-  app.post('/api/conditions/_y_/item/:itemId', requireAuth, resolvePropertyFromItem, resolvePropertyRole, requireRole('owner', 'editor'), upload.single('photo'), async (req, res) => {
+  app.post('/api/conditions/_y_/item/:itemId', requireAuth, resolvePropertyFromItem, resolvePropertyRole, requireRole('owner', 'editor'), single(upload, 'photo'), async (req, res) => {
     if (!req.file) return error(res, 'Photo is required', 400);
     const data = { condition: req.body.condition, notes: req.body.notes };
     const snapshot = await ConditionService.create(req.params.itemId, data, req.file, req.user.id);

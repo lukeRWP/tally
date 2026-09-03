@@ -36,6 +36,7 @@ import { useLendingHistory } from '@/hooks/use-lending';
 import { ShareDialog } from '@/components/sharing/share-dialog';
 import { FieldDialog, type FieldKind } from '@/components/inventory/field-dialog';
 import { safeExternalUrl, cn } from '@/lib/utils';
+import { prepareImage } from '@/lib/image';
 import { useLayoutMode } from '@/hooks/use-layout-mode';
 import { useKeyboardNav } from '@/hooks/use-keyboard-nav';
 
@@ -466,10 +467,13 @@ export function ItemDetail() {
   // Photographing an item you are already looking at should cost one tap and
   // no dialog — the file lands as a photo and the page shows it immediately.
   async function onPickPhoto(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
+    const picked = e.target.files?.[0];
     e.target.value = '';
-    if (!file) return;
+    if (!picked) return;
     try {
+      // Downscaled and in a type the route takes — on iOS the picker hands
+      // over HEIC, which the server rejects (#346).
+      const file = await prepareImage(picked);
       await uploadPhoto.mutateAsync({ itemId: id, file, fileType: 'photo' });
       toast.success('Photo added');
     } catch (err) {
