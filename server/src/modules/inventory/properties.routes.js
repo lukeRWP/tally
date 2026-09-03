@@ -2,7 +2,7 @@ module.exports = function propertiesRoutes({ app, db, logger }) {
   const PropertiesService = require('./properties.service');
   PropertiesService.init({ db, logger });
 
-  const { createProperty, updateProperty, addMember } = require('./properties.schema');
+  const { createProperty, updateProperty, addMember, updateMemberRole } = require('./properties.schema');
   const { success, error } = require('../../utils/response');
 
   // ── List & Read ────────────────────────────────────────────────────────────
@@ -105,6 +105,50 @@ module.exports = function propertiesRoutes({ app, db, logger }) {
       }
       const member = await PropertiesService.addMember(req.params.propertyId, value, req.user.id);
       success(res, { member }, 'Member added', 201);
+    }
+  );
+  // Both member mutations are owner-only, like add. The service refuses to
+  // leave a property with no owner (409) and answers 404 for a userId that
+  // is not a member, so the routes only need to reject a non-numeric id
+  // before it reaches SQL (#345).
+  function memberUserId(req, res) {
+    const userId = Number(req.params.userId);
+    if (!Number.isInteger(userId) || userId <= 0) {
+      error(res, 'Invalid member id', 400);
+      return null;
+    }
+    return userId;
+  }
+
+  // PATCH /api/properties/_p_/:propertyId/members/:userId — change a role
+  app.patch(
+    '/api/properties/_p_/:propertyId/members/:userId',
+    app.locals.requireAuth,
+    app.locals.resolvePropertyRole,
+    app.locals.requireRole('owner'),
+    async (req, res) => {
+      const userId = memberUserId(req, res);
+      if (userId === null) return;
+      const { error: validationError, value } = updateMemberRole.validate(req.body, { abortEarly: false });
+      if (validationError) {
+        return error(res, 'Validation failed', 422, validationError.details.map(d => d.message));
+      }
+      const member = await PropertiesService.updateMemberRole(req.params.propertyId, userId, value.role, req.user.id);
+      success(res, { member }, 'Member role updated');
+    }
+  );
+
+  // DELETE /api/properties/_d_/:propertyId/members/:userId — remove a member
+  app.delete(
+    '/api/properties/_d_/:propertyId/members/:userId',
+    app.locals.requireAuth,
+    app.locals.resolvePropertyRole,
+    app.locals.requireRole('owner'),
+    async (req, res) => {
+      const userId = memberUserId(req, res);
+      if (userId === null) return;
+      await PropertiesService.removeMember(req.params.propertyId, userId, req.user.id);
+      success(res, null, 'Member removed');
     }
   );
 };

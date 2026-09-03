@@ -10,6 +10,7 @@ import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { useAuthStore } from '@/store/auth-store';
 import { useProperties } from '@/hooks/use-inventory';
 import { PropertyChips } from '@/components/inventory/property-chips';
+import { PropertyMembers } from '@/components/inventory/property-members';
 import { TagManager } from '@/components/tags/tag-manager';
 import { NotificationPrefs } from '@/components/notifications/notification-prefs';
 import { PrinterSettings } from '@/components/print/printer-settings';
@@ -163,6 +164,7 @@ export function SettingsPage() {
   const { data: properties = [] } = useProperties();
 
   const [selectedPropertyId, setSelectedPropertyId] = React.useState<number>(0);
+  const selectedRole = properties.find((p) => p.id === selectedPropertyId)?.role ?? null;
 
   // Auto-select first property
   React.useEffect(() => {
@@ -200,7 +202,7 @@ export function SettingsPage() {
           re-deciding every time a section changed. FIXED-HEIGHT sections go
           left (profile, theme, recycle bin, the six notification switches, the
           photo-identify switch) and the ones that GROW WITH THE PROPERTY go
-          right (tags, printers, share links). The balance then cannot be
+          right (tags, printers, share links, members). The balance then cannot be
           undone by a house that happens to have thirty tags. */}
       <div className="lg:grid lg:grid-cols-2 lg:gap-8">
         {/* Left column. Tagged because WHICH column a section sits in is the
@@ -302,6 +304,17 @@ export function SettingsPage() {
           )}
 
           <ShareLinksSection />
+
+          {/* Members -- who can see this property. Owner-only, and gated on
+              the CALLER's role in the selected property (the list carries it),
+              so an editor never mounts a section whose every call would 403
+              (#345). Grows with the household, so it sits on this side. */}
+          {selectedRole === 'owner' && (
+            <section className="flex flex-col animate-fade-up" style={{ animationDelay: '200ms' }}>
+              <ColHead>Members</ColHead>
+              <PropertyMembers propertyId={selectedPropertyId} />
+            </section>
+          )}
         </div>
       </div>
 
