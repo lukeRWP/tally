@@ -39,7 +39,7 @@ module.exports = function propertiesRoutes({ app, db, logger }) {
     async (req, res) => {
       const { error: validationError, value } = createProperty.validate(req.body, { abortEarly: false });
       if (validationError) {
-        return error(res, 'Validation failed', 422, validationError.details.map(d => d.message));
+        return error(res, 'Validation failed', 400, validationError.details.map(d => d.message));
       }
       const property = await PropertiesService.create(value, req.user.id);
       success(res, { property }, 'Property created', 201);
@@ -57,7 +57,7 @@ module.exports = function propertiesRoutes({ app, db, logger }) {
     async (req, res) => {
       const { error: validationError, value } = updateProperty.validate(req.body, { abortEarly: false });
       if (validationError) {
-        return error(res, 'Validation failed', 422, validationError.details.map(d => d.message));
+        return error(res, 'Validation failed', 400, validationError.details.map(d => d.message));
       }
       const property = await PropertiesService.update(req.params.propertyId, value, req.user.id);
       success(res, { property });
@@ -101,7 +101,7 @@ module.exports = function propertiesRoutes({ app, db, logger }) {
     async (req, res) => {
       const { error: validationError, value } = addMember.validate(req.body, { abortEarly: false });
       if (validationError) {
-        return error(res, 'Validation failed', 422, validationError.details.map(d => d.message));
+        return error(res, 'Validation failed', 400, validationError.details.map(d => d.message));
       }
       const member = await PropertiesService.addMember(req.params.propertyId, value, req.user.id);
       success(res, { member }, 'Member added', 201);
@@ -131,7 +131,7 @@ module.exports = function propertiesRoutes({ app, db, logger }) {
       if (userId === null) return;
       const { error: validationError, value } = updateMemberRole.validate(req.body, { abortEarly: false });
       if (validationError) {
-        return error(res, 'Validation failed', 422, validationError.details.map(d => d.message));
+        return error(res, 'Validation failed', 400, validationError.details.map(d => d.message));
       }
       const member = await PropertiesService.updateMemberRole(req.params.propertyId, userId, value.role, req.user.id);
       success(res, { member }, 'Member role updated');

@@ -257,6 +257,18 @@ All API responses use:
 - API fields: `camelCase`
 - Services map DB results to camelCase before returning
 
+### Validation Status Codes
+
+A request the server refuses because of what the caller sent — a Joi failure,
+a missing required field or file, an unparseable id or URL, an unknown enum
+value — is **400**, with the Joi messages in `errors[]`. That is what
+`middleware/validate.js` and the error-handler's Joi branch already emit; the
+hand-rolled route checks were aligned to it in #357 (they used to say 422).
+Never introduce 422: the client does not distinguish the two and a second code
+for the same class of mistake only splits the toast/inline behaviour by accident.
+Related-entity mismatches ("must be in the same property") are also 400; a
+resource that exists but is the wrong shape is 409, not 4xx-validation.
+
 ## Three-Tier Data Pattern
 
 ```
