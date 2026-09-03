@@ -9,7 +9,7 @@
       "build": [
         {
           "dir": "client",
-          "cmd": "npm run build",
+          "cmd": "./node_modules/.bin/eslint . --max-warnings 0 && npm run build",
           "output": "dist"
         },
         {

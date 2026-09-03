@@ -65,6 +65,7 @@ export function useScrollRestoration(ref: RefObject<HTMLElement | null>) {
   // after every render re-fires the effect the moment the container exists;
   // setEl is a no-op re-render only on the render where it first appears.
   const [el, setEl] = useState<HTMLElement | null>(null);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- no dep array on purpose: it must observe every render (see above); the guard makes it settle
   useEffect(() => {
     if (ref.current !== el) setEl(ref.current);
   });

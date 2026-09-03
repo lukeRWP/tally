@@ -291,6 +291,7 @@ StateStore (Zustand)
 - Inter font for all body text; JetBrains Mono for item codes, QR labels, and monospace fields
 - Co-locate component styles with component files (no global CSS beyond base reset and theme tokens)
 - Form management via `react-hook-form` + `@hookform/resolvers` with Zod schemas (client-side only)
+- Lint gate: `client/eslint.config.js` (flat config — `@eslint/js` + `typescript-eslint` recommended + the classic `react-hooks` pair). `npm run lint` must pass with **zero warnings**: CI and the `pw.json` client build both run `./node_modules/.bin/eslint . --max-warnings 0`. Unused-vars is left to `tsc` (`noUnusedLocals`). Do NOT switch to `reactHooks.configs.recommended` — its React-Compiler-backed rules exhaust the heap on `pages/print-queue.tsx` (#350). A rule you must silence gets a one-line `eslint-disable-next-line` with the reason, never a file-wide disable.
 
 ## Color System
 
