@@ -39,7 +39,7 @@ module.exports = function recycleRoutes({ app, db, logger }) {
     async (req, res) => {
       const batchId = Number(req.params.batchId);
       if (!Number.isInteger(batchId) || batchId < 1) {
-        return error(res, 'Invalid batch id', 422);
+        return error(res, 'Invalid batch id', 400);
       }
       try {
         const restored = await RecycleService.restore(batchId, req.user.id);

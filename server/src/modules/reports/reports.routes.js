@@ -15,7 +15,7 @@ module.exports = function reportsRoutes({ app, db, logger, config }) {
     async (req, res) => {
       const { error: validationError, value } = generateReport.validate(req.body, { abortEarly: false, stripUnknown: true });
       if (validationError) {
-        return error(res, 'Validation failed', 422, validationError.details.map(d => d.message));
+        return error(res, 'Validation failed', 400, validationError.details.map(d => d.message));
       }
 
       if (!req.propertyRole) {

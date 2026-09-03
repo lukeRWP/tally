@@ -38,7 +38,7 @@ module.exports = function tagsRoutes({ app, db, logger }) {
     async (req, res, next) => {
       const { error: validationError, value } = createTag.validate(req.body, { abortEarly: false });
       if (validationError) {
-        return error(res, 'Validation failed', 422, validationError.details.map(d => d.message));
+        return error(res, 'Validation failed', 400, validationError.details.map(d => d.message));
       }
       req.validatedBody = value;
       req.params.propertyId = value.propertyId;
@@ -64,7 +64,7 @@ module.exports = function tagsRoutes({ app, db, logger }) {
     async (req, res) => {
       const { error: validationError, value } = updateTag.validate(req.body, { abortEarly: false });
       if (validationError) {
-        return error(res, 'Validation failed', 422, validationError.details.map(d => d.message));
+        return error(res, 'Validation failed', 400, validationError.details.map(d => d.message));
       }
       const tag = await TagsService.update(req.params.tagId, value);
       success(res, { tag });
@@ -119,7 +119,7 @@ module.exports = function tagsRoutes({ app, db, logger }) {
     async (req, res, next) => {
       const { error: validationError, value } = tagEntity.validate(req.body, { abortEarly: false });
       if (validationError) {
-        return error(res, 'Validation failed', 422, validationError.details.map(d => d.message));
+        return error(res, 'Validation failed', 400, validationError.details.map(d => d.message));
       }
       req.validatedBody = value;
       next();
