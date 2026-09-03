@@ -438,12 +438,11 @@ Labels can be queued for automatic printing on a USB thermal printer (Munbyn ITP
 
 ### Notifications
 
-- Notifications are opt-in per type — all notification types are **off by default**.
-- Preferences are stored per user per property in `notification_preferences`.
-- `GET /api/notifications/_x_/list` returns unread notifications for the current user.
-- `POST /api/notifications/_y_/mark-read` marks one or all notifications as read.
-- `GET /api/notifications/_x_/preferences` and `PUT /api/notifications/_u_/preferences` manage per-type opt-in settings.
-- Date-based notifications (e.g. upcoming warranty expiry) are triggered by `GET /api/notifications/_x_/check-dates` and respect the user's preferences.
+- Two types exist, both produced by `checkDateNotifications` in `notifications.service.js`: `custom_date` (an `item_dates` row due within 30 days) and `lending_due` (an open `item_lending` past `DUE_AT`). The list is `NOTIFICATION_TYPES` in `notifications.schema.js`; the client's `notification-prefs.tsx` mirrors it. The DB enums still name four retired types (`warranty_expiry`, `item_moved`, `item_removed`, `share_expiring`) that nothing ever produced — do not resurface them without a producer (#348).
+- Opt-in per type, **off by default**; preferences are per user (not per property) in `notification_preferences`. `create()` silently skips a type the user has not enabled.
+- There is no scheduler. `GET /api/notifications/_x_/list` kicks `checkDateNotifications(userId)` fire-and-forget before it reads, so notifications appear on the next page load. Soft-deleted items (`items.DELETED_AT`) never notify.
+- One notification per (user, type, entity, **due date**): `notifications.DUE_ON` (013) is the dedupe key and is UNIQUE, so a rescheduled date notifies once more and a concurrent check loses with `ER_DUP_ENTRY`, which is swallowed. Dismiss is soft (`DISMISSED_AT`) precisely so the dedupe marker survives it.
+- Routes: `GET _x_/list` (`limit`/`offset`/`unreadOnly`), `GET _x_/unread-count`, `PATCH _p_/:id/read`, `PATCH _p_/read-all`, `DELETE _d_/:id` (dismiss), `GET _x_/preferences`, `PUT _u_/preferences` (`{type, enabled}`). All under `/api/notifications`, all `requireAuth`, all scoped to `req.user.id`.
 
 ### Recycle Bin
 
