@@ -447,10 +447,9 @@ Labels can be queued for automatic printing on a USB thermal printer (Munbyn ITP
 
 ### Recycle Bin
 
-- Soft-deleted items are retained for 30 days before permanent purge (server-side sweep via `POST /api/items/_y_/purge-expired`).
-- `GET /api/items/_x_/deleted` lists all soft-deleted items for a property.
-- `PATCH /api/items/_p_/:itemId/restore` recovers a single item; `DELETE /api/items/_d_/:itemId/permanent` removes one immediately (not `/purge`).
-- Multi-item deletes group into a **delete batch** (`004_delete_batches.sql`); `POST /api/recycle/_y_/restore/:batchId` restores the whole batch, and the `/recycle-bin` page lists batches via `GET /api/recycle/_x_/list`.
+- Every soft-delete (single item, container cascade, area cascade) opens a **delete batch** (`004_delete_batches.sql`); members carry `DELETE_BATCH_ID`. The `/recycle-bin` page lists batches via `GET /api/recycle/_x_/list` (any member of the property; each row carries `canRestore`) and `POST /api/recycle/_y_/restore/:batchId` restores the whole batch — **owner only**, enforced in the service (403) because the batch, not the path, names the property (#347).
+- **Retention is 30 days and is enforced by a lazy sweep, not a button.** `RecycleService.sweepIfDue()` runs fire-and-forget from the list route, at most once per 10 min per process, global (not per caller), bounded (25 batches + 200 pre-batch orphan items per sweep). `list`, `restore` and the sweep share one `RETENTION_DAYS`, so an aged-out batch is neither shown nor restorable by id. Items go through `ItemsService.permanentDelete` (child tables + object storage); containers/areas come out in FK order in one transaction; a batch with an open loan inside is skipped and logged. There is no scheduler in this app — this is the same pattern as `print.service sweepStaleClaims`. (`POST /api/items/_y_/purge-expired` and the client's "Purge Expired" button were removed with #347.)
+- `GET /api/items/_x_/deleted` lists soft-deleted items for a property; `PATCH /api/items/_p_/:itemId/restore` recovers a single item; `DELETE /api/items/_d_/:itemId/permanent` removes one immediately (not `/purge`).
 
 ### Depreciation
 

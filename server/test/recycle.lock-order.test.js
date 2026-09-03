@@ -36,7 +36,7 @@ const PROP_LOCK = /FROM TALLY\.properties WHERE ID = \? FOR UPDATE/i;
 test('container-root restore takes the property point lock FIRST, before the multi-row ancestor join', async () => {
   const { sqls, params } = harness({
     'FROM TALLY\\.delete_batches b': [
-      { ID: 7, PROPERTY_ID: 3, ROOT_TYPE: 'container', ROOT_ID: 55, ROOT_NAME: 'Bin A' },
+      { ID: 7, PROPERTY_ID: 3, ROOT_TYPE: 'container', ROOT_ID: 55, ROOT_NAME: 'Bin A', ROLE: 'owner' },
     ],
     'FROM TALLY\\.properties WHERE ID = \\?': [{ DELETED_AT: null }],
     'FROM TALLY\\.containers c JOIN TALLY\\.areas a': [
@@ -61,7 +61,7 @@ test('container-root restore takes the property point lock FIRST, before the mul
 test('item-root restore takes the property point lock FIRST too — every root type shares the same first lock', async () => {
   const { sqls } = harness({
     'FROM TALLY\\.delete_batches b': [
-      { ID: 11, PROPERTY_ID: 3, ROOT_TYPE: 'item', ROOT_ID: 101, ROOT_NAME: 'Mug' },
+      { ID: 11, PROPERTY_ID: 3, ROOT_TYPE: 'item', ROOT_ID: 101, ROOT_NAME: 'Mug', ROLE: 'owner' },
     ],
     'FROM TALLY\\.properties WHERE ID = \\?': [{ DELETED_AT: null }],
     'FROM TALLY\\.items i JOIN': [
@@ -81,7 +81,7 @@ test('item-root restore takes the property point lock FIRST too — every root t
 test('a soft-deleted property refuses the restore AT the serializing lock (409), before the join ever runs', async () => {
   const { sqls } = harness({
     'FROM TALLY\\.delete_batches b': [
-      { ID: 8, PROPERTY_ID: 3, ROOT_TYPE: 'container', ROOT_ID: 55, ROOT_NAME: 'Bin A' },
+      { ID: 8, PROPERTY_ID: 3, ROOT_TYPE: 'container', ROOT_ID: 55, ROOT_NAME: 'Bin A', ROLE: 'owner' },
     ],
     'FROM TALLY\\.properties WHERE ID = \\?': [{ DELETED_AT: '2026-08-01' }],
   });

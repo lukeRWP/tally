@@ -28,10 +28,6 @@ vi.mock('@/components/ui/toast', () => {
   const toastFn = Object.assign(vi.fn(), { success: vi.fn(), error: vi.fn() });
   return { toast: toastFn };
 });
-// Not exercised in this file (no test opens Purge Expired), but keeping this
-// file's shape close to container-detail.keyboard-nav.test.tsx's own dialog
-// mocks means a future "dialog gates the ring" test costs nothing to add.
-vi.mock('@/components/ui/confirm-dialog', () => ({ ConfirmDialog: () => null }));
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
@@ -41,12 +37,13 @@ interface Batch {
   id: number; rootType: 'area' | 'container' | 'item'; rootId: number; rootName: string;
   propertyName: string | null; deletedAt: string; deletedByName: string | null;
   daysLeft: number | null; areaCount: number; containerCount: number; itemCount: number;
+  canRestore: boolean;
 }
 
 function makeBatch(over: Partial<Batch> & { id: number; rootName: string }): Batch {
   return {
     rootType: 'item', rootId: over.id, propertyName: 'Home', deletedAt: '2026-08-01T00:00:00Z',
-    deletedByName: 'Luke', daysLeft: 20, areaCount: 0, containerCount: 0, itemCount: 0,
+    deletedByName: 'Luke', daysLeft: 20, areaCount: 0, containerCount: 0, itemCount: 0, canRestore: true,
     ...over,
   };
 }

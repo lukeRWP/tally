@@ -703,30 +703,6 @@ const ItemsService = {
       try { await storage.remove(f.FILE_KEY); } catch { /* ignore */ }
     }
   },
-
-  async purgeExpired(userId) {
-    const rows = await _db.query(
-      `SELECT i.ID FROM TALLY.items i
-       JOIN TALLY.containers c ON i.CONTAINER_ID = c.ID
-       JOIN TALLY.areas a ON c.AREA_ID = a.ID
-       JOIN TALLY.property_members pm ON a.PROPERTY_ID = pm.PROPERTY_ID
-       WHERE i.DELETED_AT IS NOT NULL
-         AND i.DELETED_AT < DATE_SUB(NOW(), INTERVAL 30 DAY)
-         AND pm.USER_ID = ? AND pm.ROLE = 'owner'
-         AND NOT EXISTS (
-           SELECT 1 FROM TALLY.item_lending il
-           WHERE il.ITEM_ID = i.ID AND il.RETURNED_AT IS NULL
-         )`,
-      [userId]
-    );
-    // Items with an open loan are skipped above so the purge can't destroy an
-    // active loan record (defense in depth — softDelete already blocks
-    // deleting a lent item, but pre-existing recycled rows may still have one).
-    for (const row of rows) {
-      await ItemsService.permanentDelete(row.ID);
-    }
-    return rows.length;
-  },
 };
 
 module.exports = ItemsService;

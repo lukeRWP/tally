@@ -153,20 +153,3 @@ test('restore refuses (409) and un-deletes nothing when the container died after
   assert.ok(!db.calls.some((c) => /SET DELETED_AT = NULL/i.test(c.sql)),
     'nothing is un-deleted into a dead container');
 });
-
-// purgeExpired must skip items with an open loan (defense in depth).
-test('purgeExpired excludes open-loan items via NOT EXISTS', async () => {
-  let selectSql = '';
-  Items.init({
-    db: {
-      query: async (sql) => {
-        if (/SELECT i\.ID FROM TALLY\.items i/i.test(sql)) { selectSql = sql.replace(/\s+/g, ' '); return []; }
-        return [];
-      },
-    },
-    logger: noop,
-  });
-  await Items.purgeExpired(42);
-  assert.match(selectSql, /NOT EXISTS \( SELECT 1 FROM TALLY\.item_lending il WHERE il\.ITEM_ID = i\.ID AND il\.RETURNED_AT IS NULL \)/i,
-    'the purge selection skips items that still have an open loan');
-});
