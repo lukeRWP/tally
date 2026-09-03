@@ -57,7 +57,7 @@ module.exports = function areasRoutes({ app, db, logger }) {
       // Validate first so we can use body.propertyId
       const { error: validationError, value } = createArea.validate(req.body, { abortEarly: false });
       if (validationError) {
-        return error(res, 'Validation failed', 422, validationError.details.map(d => d.message));
+        return error(res, 'Validation failed', 400, validationError.details.map(d => d.message));
       }
       req.validatedBody = value;
       next();
@@ -83,7 +83,7 @@ module.exports = function areasRoutes({ app, db, logger }) {
     async (req, res) => {
       const { error: validationError, value } = updateArea.validate(req.body, { abortEarly: false });
       if (validationError) {
-        return error(res, 'Validation failed', 422, validationError.details.map(d => d.message));
+        return error(res, 'Validation failed', 400, validationError.details.map(d => d.message));
       }
       const area = await AreasService.update(req.params.areaId, value, req.user.id);
       success(res, { area });

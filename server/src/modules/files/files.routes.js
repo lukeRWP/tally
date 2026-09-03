@@ -46,7 +46,7 @@ module.exports = function filesRoutes({ app, db, logger, config }) {
     // caller shape the key namespace. (Wires up the previously-dead uploadFile
     // schema.)
     const { error: verr, value } = uploadFile.validate({ fileType: req.body.fileType || 'other' });
-    if (verr) return error(res, 'Validation failed', 422, verr.details.map(d => d.message));
+    if (verr) return error(res, 'Validation failed', 400, verr.details.map(d => d.message));
     const result = await FilesService.upload(req.params.itemId, req.file, value.fileType, req.user.id);
     success(res, result, 'File uploaded', 201);
   });
