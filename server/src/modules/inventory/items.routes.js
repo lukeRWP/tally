@@ -68,7 +68,7 @@ module.exports = function itemsRoutes({ app, db, logger }) {
       }
       const { error: validationError, value } = searchItems.validate(rawQuery, { abortEarly: false });
       if (validationError) {
-        return error(res, 'Validation failed', 422, validationError.details.map(d => d.message));
+        return error(res, 'Validation failed', 400, validationError.details.map(d => d.message));
       }
       const items = await ItemsService.search(value.q, req.user.id, {
         tagIds: value.tagIds || null,
@@ -90,7 +90,7 @@ module.exports = function itemsRoutes({ app, db, logger }) {
     async (req, res) => {
       const { error: validationError, value } = recentItems.validate(req.query, { abortEarly: false });
       if (validationError) {
-        return error(res, 'Validation failed', 422, validationError.details.map(d => d.message));
+        return error(res, 'Validation failed', 400, validationError.details.map(d => d.message));
       }
       // There is no single property to resolve here, so no resolvePropertyRole:
       // the membership join inside the query IS the access check.
@@ -151,7 +151,7 @@ module.exports = function itemsRoutes({ app, db, logger }) {
     async (req, res, next) => {
       const { error: validationError, value } = createItem.validate(req.body, { abortEarly: false });
       if (validationError) {
-        return error(res, 'Validation failed', 422, validationError.details.map(d => d.message));
+        return error(res, 'Validation failed', 400, validationError.details.map(d => d.message));
       }
       req.validatedBody = value;
       // Resolve property from the container in body
@@ -214,7 +214,7 @@ module.exports = function itemsRoutes({ app, db, logger }) {
     async (req, res) => {
       const { error: validationError, value } = updateItem.validate(req.body, { abortEarly: false });
       if (validationError) {
-        return error(res, 'Validation failed', 422, validationError.details.map(d => d.message));
+        return error(res, 'Validation failed', 400, validationError.details.map(d => d.message));
       }
       const item = await ItemsService.update(req.params.itemId, value, req.user.id);
       success(res, { item });
@@ -233,7 +233,7 @@ module.exports = function itemsRoutes({ app, db, logger }) {
     async (req, res) => {
       const { error: validationError, value } = moveItem.validate(req.body, { abortEarly: false });
       if (validationError) {
-        return error(res, 'Validation failed', 422, validationError.details.map(d => d.message));
+        return error(res, 'Validation failed', 400, validationError.details.map(d => d.message));
       }
       const destPropertyId = await ContainersService.getPropertyIdForContainer(value.containerId);
       const srcPropertyId = req.params.propertyId;

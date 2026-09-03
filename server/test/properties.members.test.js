@@ -156,10 +156,10 @@ test('a non-numeric userId is 400 before any SQL', async () => {
   assert.equal(status, 400);
 });
 
-test('an unknown role is 422', async () => {
+test('an unknown role is 400', async () => {
   const db = fakeDb({ members: TWO_OWNERS, me: 'owner' });
   const { status } = await call(makeApp(db), 'PATCH', `/api/properties/_p_/${PROPERTY}/members/8`, { role: 'admin' });
-  assert.equal(status, 422);
+  assert.equal(status, 400);
 });
 
 // ── audit + add ───────────────────────────────────────────────────────────

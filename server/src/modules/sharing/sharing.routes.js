@@ -37,7 +37,7 @@ module.exports = function sharingRoutes({ app, db, logger, config }) {
     async (req, res, next) => {
       const { error: validationError, value } = createShareLink.validate(req.body, { abortEarly: false });
       if (validationError) {
-        return error(res, 'Validation failed', 422, validationError.details.map(d => d.message));
+        return error(res, 'Validation failed', 400, validationError.details.map(d => d.message));
       }
       req.validatedBody = value;
 

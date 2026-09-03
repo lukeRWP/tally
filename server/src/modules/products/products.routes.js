@@ -71,7 +71,7 @@ module.exports = function productsRoutes({ app, db, logger, config }) {
     app.locals.requireAuth,
     async (req, res) => {
       const q = req.query.q;
-      if (!q || !q.trim()) return error(res, 'Search query is required', 422);
+      if (!q || !q.trim()) return error(res, 'Search query is required', 400);
 
       // Search local catalog first
       const products = await ProductsService.searchByText(q);
@@ -117,12 +117,12 @@ module.exports = function productsRoutes({ app, db, logger, config }) {
     async (req, res) => {
       const { url } = req.body;
       if (!url || typeof url !== 'string') {
-        return error(res, 'URL is required', 422);
+        return error(res, 'URL is required', 400);
       }
       try {
         new URL(url); // validate URL format
       } catch {
-        return error(res, 'Invalid URL', 422);
+        return error(res, 'Invalid URL', 400);
       }
       try {
         const urlExtractor = require('./lookup/url-extractor');
@@ -145,7 +145,7 @@ module.exports = function productsRoutes({ app, db, logger, config }) {
     async (req, res) => {
       const { error: validationError, value } = lookupBarcode.validate(req.body, { abortEarly: false });
       if (validationError) {
-        return error(res, 'Validation failed', 422, validationError.details.map(d => d.message));
+        return error(res, 'Validation failed', 400, validationError.details.map(d => d.message));
       }
       const result = await ProductsService.lookupBarcode(value.barcode);
       success(res, result);
@@ -161,7 +161,7 @@ module.exports = function productsRoutes({ app, db, logger, config }) {
     async (req, res) => {
       const { error: validationError, value } = createProduct.validate(req.body, { abortEarly: false });
       if (validationError) {
-        return error(res, 'Validation failed', 422, validationError.details.map(d => d.message));
+        return error(res, 'Validation failed', 400, validationError.details.map(d => d.message));
       }
       const product = await ProductsService.create(value);
       success(res, { product }, 'Product created', 201);
@@ -184,7 +184,7 @@ module.exports = function productsRoutes({ app, db, logger, config }) {
     async (req, res) => {
       const { error: validationError, value } = lookupBarcode.validate(req.body, { abortEarly: false });
       if (validationError) {
-        return error(res, 'Validation failed', 422, validationError.details.map(d => d.message));
+        return error(res, 'Validation failed', 400, validationError.details.map(d => d.message));
       }
       const existingItems = await ProductsService.checkDuplicate(value.barcode, req.user.id);
       success(res, { existingItems });

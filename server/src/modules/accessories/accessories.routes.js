@@ -44,7 +44,7 @@ module.exports = function accessoriesRoutes({ app, db, logger }) {
     async (req, res) => {
       const { error: validationError, value } = linkAccessory.validate(req.body, { abortEarly: false });
       if (validationError) {
-        return error(res, 'Validation failed', 422, validationError.details.map(d => d.message));
+        return error(res, 'Validation failed', 400, validationError.details.map(d => d.message));
       }
       // The accessory must live in the SAME property as the source item.
       // Without this, an owner/editor of their own item could link a victim

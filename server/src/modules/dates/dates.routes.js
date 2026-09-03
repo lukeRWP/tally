@@ -54,7 +54,7 @@ module.exports = function datesRoutes({ app, db, logger }) {
     async (req, res) => {
       const { error: validationError, value } = createDate.validate(req.body, { abortEarly: false });
       if (validationError) {
-        return error(res, 'Validation failed', 422, validationError.details.map(d => d.message));
+        return error(res, 'Validation failed', 400, validationError.details.map(d => d.message));
       }
       const date = await DatesService.create(req.params.itemId, value);
       success(res, { date }, 'Date created', 201);
@@ -73,7 +73,7 @@ module.exports = function datesRoutes({ app, db, logger }) {
     async (req, res) => {
       const { error: validationError, value } = updateDate.validate(req.body, { abortEarly: false });
       if (validationError) {
-        return error(res, 'Validation failed', 422, validationError.details.map(d => d.message));
+        return error(res, 'Validation failed', 400, validationError.details.map(d => d.message));
       }
       const date = await DatesService.update(req.params.dateId, value);
       if (!date) return error(res, 'Date record not found', 404);

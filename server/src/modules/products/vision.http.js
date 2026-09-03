@@ -40,7 +40,7 @@ function makeHandler(VisionService, config) {
     if (!VisionService.isEnabled()) {
       return success(res, { available: false, suggestion: null, matchAvailable });
     }
-    if (!req.file) return error(res, 'A photo is required', 422);
+    if (!req.file) return error(res, 'A photo is required', 400);
 
     // The declared type is the client's claim; the bytes are the fact, and the
     // bytes are what gets sent upstream. A mislabelled file is rejected here
@@ -51,7 +51,7 @@ function makeHandler(VisionService, config) {
     }
 
     const { error: verr } = identifyPhoto.validate(req.body || {}, { abortEarly: false });
-    if (verr) return error(res, 'Validation failed', 422, verr.details.map((d) => d.message));
+    if (verr) return error(res, 'Validation failed', 400, verr.details.map((d) => d.message));
 
     // Cancel the upstream call if the browser hangs up -- the draft is gone,
     // there is nothing left to wait for.

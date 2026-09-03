@@ -39,7 +39,7 @@ module.exports = function lendingRoutes({ app, db, logger }) {
     async (req, res) => {
       const { error: validationError, value } = lendItem.validate(req.body, { abortEarly: false });
       if (validationError) {
-        return error(res, 'Validation failed', 422, validationError.details.map(d => d.message));
+        return error(res, 'Validation failed', 400, validationError.details.map(d => d.message));
       }
       const lending = await LendingService.lend(req.params.itemId, value, req.user.id);
       success(res, { lending }, 'Item lent', 201);
