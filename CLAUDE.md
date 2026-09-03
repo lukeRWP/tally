@@ -115,7 +115,7 @@ tally/
 │   ├── init/
 │   │   ├── 001_TALLY_Init.sql    # Full schema: 21 tables
 │   │   └── 002_apply_migrations.sh # Applies SQL/migrations/ after the base schema in local dev
-│   ├── migrations/               # 001–011 (see Database → Migrations)
+│   ├── migrations/               # 001–014 (see Database → Migrations)
 │   ├── ci/migration-gate.sh      # CI migration gate — chain applied twice + schema diff (rule 9)
 │   └── expected-schema.sql       # GENERATED. Regenerate with `SQL/ci/migration-gate.sh --write`
 ├── docker-compose.yml            # 5 services: tally-db, tally-minio, tally-server, tally-client, tally-vault (no nginx locally)
