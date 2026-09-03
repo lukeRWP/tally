@@ -425,6 +425,10 @@ export function PutDown() {
     } finally {
       setBusyBoth(false);
     }
+    // undoMove is a plain per-render function whose only outside reads are the
+    // stable mutateAsync handles, so a stale reference is equivalent; listing
+    // it would just re-create this callback every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pinnedDest, putDown, confirmPrompt]);
 
   // Every code the scanner (or the typed fallback below) decodes passes
