@@ -139,7 +139,7 @@ Each feature lives in `server/src/modules/{feature}/` with three files:
 | Module      | Prefix            | Key endpoints                                              |
 |-------------|-------------------|------------------------------------------------------------|
 | auth        | `/api/auth`       | GET `/_x_/session`, GET `/_x_/oauth/init`, GET `/_x_/oauth/callback`, POST `/_y_/logout` |
-| properties  | `/api/properties` | CRUD + member management                                   |
+| properties  | `/api/properties` | CRUD + membership: GET/POST `/_x_|_y_/:id/members`, PATCH `/_p_/:id/members/:userId` (role), DELETE `/_d_/:id/members/:userId` — all owner-only |
 | areas       | `/api/areas`      | CRUD scoped to a property                                  |
 | containers  | `/api/containers` | CRUD + move (uses closure table for hierarchy)             |
 | items       | `/api/items`      | CRUD + move + FULLTEXT search                              |
@@ -328,6 +328,12 @@ Key design patterns:
 - Set `BYPASS_AUTH=true` in `.env` to skip real auth during local development (auto-creates a dev user + session)
 - User identity (`req.user`) is injected into all request contexts after `requireAuth` middleware
 - CSRF: double-submit cookie (`server/src/middleware/csrf.js`, registered in `index.js`) — every non-GET client call must echo the token header
+
+### Property membership & roles
+
+- Authority is `TALLY.property_members.ROLE` (`owner` / `editor` / `viewer`), resolved per request by `resolvePropertyRole` from `:propertyId` and gated by `requireRole(...)`. `properties.OWNER_ID` is who created it and is **not** consulted for permissions — a property can have several owners.
+- Membership routes are all `requireRole('owner')`. Add is by email of an existing user (`409` if already a member); PATCH changes a role; DELETE removes. **A property must always keep at least one owner**: the service locks the property's member rows (`FOR UPDATE`) and answers `409` to any demote/remove that would leave zero owners (#345). Every change writes a `change_log` row (`property` / `updated` with a `member` payload — the enums have no member-specific values).
+- Client: Settings → Members (`components/inventory/property-members.tsx`, hooks in `use-members.ts`) mounts only when the selected property's role (carried by the properties list) is `owner`; the only owner's controls are disabled up front rather than letting the 409 happen; removing anyone, or demoting yourself, confirms first.
 
 ## Validation
 

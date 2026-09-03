@@ -204,11 +204,25 @@ const PropertiesService = {
 
     const userId = users[0].ID;
 
-    await _db.query(
-      `INSERT INTO TALLY.property_members (PROPERTY_ID, USER_ID, ROLE, INVITED_BY)
-       VALUES (?, ?, ?, ?)`,
-      [propertyId, userId, data.role, invitedBy]
-    );
+    try {
+      await _db.query(
+        `INSERT INTO TALLY.property_members (PROPERTY_ID, USER_ID, ROLE, INVITED_BY)
+         VALUES (?, ?, ?, ?)`,
+        [propertyId, userId, data.role, invitedBy]
+      );
+    } catch (err) {
+      // uq_property_members_prop_user: a second add of the same person is a
+      // conflict the caller can act on, not a 500 (#345).
+      if (err.code === 'ER_DUP_ENTRY') {
+        const dup = new Error('Already a member of this property');
+        dup.statusCode = 409;
+        throw dup;
+      }
+      throw err;
+    }
+
+    AuditService.logChange(invitedBy, 'property', propertyId, 'updated',
+      { member: { userId, role: data.role, added: true } }, propertyId);
 
     const rows = await _db.query(
       `SELECT pm.*, u.EMAIL, u.DISPLAY_NAME, u.AVATAR_URL
@@ -221,18 +235,66 @@ const PropertiesService = {
     return PropertiesService._mapMember(rows[0]);
   },
 
-  async removeMember(propertyId, userId) {
-    await _db.query(
-      'DELETE FROM TALLY.property_members WHERE PROPERTY_ID = ? AND USER_ID = ?',
-      [propertyId, userId]
+  /**
+   * Lock the property's membership rows and refuse any change that would
+   * leave it with no owner (#345). Locking the whole set, not just the target
+   * row, is what makes "is this the last owner?" a real answer: two owners
+   * demoting each other at the same instant otherwise both read "there is
+   * another owner" and both succeed.
+   *
+   * Returns the target's current role. Throws 404 when they are not a member,
+   * 409 when they are the only owner and the change removes ownership.
+   */
+  async _lockMembershipForChange(tx, propertyId, userId, keepsOwnership) {
+    const rows = await tx.query(
+      'SELECT USER_ID, ROLE FROM TALLY.property_members WHERE PROPERTY_ID = ? FOR UPDATE',
+      [propertyId]
     );
+    const target = rows.find((r) => r.USER_ID === userId);
+    if (!target) {
+      const err = new Error('Not a member of this property');
+      err.statusCode = 404;
+      throw err;
+    }
+    const owners = rows.filter((r) => r.ROLE === 'owner').length;
+    if (target.ROLE === 'owner' && !keepsOwnership && owners <= 1) {
+      const err = new Error('A property must keep at least one owner');
+      err.statusCode = 409;
+      throw err;
+    }
+    return target.ROLE;
   },
 
-  async updateMemberRole(propertyId, userId, role) {
-    await _db.query(
-      'UPDATE TALLY.property_members SET ROLE = ? WHERE PROPERTY_ID = ? AND USER_ID = ?',
-      [role, propertyId, userId]
-    );
+  async removeMember(propertyId, userId, actorId) {
+    const previousRole = await _db.withTransaction(async (tx) => {
+      const role = await PropertiesService._lockMembershipForChange(tx, propertyId, userId, false);
+      await tx.query(
+        'DELETE FROM TALLY.property_members WHERE PROPERTY_ID = ? AND USER_ID = ?',
+        [propertyId, userId]
+      );
+      return role;
+    });
+
+    AuditService.logChange(actorId, 'property', propertyId, 'updated',
+      { member: { userId, role: previousRole, removed: true } }, propertyId);
+  },
+
+  async updateMemberRole(propertyId, userId, role, actorId) {
+    const previousRole = await _db.withTransaction(async (tx) => {
+      const current = await PropertiesService._lockMembershipForChange(tx, propertyId, userId, role === 'owner');
+      if (current !== role) {
+        await tx.query(
+          'UPDATE TALLY.property_members SET ROLE = ? WHERE PROPERTY_ID = ? AND USER_ID = ?',
+          [role, propertyId, userId]
+        );
+      }
+      return current;
+    });
+
+    if (previousRole !== role) {
+      AuditService.logChange(actorId, 'property', propertyId, 'updated',
+        { member: { userId, role, previousRole } }, propertyId);
+    }
 
     const rows = await _db.query(
       `SELECT pm.*, u.EMAIL, u.DISPLAY_NAME, u.AVATAR_URL
