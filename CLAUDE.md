@@ -557,8 +557,8 @@ rules, the IMP-DEV superset, `THD to EMP_DB`, Airplay and Internal-to-Work).
 
 **Workflows:**
 - **`ci.yml`** — runs on every pull request: client (`tsc --noEmit`, ESLint, `npm test` = vitest, `npm run build`), server (ESLint, syntax check, `npm test` = `node --test`), `npm audit --production --audit-level=high`, and the **Migration Gate** (rule 9). Blocks merge on failure.
-- **`build.yml`** — runs on push to `master`: builds client/server/db tarballs on the self-hosted runner (debug artifacts only — the orchestrator does its OWN build from a fresh git clone), then triggers `POST /api/_y_/apps/tally/envs/prod/v2/deploy` and polls the operation.
-- **`gitleaks.yml`** / **`trivy.yml`** — secret scanning + CVE/misconfig gates.
+- **`build.yml`** — runs on push to `master`: smoke-builds client + server on the self-hosted runner (gates only — no artifacts; the orchestrator does its OWN build from a fresh git clone, #352), then triggers `POST /api/_y_/apps/tally/envs/prod/v2/deploy` and polls the operation.
+- **`gitleaks.yml`** / **`trivy.yml`** — secret scanning + CVE/misconfig gates on every PR whatever its base, plus push to master and (trivy) weekly (#351).
 - All jobs use the `.github/actions/setup-node` composite action.
 
 **Required GitHub Config:**
@@ -582,7 +582,7 @@ These rules exist because every one of them was learned from a production failur
 
 #### Build & Deploy Flow Rules
 
-5. **There are TWO build pipelines — they MUST produce equivalent results.** GH Actions `build.yml` builds on the self-hosted runner. The orchestrator builds on the orchestrator VM from a fresh clone. Different Node versions, npm versions, or OS libraries can cause one to succeed and the other to fail. When changing build commands (`pw.json` build steps or `build.yml`), test both paths.
+5. **There are TWO build pipelines — they MUST produce equivalent results.** GH Actions `build.yml` smoke-builds on the self-hosted runner (nothing it produces is shipped). The orchestrator builds on the orchestrator VM from a fresh clone and that build is what runs. Different Node versions, npm versions, or OS libraries can cause one to succeed and the other to fail. When changing build commands (`pw.json` build steps or `build.yml`), test both paths.
 
 6. **`npm audit` in CI can block all PRs** — if a new high-severity advisory is published for any transitive dependency, all PRs fail until resolved. This is intentional (security gate) but can be temporarily bypassed by pinning the vulnerable package or adding an audit exception. Do NOT revert to `|| true`.
 
