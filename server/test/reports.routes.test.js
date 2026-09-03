@@ -188,7 +188,7 @@ test('the four hyphenated ids that shipped in the bundle are still rejected', as
   await withServer(async (base) => {
     for (const reportType of ['total-value', 'by-location', 'activity', 'tags']) {
       const res = await generate(base, { reportType, propertyId: 1 });
-      assert.equal(res.status, 422, `${reportType} is not a report type`);
+      assert.equal(res.status, 400, `${reportType} is not a report type`);
       const json = await res.json();
       assert.equal(json.success, false);
       assert.equal(json.message, 'Validation failed');
@@ -204,11 +204,11 @@ test('a groupBy with no implementation is still rejected rather than substituted
   // `location` is the client's old name for `area`; `category` never existed.
   // `condition` used to be on this list and has been implemented (#285) — the
   // rule is unchanged, only its membership: a grouping the server cannot
-  // perform must 422, never quietly become `property`.
+  // perform must be rejected (400), never quietly become `property`.
   await withServer(async (base) => {
     for (const groupBy of ['location', 'category']) {
       const res = await generate(base, { reportType: 'total_value', propertyId: 1, groupBy });
-      assert.equal(res.status, 422, `groupBy=${groupBy} has no implementation and must not be accepted`);
+      assert.equal(res.status, 400, `groupBy=${groupBy} has no implementation and must not be accepted`);
     }
   });
 });

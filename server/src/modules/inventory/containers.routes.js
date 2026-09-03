@@ -111,7 +111,7 @@ module.exports = function containersRoutes({ app, db, logger }) {
     async (req, res, next) => {
       const { error: validationError, value } = createContainer.validate(req.body, { abortEarly: false });
       if (validationError) {
-        return error(res, 'Validation failed', 422, validationError.details.map(d => d.message));
+        return error(res, 'Validation failed', 400, validationError.details.map(d => d.message));
       }
       req.validatedBody = value;
       // Resolve property from the area in body
@@ -150,7 +150,7 @@ module.exports = function containersRoutes({ app, db, logger }) {
     async (req, res) => {
       const { error: validationError, value } = updateContainer.validate(req.body, { abortEarly: false });
       if (validationError) {
-        return error(res, 'Validation failed', 422, validationError.details.map(d => d.message));
+        return error(res, 'Validation failed', 400, validationError.details.map(d => d.message));
       }
       const container = await ContainersService.update(req.params.containerId, value, req.user.id);
       success(res, { container });
@@ -169,7 +169,7 @@ module.exports = function containersRoutes({ app, db, logger }) {
     async (req, res) => {
       const { error: validationError, value } = moveContainer.validate(req.body, { abortEarly: false });
       if (validationError) {
-        return error(res, 'Validation failed', 422, validationError.details.map(d => d.message));
+        return error(res, 'Validation failed', 400, validationError.details.map(d => d.message));
       }
       // Resolve the destination property. Nesting under a parent container
       // decides the effective area (and so the property) in the service —
