@@ -418,9 +418,11 @@ function ItemView({ entity }: { entity: Rec }) {
       {!!product && (
         <section className="flex flex-col gap-3">
           <ColHead>Product</ColHead>
-          {!!product.imageUrl && (
+          {/* The server already allowlists the host (#355); https-only here is
+              the belt for a payload cached from before that. */}
+          {typeof product.imageUrl === 'string' && product.imageUrl.startsWith('https://') && (
             <img
-              src={str(product.imageUrl)}
+              src={product.imageUrl}
               alt={str(product.name)}
               className="h-40 w-full max-w-[420px] rounded-[var(--radius-sm)] border border-[var(--color-border)] object-contain"
               style={{ background: 'var(--color-elevated)' }}

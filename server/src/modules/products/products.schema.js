@@ -6,7 +6,9 @@ const createProduct = Joi.object({
   brand: Joi.string().max(255).allow('', null),
   category: Joi.string().max(100).allow('', null),
   description: Joi.string().allow('', null),
-  imageUrl: Joi.string().allow('', null),
+  // https only (#355): a product row is shared by every household and its
+  // image is rendered on the public share page — see products/image-url.js.
+  imageUrl: Joi.string().uri({ scheme: ['https'] }).max(2000).allow('', null),
   retailPrice: Joi.number().precision(2).allow(null),
   // url restricted to http/https so a poisoned external-lookup response can't
   // persist a javascript:/data: link that later reaches an anchor href. The

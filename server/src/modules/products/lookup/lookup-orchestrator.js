@@ -39,7 +39,7 @@ async function lookupByBarcode(barcode) {
   const opf = opfResult.status === 'fulfilled' ? opfResult.value : null;
   if (opf?.name) return { source: 'open_products_facts', product: opf };
 
-  // 3. Fallback — web search (DuckDuckGo + Google Shopping scrape)
+  // 3. Fallback — DuckDuckGo instant answer (the Google scrape was removed in #355)
   try {
     const webResult = await webSearch.lookupBarcode(barcode);
     if (webResult?.name) {
