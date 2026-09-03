@@ -7,8 +7,11 @@ name: trivy
 on:
   push:
     branches: [master, main]
+  # Every pull request, whatever its base — a PR stacked on a feature branch
+  # must be scanned too (see ci.yml for why "no checks reported" is the
+  # one state that must never pass for green). The push trigger above is the
+  # backstop: anything that lands on master is scanned once more.
   pull_request:
-    branches: [master, main]
   # Re-scan weekly so newly-disclosed CVEs against existing dependencies
   # surface even when nobody is pushing.
   schedule:

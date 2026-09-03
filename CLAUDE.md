@@ -558,8 +558,8 @@ rules, the IMP-DEV superset, `THD to EMP_DB`, Airplay and Internal-to-Work).
 
 **Workflows:**
 - **`ci.yml`** — runs on every pull request: client (`tsc --noEmit`, ESLint, `npm test` = vitest, `npm run build`), server (ESLint, syntax check, `npm test` = `node --test`), `npm audit --production --audit-level=high`, and the **Migration Gate** (rule 9). Blocks merge on failure.
-- **`build.yml`** — runs on push to `master`: builds client/server/db tarballs on the self-hosted runner (debug artifacts only — the orchestrator does its OWN build from a fresh git clone), then triggers `POST /api/_y_/apps/tally/envs/prod/v2/deploy` and polls the operation.
-- **`gitleaks.yml`** / **`trivy.yml`** — secret scanning + CVE/misconfig gates.
+- **`build.yml`** — runs on push to `master`: smoke-builds client + server on the self-hosted runner (gates only — no artifacts; the orchestrator does its OWN build from a fresh git clone, #352), then triggers `POST /api/_y_/apps/tally/envs/prod/v2/deploy` and polls the operation.
+- **`gitleaks.yml`** / **`trivy.yml`** — secret scanning + CVE/misconfig gates on every PR whatever its base, plus push to master and (trivy) weekly (#351).
 - All jobs use the `.github/actions/setup-node` composite action.
 
 **Required GitHub Config:**
@@ -583,7 +583,7 @@ These rules exist because every one of them was learned from a production failur
 
 #### Build & Deploy Flow Rules
 
-5. **There are TWO build pipelines — they MUST produce equivalent results.** GH Actions `build.yml` builds on the self-hosted runner. The orchestrator builds on the orchestrator VM from a fresh clone. Different Node versions, npm versions, or OS libraries can cause one to succeed and the other to fail. When changing build commands (`pw.json` build steps or `build.yml`), test both paths.
+5. **There are TWO build pipelines — they MUST produce equivalent results.** GH Actions `build.yml` smoke-builds on the self-hosted runner (nothing it produces is shipped). The orchestrator builds on the orchestrator VM from a fresh clone and that build is what runs. Different Node versions, npm versions, or OS libraries can cause one to succeed and the other to fail. When changing build commands (`pw.json` build steps or `build.yml`), test both paths.
 
 6. **`npm audit` in CI can block all PRs** — if a new high-severity advisory is published for any transitive dependency, all PRs fail until resolved. This is intentional (security gate) but can be temporarily bypassed by pinning the vulnerable package or adding an audit exception. Do NOT revert to `|| true`.
 
@@ -612,6 +612,8 @@ These rules exist because every one of them was learned from a production failur
 #### Object storage: presigned URLs and the proxy in front of them
 
 11. **`client/nginx.conf` is NOT what serves production.** It has a correct `location ^~ /tally-files/` MinIO proxy and has since the first commit — but prod is fronted by the PW deployment's own nginx, which serves the built client statically and proxies only `/api` and `/health`. Verified 2026-08-07: `GET https://tally.<domain>/tally-files/anything` returns `index.html` from disk (`etag`, `last-modified`, `content-type: text/html`), not a proxy response. **Editing `client/nginx.conf` changes local dev only.** Routing changes for prod belong in the `web` (nginx) service config in `pw.json` / PW's nginx service-catalog template.
+
+11a. **`server/Dockerfile` and `client/Dockerfile` are NOT what runs in production either** — only local `docker-compose.yml` builds them. Prod is the stock `node:22-bookworm-slim` image named in `pw.json` `environments.prod.services.app` with `./server` bind-mounted and `node index.js` as PID 1 (as root, no init — #370), fronted by PW's pinned `nginx:alpine` catalog image. When you change the Node major, `NODE_ENV`, the health probe or a runtime apt package, change `pw.json` (prod) AND the Dockerfile (local) together, or `sharp`'s native binary and friends will differ between the two. `poppler-utils` is a CI-only dependency (the label geometry test), not a runtime one (#353).
 
 12. **A presigned URL is bound to the host it was signed for.** SigV4 signs the `Host` header, so the browser must reach MinIO at *the same* host the server signed against, and every proxy in the chain must forward `Host` unchanged (`proxy_set_header Host $host;` — **not** `$proxy_host`). A mismatch surfaces as `SignatureDoesNotMatch`, which names the key and bucket and says nothing about the host, so it reads like a credentials problem and is not one.
 
