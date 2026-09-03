@@ -76,7 +76,7 @@ function loadFixture(): Fixture {
     parsed = JSON.parse(fixtureRaw) as Fixture;
   } catch (err) {
     throw new Error(`The decoded-label fixture is not valid JSON. ${REGENERATE} `
-      + `(underlying error: ${(err as Error).message})`);
+      + `(underlying error: ${(err as Error).message})`, { cause: err });
   }
   if (!Array.isArray(parsed.symbols) || parsed.symbols.length === 0) {
     throw new Error(`The decoded-label fixture carries no symbols. ${REGENERATE}`);

@@ -260,7 +260,7 @@ export function MatchesPage() {
     }, { replace: true });
   }, [setSearchParams]);
 
-  const rows = matches ?? [];
+  const rows = React.useMemo(() => matches ?? [], [matches]);
   const current = rows.find((m) => m.id === selectedId) ?? null;
 
   // handlePick/handleDismiss's onSuccess callbacks fire asynchronously, and

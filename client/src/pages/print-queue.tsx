@@ -151,7 +151,6 @@ export function PrintQueuePage() {
   // has no reason to stay open.
   React.useEffect(() => {
     if (selecting && staged.length === 0) exitSelectMode();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selecting, staged.length]);
 
   function exitSelectMode() {

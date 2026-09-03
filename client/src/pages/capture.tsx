@@ -576,7 +576,7 @@ export function Capture() {
       } catch { /* fall back to whatever was pinned before */ }
     })();
     return () => { cancelled = true; };
-  }, [ctxContainer]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [ctxContainer]);
 
   // The picker belongs to the "where does this go" step. Any path that leaves
   // that step — scanning a bin, committing, discarding the draft, starting the
