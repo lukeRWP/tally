@@ -3,6 +3,20 @@ const { createRemoteJWKSet, jwtVerify } = require('jose');
 
 // Singleton service state
 let _db = null;
+
+// One remote JWKS per process. jose caches the key set and refetches only on
+// an unknown `kid` (with its own cooldown), so this turns a keys download per
+// login into one per key rotation (#356). Reset by init() so a tenant change
+// in tests cannot verify against the previous tenant's keys.
+let _jwks = null;
+function getJwks() {
+  if (!_jwks) {
+    _jwks = createRemoteJWKSet(
+      new URL(`https://login.microsoftonline.com/${_config.auth.entraTenantId}/discovery/v2.0/keys`)
+    );
+  }
+  return _jwks;
+}
 let _config = null;
 let _logger = null;
 let _devSession = null;
@@ -14,10 +28,13 @@ const AuthService = {
     _db = db;
     _config = config;
     _logger = logger;
+    _jwks = null;
 
     // Cleanup expired sessions/state on startup and every hour
     AuthService._cleanupExpired().catch(() => {});
-    setInterval(() => AuthService._cleanupExpired().catch(() => {}), 60 * 60 * 1000);
+    // unref: the HTTP listener keeps the process alive, not this timer — so a
+    // test that calls init() can exit (see PW #807 for the hang this avoids)
+    setInterval(() => AuthService._cleanupExpired().catch(() => {}), 60 * 60 * 1000).unref();
 
     if (config.auth.bypassAuth) {
       logger.warn('[auth] BYPASS_AUTH is enabled — skipping real authentication');
@@ -104,7 +121,10 @@ const AuthService = {
       return AuthService._devProfile();
     }
 
-    // Retrieve and delete state from DB (atomic — works across cluster workers)
+    // Consume the state: the DELETE is the atomic claim (#356). Two callbacks
+    // replaying the same state inside the 5-minute window both SELECT the
+    // verifier, but only one DELETE reports affectedRows === 1 — the other is
+    // rejected before it can exchange the code.
     const rows = await _db.query(
       'SELECT CODE_VERIFIER FROM TALLY.oauth_state WHERE STATE_KEY = ? AND EXPIRES_AT > NOW()',
       [state]
@@ -113,7 +133,13 @@ const AuthService = {
       throw new Error('Invalid or expired state parameter');
     }
     const codeVerifier = rows[0].CODE_VERIFIER;
-    await _db.query('DELETE FROM TALLY.oauth_state WHERE STATE_KEY = ?', [state]);
+    const claimed = await _db.query(
+      'DELETE FROM TALLY.oauth_state WHERE STATE_KEY = ? AND EXPIRES_AT > NOW()',
+      [state]
+    );
+    if (!claimed || claimed.affectedRows !== 1) {
+      throw new Error('OAuth state already consumed');
+    }
 
     // Exchange code for tokens
     const tokenRes = await fetch(
@@ -139,12 +165,8 @@ const AuthService = {
 
     const tokens = await tokenRes.json();
 
-    // Validate the ID token using JWKS
-    const JWKS = createRemoteJWKSet(
-      new URL(`https://login.microsoftonline.com/${_config.auth.entraTenantId}/discovery/v2.0/keys`)
-    );
-
-    const { payload } = await jwtVerify(tokens.id_token, JWKS, {
+    // Validate the ID token against the tenant's signing keys (cached — see getJwks)
+    const { payload } = await jwtVerify(tokens.id_token, getJwks(), {
       issuer: `https://login.microsoftonline.com/${_config.auth.entraTenantId}/v2.0`,
       audience: _config.auth.entraClientId,
     });

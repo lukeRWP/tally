@@ -112,7 +112,7 @@ const FilesService = {
         try {
           await storage.remove(k);
         } catch (rollbackErr) {
-          _logger?.warn?.({ err: rollbackErr, fileKey: k }, 'upload rollback: failed to remove orphaned object');
+          _logger?.warn?.('upload rollback: failed to remove orphaned object', { error: rollbackErr.message, fileKey: k });
         }
       }
       throw err;
@@ -146,7 +146,7 @@ const FilesService = {
     try {
       await storage.remove(file.FILE_KEY);
     } catch (err) {
-      _logger?.warn?.({ err, fileKey: file.FILE_KEY }, 'file delete: storage object removal failed (orphaned, safe to GC)');
+      _logger?.warn?.('file delete: storage object removal failed (orphaned, safe to GC)', { error: err.message, fileKey: file.FILE_KEY });
     }
   },
 
