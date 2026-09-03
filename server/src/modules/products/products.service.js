@@ -1,4 +1,5 @@
 const lookupOrchestrator = require('./lookup/lookup-orchestrator');
+const { storableImageUrl } = require('./image-url');
 const { simplifyProductName } = require('../../utils/product-name');
 
 /**
@@ -132,7 +133,7 @@ const ProductsService = {
           clip(data.category, 100) || null,
           data.description || null,
           data.specs ? JSON.stringify(data.specs) : null,
-          data.imageUrl || null,
+          storableImageUrl(data.imageUrl),
           data.retailPrice != null ? data.retailPrice : null,
           data.retailLinks ? JSON.stringify(data.retailLinks) : null,
           data.depreciationRate != null ? data.depreciationRate : null,
