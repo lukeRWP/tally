@@ -1,5 +1,6 @@
 module.exports = function authRoutes({ app, db, logger, config }) {
   const AuthService = require('./auth.service');
+  const { oauthCallback } = require('./auth.schema');
   AuthService.init({ db, config, logger });
 
   const { requireAuth, resolvePropertyRole, requireRole } = require('./auth.middleware');
@@ -31,7 +32,11 @@ module.exports = function authRoutes({ app, db, logger, config }) {
   // GET /api/auth/_x_/oauth/callback — Entra ID callback
   app.get('/api/auth/_x_/oauth/callback', async (req, res) => {
     try {
-      const { code, state } = req.query;
+      const { error: queryError, value } = oauthCallback.validate(req.query);
+      if (queryError) {
+        throw new Error(`OAuth callback rejected: ${queryError.details.map((d) => d.message).join('; ')}`);
+      }
+      const { code, state } = value;
 
       // The state must match the cookie set at /oauth/init (skipped under the
       // dev bypass, which short-circuits the real flow).
