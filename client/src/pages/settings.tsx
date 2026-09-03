@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { LogOut, Sun, Moon, Monitor, Trash2, Copy } from 'lucide-react';
+import { LogOut, Sun, Moon, Monitor, Trash2 } from 'lucide-react';
 import { useNavigate } from 'react-router';
 import { Button } from '@/components/ui/button';
 import { TitleBar } from '@/components/ui/title-bar';
@@ -14,7 +14,6 @@ import { PropertyMembers } from '@/components/inventory/property-members';
 import { TagManager } from '@/components/tags/tag-manager';
 import { NotificationPrefs } from '@/components/notifications/notification-prefs';
 import { PrinterSettings } from '@/components/print/printer-settings';
-import { ShareUrl } from '@/components/sharing/share-url';
 import { useMyShareLinks, useRevokeShareLink } from '@/hooks/use-sharing';
 import { toast } from '@/components/ui/toast';
 import { useVisionPref } from '@/store/vision-store';
@@ -32,17 +31,13 @@ function formatDate(dateStr: string) {
 export function ShareLinksSection() {
   const { data: allLinks = [], isLoading } = useMyShareLinks();
   const revokeLink = useRevokeShareLink();
+  // An owner's list carries links other members made on their property
+  // (#349); "by Sam" is the only way to tell those from your own.
+  const myId = useAuthStore().user?.id ?? null;
   // The link is gone the instant this fires — no undo, and the same token
   // can't be reissued (a new share creates a new token). That's the one
   // irreversible action on this page that had no confirm at all (#278).
   const [revokeTarget, setRevokeTarget] = React.useState<{ id: number; entityType: string } | null>(null);
-
-  function handleCopy(url: string) {
-    navigator.clipboard.writeText(url).then(
-      () => toast.success('Link copied'),
-      () => toast.error('Failed to copy'),
-    );
-  }
 
   function confirmRevoke() {
     if (!revokeTarget) return;
@@ -72,25 +67,18 @@ export function ShareLinksSection() {
         >
           <span className="min-w-0 flex-1">
             <span className="block text-sm font-semibold capitalize text-[var(--color-text)]">{link.entityType}</span>
-            {/* The same anchor the share dialog got in #296, not a second
-                spelling of it (#297): this list and that dialog show the same
-                URLs, and "can I open it?" must not depend on which surface you
-                happened to be standing on when you asked. */}
-            <ShareUrl url={link.url} className="text-[11px]" />
+            {/* No URL and no copy (#349): the server holds only a digest of
+                the token, so the address exists exactly once — in the dialog
+                that made it. What this row can honestly say is when it was
+                made, by whom, and when it stops working. */}
             <span className="block font-mono text-[10px] uppercase tracking-[0.06em] text-[var(--color-text-muted)]">
-              Expires {formatDate(link.expiresAt)}
+              Created {formatDate(link.createdAt)}
+              {link.createdBy !== myId && link.createdByName ? ` by ${link.createdByName}` : ''}
+              {' · '}Expires {formatDate(link.expiresAt)}
             </span>
           </span>
           {/* Named, not titled — a tooltip never appears on touch, so on a phone
-              these two icons would be the same unlabelled square. */}
-          <Button
-            variant="ghost"
-            size="icon"
-            aria-label={`Copy the ${link.entityType} share link`}
-            onClick={() => handleCopy(link.url)}
-          >
-            <Copy className="w-4 h-4" />
-          </Button>
+              the icon would be an unlabelled square. */}
           <Button
             variant="ghost"
             size="icon"

@@ -72,7 +72,8 @@ module.exports = function sharingRoutes({ app, db, logger, config }) {
   );
 
   // ── GET /api/sharing/_x_/my-links ─────────────────────────────────────────
-  // Authenticated: list current user's share links
+  // Authenticated: the links this user created, plus every link on a property
+  // they own (#349). Rows carry no URL — the token is shown once, at create.
 
   app.get(
     '/api/sharing/_x_/my-links',
@@ -84,13 +85,19 @@ module.exports = function sharingRoutes({ app, db, logger, config }) {
   );
 
   // ── DELETE /api/sharing/_d_/:linkId ───────────────────────────────────────
-  // Authenticated: revoke a share link
+  // Authenticated: revoke a share link — its creator, or an owner of the
+  // property it exposes (#349). The service answers whether a row went; a
+  // link that is not yours to revoke and a link that does not exist look the
+  // same from here, and neither is a success.
 
   app.delete(
     '/api/sharing/_d_/:linkId',
     requireAuth,
     async (req, res) => {
-      await SharingService.revoke(req.params.linkId, req.user.id);
+      const removed = await SharingService.revoke(req.params.linkId, req.user.id);
+      if (!removed) {
+        return error(res, 'Share link not found', 404);
+      }
       success(res, null, 'Share link revoked');
     }
   );

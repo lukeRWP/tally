@@ -43,10 +43,11 @@ vi.mock('@/hooks/use-inventory', () => ({
 
 const LINK = {
   id: 1,
-  token: 'tok_abc',
+  propertyId: 3,
+  createdBy: 1,
+  createdByName: 'Luke',
   entityType: 'container',
   entityId: 1,
-  url: 'https://tally.example/share/tok_abc',
   expiresAt: '2026-09-05T00:00:00Z',
   createdAt: '2026-08-29T00:00:00Z',
 };
@@ -145,21 +146,21 @@ test('moving one section did not lose it: every section is still on the page exa
 });
 
 /* ---------------------------------------------------------------- #297 ---- */
+// #297 gave this list the same anchor the share dialog has. #349 took the URL
+// away from BOTH lists — the server keeps only a digest of the token, so the
+// address is shown once, in the dialog that made it. What a settings row can
+// honestly offer is provenance and revoke.
 
-test('the share URL in settings is a real anchor that opens in a new tab', () => {
+test('a share-link row offers no URL and no copy — the address cannot be rebuilt from a digest', () => {
   renderPage();
 
-  const anchor = screen.getByRole('link', { name: LINK.url });
-  expect(anchor.getAttribute('href')).toBe(LINK.url);
-  expect(anchor.getAttribute('target')).toBe('_blank');
-  // Without noopener the opened tab can reach back through window.opener.
-  expect(anchor.getAttribute('rel')).toContain('noopener');
-  expect(anchor.getAttribute('rel')).toContain('noreferrer');
+  expect(screen.queryByRole('link', { name: /share\// })).toBeNull();
+  expect(screen.queryByRole('button', { name: /copy the container share link/i })).toBeNull();
+  expect(screen.getByRole('button', { name: /revoke the container share link/i })).toBeTruthy();
 });
 
-test('copy and revoke are still beside it, not replaced by it', () => {
+test('a link another member made on my property says so; my own does not', () => {
   renderPage();
-
-  expect(screen.getByRole('button', { name: /copy the container share link/i })).toBeTruthy();
-  expect(screen.getByRole('button', { name: /revoke the container share link/i })).toBeTruthy();
+  // LINK.createdBy is 1 and the signed-in user is not user 1 (see the auth mock).
+  expect(screen.getByText(/by Luke/)).toBeTruthy();
 });

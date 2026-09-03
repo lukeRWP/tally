@@ -6,6 +6,27 @@ let _db = null;
 let _logger = null;
 let _baseUrl = null;
 
+// share_links records the entity a link points at, not the property that
+// owns it, and three of the four entity types are some joins away from a
+// PROPERTY_ID. Every read that needs to know "whose property is this link
+// on" — owner visibility, owner revoke, the creator-still-a-member check —
+// walks the same chain, so it is written once. Aliases are prefixed `l` so
+// the fragment can sit beside the other joins a query already carries.
+const LINK_PROPERTY_JOINS = `
+       LEFT JOIN TALLY.areas la ON s.ENTITY_TYPE = 'area' AND la.ID = s.ENTITY_ID
+       LEFT JOIN TALLY.containers lc ON s.ENTITY_TYPE = 'container' AND lc.ID = s.ENTITY_ID
+       LEFT JOIN TALLY.areas lca ON lca.ID = lc.AREA_ID
+       LEFT JOIN TALLY.items li ON s.ENTITY_TYPE = 'item' AND li.ID = s.ENTITY_ID
+       LEFT JOIN TALLY.containers lic ON lic.ID = li.CONTAINER_ID
+       LEFT JOIN TALLY.areas lia ON lia.ID = lic.AREA_ID`;
+const LINK_PROPERTY_ID = `COALESCE(
+         CASE WHEN s.ENTITY_TYPE = 'property' THEN s.ENTITY_ID END,
+         la.PROPERTY_ID, lca.PROPERTY_ID, lia.PROPERTY_ID)`;
+
+// Never TOKEN. After #349 the column holds a digest, which is useless to a
+// client and still a secret worth not echoing; before it, the raw credential.
+const LINK_COLUMNS = 's.ID, s.ENTITY_TYPE, s.ENTITY_ID, s.CREATED_BY, s.EXPIRES_AT, s.CREATED_AT, s.DISCLOSURE';
+
 const SharingService = {
   // ── Initialization ─────────────────────────────────────────────────────────
 
@@ -17,14 +38,25 @@ const SharingService = {
 
   // ── Helpers ────────────────────────────────────────────────────────────────
 
+  /**
+   * What the table holds for a token (#349). The raw value is the whole
+   * credential for a public page, so it lives only in the URL handed back by
+   * create(); the row keeps its digest, and validate() digests what arrives.
+   * Node's sha256 hex and MySQL's SHA2(x, 256) agree for these ASCII tokens,
+   * which is what lets migration 014 rewrite the old rows in place.
+   */
+  _hashToken(token) {
+    return crypto.createHash('sha256').update(String(token)).digest('hex');
+  },
+
   _mapLink(row) {
     return {
       id: row.ID,
-      token: row.TOKEN,
-      url: `${_baseUrl}/share/${row.TOKEN}`,
       entityType: row.ENTITY_TYPE,
       entityId: row.ENTITY_ID,
+      propertyId: row.PROPERTY_ID ?? null,
       createdBy: row.CREATED_BY,
+      createdByName: row.CREATED_BY_NAME ?? null,
       expiresAt: row.EXPIRES_AT,
       createdAt: row.CREATED_AT,
       // Resolved, never raw: a NULL column and an all-true object are the same
@@ -39,40 +71,57 @@ const SharingService = {
    * `choices` is the sharer's per-link disclosure (see sharing.disclosure.js).
    * Omitted, or all-defaults, stores NULL — a row indistinguishable from every
    * link created before the column existed, publishing exactly the same thing.
+   *
+   * The returned link carries `url` — the only time the raw token leaves the
+   * server. No later read can rebuild it (#349), so the dialog shows it once.
    */
   async create(entityType, entityId, createdBy, expiresInDays = 7, choices = null) {
     const token = crypto.randomBytes(32).toString('hex');
     const chosen = disclosure.normalizeChoice(choices, entityType);
 
     const result = await _db.query(
-      `INSERT INTO TALLY.share_links (TOKEN, ENTITY_TYPE, ENTITY_ID, CREATED_BY, EXPIRES_AT, DISCLOSURE)
-       VALUES (?, ?, ?, ?, DATE_ADD(NOW(), INTERVAL ? DAY), ?)`,
+      `INSERT INTO TALLY.share_links (TOKEN, TOKEN_HASHED, ENTITY_TYPE, ENTITY_ID, CREATED_BY, EXPIRES_AT, DISCLOSURE)
+       VALUES (?, 1, ?, ?, ?, DATE_ADD(NOW(), INTERVAL ? DAY), ?)`,
       // Stringified explicitly: mysql2 escapes a bare object as `k = v` pairs,
       // which is not JSON and not what a JSON column wants.
-      [token, entityType, entityId, createdBy, expiresInDays, chosen ? JSON.stringify(chosen) : null]
+      [SharingService._hashToken(token), entityType, entityId, createdBy, expiresInDays, chosen ? JSON.stringify(chosen) : null]
     );
 
     const rows = await _db.query(
-      'SELECT * FROM TALLY.share_links WHERE ID = ?',
+      `SELECT ${LINK_COLUMNS}, ${LINK_PROPERTY_ID} AS PROPERTY_ID, u.DISPLAY_NAME AS CREATED_BY_NAME
+       FROM TALLY.share_links s
+       ${LINK_PROPERTY_JOINS}
+       LEFT JOIN TALLY.users u ON u.ID = s.CREATED_BY
+       WHERE s.ID = ?`,
       [result.insertId]
     );
 
-    return SharingService._mapLink(rows[0]);
+    return { ...SharingService._mapLink(rows[0]), url: `${_baseUrl}/share/${token}` };
   },
 
   async validate(token) {
     // The public page has to frame itself for a stranger — who shared this and
     // when it stops working — so the sharer's display name is joined in here.
-    // LEFT JOIN on purpose: a link outlives the user row it was created from,
-    // and a share whose creator is gone must still resolve (the page then just
-    // omits the "shared by" line rather than inventing one).
+    //
+    // The property_members join is the membership recheck (#349): a link is
+    // only as good as its creator's standing on the property it exposes. An
+    // editor who is removed takes their links with them, and a creator whose
+    // account is gone has no membership row either, so the users join can be
+    // inner — every row that survives the recheck has a sharer to name.
+    //
+    // TOKEN_HASHED = 1 is deliberate, not belt-and-braces: a row the old
+    // server wrote between migration 014 and this code deploying holds a raw
+    // token, and matching a raw token against a digest would be a lie that
+    // happens to fail. Such a row is simply dead until the expiry purge.
     const rows = await _db.query(
       `SELECT s.ENTITY_TYPE, s.ENTITY_ID, s.CREATED_BY, s.EXPIRES_AT, s.CREATED_AT, s.DISCLOSURE,
               u.DISPLAY_NAME AS CREATED_BY_NAME
        FROM TALLY.share_links s
-       LEFT JOIN TALLY.users u ON s.CREATED_BY = u.ID
-       WHERE s.TOKEN = ? AND s.EXPIRES_AT > NOW()`,
-      [token]
+       ${LINK_PROPERTY_JOINS}
+       JOIN TALLY.property_members pm ON pm.PROPERTY_ID = ${LINK_PROPERTY_ID} AND pm.USER_ID = s.CREATED_BY
+       JOIN TALLY.users u ON u.ID = s.CREATED_BY
+       WHERE s.TOKEN = ? AND s.TOKEN_HASHED = 1 AND s.EXPIRES_AT > NOW()`,
+      [SharingService._hashToken(token)]
     );
     if (!rows.length) return null;
 
@@ -90,19 +139,42 @@ const SharingService = {
     };
   },
 
+  /**
+   * Every link this user is entitled to see (#349): the ones they created,
+   * plus every link on a property they own, whoever created it. Before this
+   * an owner could not see — let alone revoke — a link an editor had made,
+   * and the link outlived the editor's membership.
+   *
+   * Expired rows are purged first. Nothing else ever deleted them; validate()
+   * ignored them, but they still counted in the Settings header and still
+   * held a token that no longer opened anything.
+   */
   async getByUser(userId) {
+    await _db.query('DELETE FROM TALLY.share_links WHERE EXPIRES_AT <= NOW()');
+
     const rows = await _db.query(
-      'SELECT * FROM TALLY.share_links WHERE CREATED_BY = ? ORDER BY CREATED_AT DESC',
-      [userId]
+      `SELECT ${LINK_COLUMNS}, ${LINK_PROPERTY_ID} AS PROPERTY_ID, u.DISPLAY_NAME AS CREATED_BY_NAME
+       FROM TALLY.share_links s
+       ${LINK_PROPERTY_JOINS}
+       LEFT JOIN TALLY.users u ON u.ID = s.CREATED_BY
+       LEFT JOIN TALLY.property_members pm ON pm.PROPERTY_ID = ${LINK_PROPERTY_ID} AND pm.USER_ID = ?
+       WHERE s.CREATED_BY = ? OR pm.ROLE = 'owner'
+       ORDER BY s.CREATED_AT DESC`,
+      [userId, userId]
     );
     return rows.map(SharingService._mapLink);
   },
 
+  /** Creator or property owner. Resolves to whether a row was actually removed. */
   async revoke(linkId, userId) {
-    await _db.query(
-      'DELETE FROM TALLY.share_links WHERE ID = ? AND CREATED_BY = ?',
-      [linkId, userId]
+    const result = await _db.query(
+      `DELETE s FROM TALLY.share_links s
+       ${LINK_PROPERTY_JOINS}
+       LEFT JOIN TALLY.property_members pm ON pm.PROPERTY_ID = ${LINK_PROPERTY_ID} AND pm.USER_ID = ?
+       WHERE s.ID = ? AND (s.CREATED_BY = ? OR pm.ROLE = 'owner')`,
+      [userId, linkId, userId]
     );
+    return (result?.affectedRows ?? 0) > 0;
   },
 
   // ── Public entity fetching ─────────────────────────────────────────────────

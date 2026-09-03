@@ -74,10 +74,7 @@ export function ShareDialog({ entityType, entityId, entityName, isOpen, onOpenCh
 
   // Filter links for this specific entity
   const entityLinks = React.useMemo(
-    () =>
-      (allLinks as unknown as { id: number; token: string; entityType: string; entityId: number; url: string; expiresAt: string; createdAt: string }[] | undefined)?.filter(
-        (l) => l.entityType === entityType && l.entityId === entityId,
-      ) ?? [],
+    () => allLinks?.filter((l) => l.entityType === entityType && l.entityId === entityId) ?? [],
     [allLinks, entityType, entityId],
   );
 
@@ -104,8 +101,7 @@ export function ShareDialog({ entityType, entityId, entityName, isOpen, onOpenCh
       { entityType, entityId, expiresInDays, disclosure },
       {
         onSuccess: (link) => {
-          const linkData = link as unknown as { url: string };
-          setNewLinkUrl(linkData.url);
+          setNewLinkUrl(link.url);
           toast.success('Share link created');
         },
         onError: (err) => toast.error(err.message),
@@ -233,13 +229,23 @@ export function ShareDialog({ entityType, entityId, entityName, isOpen, onOpenCh
 
         {/* Newly created link. The URL is an anchor, not a readonly input: the
             only way to check what you just published is to open it, and a
-            desk has tabs. Copy stays alongside for pasting it elsewhere. */}
+            desk has tabs. Copy stays alongside for pasting it elsewhere.
+
+            This is the URL's only appearance (#349). The server keeps a
+            digest of the token, so the list below cannot show it again —
+            the same shape as an API key. Said plainly, before the sharer
+            closes the dialog and finds out the hard way. */}
         {newLinkUrl && (
-          <div className="flex gap-2 items-center">
-            <ShareUrl url={newLinkUrl} />
-            <Button size="sm" variant="outline" onClick={() => handleCopy(newLinkUrl)} title="Copy link">
-              <Copy className="w-4 h-4" />
-            </Button>
+          <div className="flex flex-col gap-1">
+            <div className="flex gap-2 items-center">
+              <ShareUrl url={newLinkUrl} />
+              <Button size="sm" variant="outline" onClick={() => handleCopy(newLinkUrl)} title="Copy link">
+                <Copy className="w-4 h-4" />
+              </Button>
+            </div>
+            <p className="text-[10px] text-[var(--color-text-muted)]">
+              Copy it now — this link is shown only once.
+            </p>
           </div>
         )}
 
@@ -251,6 +257,9 @@ export function ShareDialog({ entityType, entityId, entityName, isOpen, onOpenCh
           </div>
         )}
 
+        {/* Existing links carry no URL (#349) — created-on, by whom, and
+            when they die is what there is to know, and revoke is the only
+            thing to do. A member wanting a fresh address generates one. */}
         {!linksLoading && entityLinks.length > 0 && (
           <div>
             <p className="text-xs font-medium text-[var(--color-text-muted)] mb-2">Active links</p>
@@ -261,26 +270,21 @@ export function ShareDialog({ entityType, entityId, entityName, isOpen, onOpenCh
                   className="flex items-center gap-2 p-2 rounded-[var(--radius-md)] bg-[var(--color-elevated)] border border-[var(--color-border)]"
                 >
                   <div className="flex-1 min-w-0">
-                    <ShareUrl url={link.url} />
+                    <p className="text-xs text-[var(--color-text)] truncate">
+                      Created {formatDate(link.createdAt)}
+                      {link.createdByName ? ` by ${link.createdByName}` : ''}
+                    </p>
                     <p className="text-[10px] text-[var(--color-text-muted)] mt-0.5">
                       Expires {formatDate(link.expiresAt)}
                     </p>
                   </div>
                   <Button
                     size="sm"
-                    variant="outline"
-                    onClick={() => handleCopy(link.url)}
-                    className="shrink-0"
-                    title="Copy link"
-                  >
-                    <Copy className="w-3.5 h-3.5" />
-                  </Button>
-                  <Button
-                    size="sm"
                     variant="destructive"
                     onClick={() => handleRevoke(link.id)}
                     disabled={revokeLink.isPending}
                     className="shrink-0"
+                    aria-label={`Revoke the link created ${formatDate(link.createdAt)}`}
                   >
                     <Trash2 className="w-3.5 h-3.5" />
                   </Button>
