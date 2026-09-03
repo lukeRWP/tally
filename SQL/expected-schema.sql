@@ -217,10 +217,12 @@ CREATE TABLE `notifications` (
   `MESSAGE` text COLLATE utf8mb4_unicode_ci NOT NULL,
   `ENTITY_TYPE` enum('property','area','container','item','item_date','item_lending') COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `ENTITY_ID` int DEFAULT NULL,
+  `DUE_ON` date DEFAULT NULL,
   `READ_AT` datetime DEFAULT NULL,
+  `DISMISSED_AT` datetime DEFAULT NULL,
   `CREATED_AT` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`ID`),
-  KEY `fk_notifications_user` (`USER_ID`),
+  UNIQUE KEY `uq_notifications_due` (`USER_ID`,`TYPE`,`ENTITY_TYPE`,`ENTITY_ID`,`DUE_ON`),
   CONSTRAINT `fk_notifications_user` FOREIGN KEY (`USER_ID`) REFERENCES `users` (`ID`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 CREATE TABLE `oauth_state` (

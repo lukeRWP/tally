@@ -1,5 +1,13 @@
+const { NOTIFICATION_TYPES } = require('./notifications.schema');
+
 let _db = null;
 let _logger = null;
+
+// checkDateNotifications runs fire-and-forget on every list load, so two tabs
+// opening together race SELECT-then-INSERT on the same due date. The unique key
+// (013) makes the loser fail with this code; it means "already there", not
+// "something broke".
+const ER_DUP_ENTRY = 'ER_DUP_ENTRY';
 
 function _mapNotification(row) {
   return {
@@ -28,7 +36,7 @@ const NotificationsService = {
 
   // ── Create ──────────────────────────────────────────────────────────────────
 
-  async create(userId, type, title, message, entityType = null, entityId = null) {
+  async create(userId, type, title, message, entityType = null, entityId = null, dueOn = null) {
     // Check if user has this notification type enabled in preferences
     const prefRows = await _db.query(
       `SELECT ENABLED FROM TALLY.notification_preferences
@@ -47,9 +55,9 @@ const NotificationsService = {
     }
 
     const result = await _db.query(
-      `INSERT INTO TALLY.notifications (USER_ID, TYPE, TITLE, MESSAGE, ENTITY_TYPE, ENTITY_ID)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-      [userId, type, title, message, entityType, entityId]
+      `INSERT INTO TALLY.notifications (USER_ID, TYPE, TITLE, MESSAGE, ENTITY_TYPE, ENTITY_ID, DUE_ON)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [userId, type, title, message, entityType, entityId, dueOn]
     );
 
     const rows = await _db.query(
@@ -70,11 +78,14 @@ const NotificationsService = {
     // owns (n.USER_ID filter below), so no cross-user surface is added. The
     // COALESCE is NULL for other entity types and for deleted source rows,
     // which the client treats as "no destination".
+    //
+    // Dismissed rows stay in the table as dedupe markers (see dismiss) and are
+    // filtered here, not deleted.
     let sql = `SELECT n.*, COALESCE(d.ITEM_ID, il.ITEM_ID) AS ITEM_ID
        FROM TALLY.notifications n
        LEFT JOIN TALLY.item_dates d    ON n.ENTITY_TYPE = 'item_date'    AND d.ID  = n.ENTITY_ID
        LEFT JOIN TALLY.item_lending il ON n.ENTITY_TYPE = 'item_lending' AND il.ID = n.ENTITY_ID
-       WHERE n.USER_ID = ?`;
+       WHERE n.USER_ID = ? AND n.DISMISSED_AT IS NULL`;
     const params = [userId];
 
     if (unreadOnly) {
@@ -93,7 +104,7 @@ const NotificationsService = {
   async getUnreadCount(userId) {
     const rows = await _db.query(
       `SELECT COUNT(*) AS cnt FROM TALLY.notifications
-       WHERE USER_ID = ? AND READ_AT IS NULL`,
+       WHERE USER_ID = ? AND READ_AT IS NULL AND DISMISSED_AT IS NULL`,
       [userId]
     );
     return rows[0].cnt;
@@ -114,16 +125,20 @@ const NotificationsService = {
   async markAllRead(userId) {
     await _db.query(
       `UPDATE TALLY.notifications SET READ_AT = NOW()
-       WHERE USER_ID = ? AND READ_AT IS NULL`,
+       WHERE USER_ID = ? AND READ_AT IS NULL AND DISMISSED_AT IS NULL`,
       [userId]
     );
   },
 
   // ── Dismiss ─────────────────────────────────────────────────────────────────
 
+  // Soft, not DELETE. A date notifies once per (entity, due date), and the
+  // row IS the record that it has been sent — deleting it on dismiss brought
+  // the notification straight back on the next list load (#348).
   async dismiss(notificationId, userId) {
     await _db.query(
-      `DELETE FROM TALLY.notifications WHERE ID = ? AND USER_ID = ?`,
+      `UPDATE TALLY.notifications SET DISMISSED_AT = NOW()
+       WHERE ID = ? AND USER_ID = ? AND DISMISSED_AT IS NULL`,
       [notificationId, userId]
     );
   },
@@ -137,17 +152,17 @@ const NotificationsService = {
       [userId]
     );
 
-    const ALL_TYPES = ['warranty_expiry', 'lending_due', 'item_moved', 'item_removed', 'share_expiring', 'custom_date'];
-
     // Build map: start with all types defaulting to false
     const prefs = {};
-    for (const type of ALL_TYPES) {
+    for (const type of NOTIFICATION_TYPES) {
       prefs[type] = false;
     }
 
-    // Overlay stored preferences
+    // Overlay stored preferences. A row for a type that no longer exists (the
+    // four retired in #348 may linger in notification_preferences) is not a
+    // preference the client can show, so it stays out of the map.
     for (const row of rows) {
-      prefs[row.NOTIFICATION_TYPE] = !!row.ENABLED;
+      if (row.NOTIFICATION_TYPE in prefs) prefs[row.NOTIFICATION_TYPE] = !!row.ENABLED;
     }
 
     return prefs;
@@ -173,32 +188,44 @@ const NotificationsService = {
     // column ENUM rejected) swallowed the entire run, including the unrelated
     // overdue-lending checks below.
 
+    // Dedupe is per (entity, due date), not per 24 hours: the old window meant a
+    // date inside its 30-day horizon re-notified every day for a month. DUE_ON
+    // comes back as a 'YYYY-MM-DD' string so the same value goes into the
+    // dedupe SELECT and the INSERT — a JS Date would round-trip through the
+    // pool timezone twice. Dismissed rows still count: that is the point of
+    // soft dismiss.
+
     // ── 1. Upcoming custom dates (within 30 days) ──────────────────────────
     try {
+      // CURDATE(), not NOW(): DATE_VALUE is a DATE, and compared against a
+      // datetime it becomes midnight — so a date due *today* was already in
+      // the past by the time anyone loaded the page.
       const upcomingDates = await _db.query(
-        `SELECT id.ID, id.ITEM_ID, id.DATE_TYPE, id.DATE_VALUE, i.NAME AS ITEM_NAME
+        `SELECT id.ID, id.ITEM_ID, id.DATE_TYPE, id.DATE_VALUE,
+                DATE_FORMAT(id.DATE_VALUE, '%Y-%m-%d') AS DUE_ON,
+                i.NAME AS ITEM_NAME
          FROM TALLY.item_dates id
          JOIN TALLY.items i           ON i.ID  = id.ITEM_ID
          JOIN TALLY.containers c      ON c.ID  = i.CONTAINER_ID
          JOIN TALLY.areas a           ON a.ID  = c.AREA_ID
          JOIN TALLY.property_members pm ON pm.PROPERTY_ID = a.PROPERTY_ID
-         WHERE id.DATE_VALUE BETWEEN NOW() AND DATE_ADD(NOW(), INTERVAL 30 DAY)
+         WHERE id.DATE_VALUE BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 30 DAY)
+           AND i.DELETED_AT IS NULL
            AND pm.USER_ID = ?`,
         [userId]
       );
 
       for (const row of upcomingDates) {
         try {
-          // Check for a recent duplicate notification (within last 24 hours)
           const existing = await _db.query(
             `SELECT ID FROM TALLY.notifications
              WHERE USER_ID = ?
                AND TYPE = 'custom_date'
                AND ENTITY_TYPE = 'item_date'
                AND ENTITY_ID = ?
-               AND CREATED_AT > DATE_SUB(NOW(), INTERVAL 24 HOUR)
+               AND DUE_ON = ?
              LIMIT 1`,
-            [userId, row.ID]
+            [userId, row.ID, row.DUE_ON]
           );
 
           if (existing.length === 0) {
@@ -210,10 +237,12 @@ const NotificationsService = {
               `Upcoming: ${dateLabel}`,
               `${row.ITEM_NAME} — ${dateLabel} on ${dateStr}`,
               'item_date',
-              row.ID
+              row.ID,
+              row.DUE_ON
             );
           }
         } catch (err) {
+          if (err.code === ER_DUP_ENTRY) continue;
           _logger.warn('checkDateNotifications: date row failed', { userId, dateId: row.ID, error: err.message });
         }
       }
@@ -224,7 +253,9 @@ const NotificationsService = {
     // ── 2. Overdue lendings ────────────────────────────────────────────────
     try {
       const overdueLendings = await _db.query(
-        `SELECT il.ID, il.ITEM_ID, il.DUE_AT, il.LENT_TO, i.NAME AS ITEM_NAME
+        `SELECT il.ID, il.ITEM_ID, il.DUE_AT, il.LENT_TO,
+                DATE_FORMAT(il.DUE_AT, '%Y-%m-%d') AS DUE_ON,
+                i.NAME AS ITEM_NAME
          FROM TALLY.item_lending il
          JOIN TALLY.items i           ON i.ID  = il.ITEM_ID
          JOIN TALLY.containers c      ON c.ID  = i.CONTAINER_ID
@@ -232,22 +263,22 @@ const NotificationsService = {
          JOIN TALLY.property_members pm ON pm.PROPERTY_ID = a.PROPERTY_ID
          WHERE il.RETURNED_AT IS NULL
            AND il.DUE_AT < NOW()
+           AND i.DELETED_AT IS NULL
            AND pm.USER_ID = ?`,
         [userId]
       );
 
       for (const row of overdueLendings) {
         try {
-          // Check for a recent duplicate notification (within last 24 hours)
           const existing = await _db.query(
             `SELECT ID FROM TALLY.notifications
              WHERE USER_ID = ?
                AND TYPE = 'lending_due'
                AND ENTITY_TYPE = 'item_lending'
                AND ENTITY_ID = ?
-               AND CREATED_AT > DATE_SUB(NOW(), INTERVAL 24 HOUR)
+               AND DUE_ON = ?
              LIMIT 1`,
-            [userId, row.ID]
+            [userId, row.ID, row.DUE_ON]
           );
 
           if (existing.length === 0) {
@@ -258,10 +289,12 @@ const NotificationsService = {
               `Overdue: ${row.ITEM_NAME}`,
               `${row.ITEM_NAME} lent to ${row.LENT_TO} was due ${dueStr}`,
               'item_lending',
-              row.ID
+              row.ID,
+              row.DUE_ON
             );
           }
         } catch (err) {
+          if (err.code === ER_DUP_ENTRY) continue;
           _logger.warn('checkDateNotifications: lending row failed', { userId, lendingId: row.ID, error: err.message });
         }
       }

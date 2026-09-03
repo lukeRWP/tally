@@ -3,12 +3,12 @@ import { useNotificationPreferences, useUpdatePreference } from '@/hooks/use-not
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
 
+// Mirrors the server's NOTIFICATION_TYPES (notifications.schema.js): only the
+// types something actually produces. Four more used to be listed here —
+// warranty expiry, item moved/removed, share expiring — with no producer
+// behind them, so the toggles did nothing (#348).
 const NOTIFICATION_TYPES: Array<{ type: string; label: string }> = [
-  { type: 'warranty_expiry', label: 'Warranty Expiration' },
   { type: 'lending_due', label: 'Lending Due/Overdue' },
-  { type: 'item_moved', label: 'Item Moved' },
-  { type: 'item_removed', label: 'Item Removed' },
-  { type: 'share_expiring', label: 'Share Link Expiring' },
   { type: 'custom_date', label: 'Custom Date Approaching' },
 ];
 

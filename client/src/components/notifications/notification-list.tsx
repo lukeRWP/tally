@@ -1,14 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router';
-import {
-  Clock,
-  HandCoins,
-  ArrowRight,
-  Trash2,
-  Link,
-  X,
-  BellOff,
-} from 'lucide-react';
+import { Clock, HandCoins, X, BellOff } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   useNotifications,
@@ -30,22 +22,9 @@ function relativeTime(dateStr: string): string {
   return `${Math.floor(diff / 86400)}d ago`;
 }
 
+// Only two types are ever produced (server NOTIFICATION_TYPES, #348).
 function notificationIcon(type: string) {
-  switch (type) {
-    case 'warranty_expiry':
-    case 'custom_date':
-      return <Clock className="w-4 h-4" />;
-    case 'lending_due':
-      return <HandCoins className="w-4 h-4" />;
-    case 'item_moved':
-      return <ArrowRight className="w-4 h-4" />;
-    case 'item_removed':
-      return <Trash2 className="w-4 h-4" />;
-    case 'share_expiring':
-      return <Link className="w-4 h-4" />;
-    default:
-      return <Clock className="w-4 h-4" />;
-  }
+  return type === 'lending_due' ? <HandCoins className="w-4 h-4" /> : <Clock className="w-4 h-4" />;
 }
 
 function entityPath(notification: Notification): string {

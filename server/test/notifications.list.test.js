@@ -3,10 +3,10 @@ const assert = require('node:assert');
 const Notifications = require('../src/modules/notifications/notifications.service');
 
 // Notification clicks were landing on Home (#237): item_date / item_lending
-// notifications store the *source-row* id in ENTITY_ID (the 24h dedup key
-// needs it), which the client cannot navigate to. getForUser now resolves the
+// notifications store the *source-row* id in ENTITY_ID (the dedup key needs
+// it), which the client cannot navigate to. getForUser now resolves the
 // owning item at read time via conditional LEFT JOINs and projects it as
-// ITEM_ID → itemId. Creation/dedup are untouched.
+// ITEM_ID → itemId. Creation/dedup live in notifications.dedupe.test.js.
 
 const logger = { warn() {}, info() {}, error() {} };
 
@@ -21,7 +21,7 @@ test('getForUser joins the source rows read-time and stays user-scoped', async (
   assert.match(sql, /LEFT JOIN TALLY\.item_dates d\s+ON n\.ENTITY_TYPE = 'item_date'\s+AND d\.ID\s+= n\.ENTITY_ID/, 'date join conditioned on entity type');
   assert.match(sql, /LEFT JOIN TALLY\.item_lending il ON n\.ENTITY_TYPE = 'item_lending' AND il\.ID = n\.ENTITY_ID/, 'lending join conditioned on entity type');
   assert.match(sql, /COALESCE\(d\.ITEM_ID, il\.ITEM_ID\) AS ITEM_ID/, 'one projected ITEM_ID');
-  assert.match(sql, /WHERE n\.USER_ID = \?/, 'still scoped to the requesting user');
+  assert.match(sql, /WHERE n\.USER_ID = \? AND n\.DISMISSED_AT IS NULL/, 'scoped to the requesting user, dismissed rows hidden');
   assert.deepEqual(params, [42, 50, 0]);
 });
 
