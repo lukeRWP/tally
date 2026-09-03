@@ -24,6 +24,25 @@ function redactSensitive(obj) {
   return redacted;
 }
 
+// Routes whose path carries a credential. Express restores `req.params` as
+// each layer exits, so by the time an app-level error handler runs they are
+// `{}` — the `params` field below was never what leaked. The token lived on
+// in `req.url`, and a failed public share request wrote the whole bearer for
+// that page to winston (#349). Nothing generic can find it there, so the one
+// such route is named and masked by shape.
+const SENSITIVE_PATH_PREFIXES = ['/api/sharing/_x_/view/'];
+const SENSITIVE_QUERY = new RegExp(`([?&](?:${[...SENSITIVE_FIELDS].join('|')})=)[^&#]*`, 'gi');
+
+function redactUrl(url) {
+  let out = String(url || '');
+  for (const prefix of SENSITIVE_PATH_PREFIXES) {
+    if (out.startsWith(prefix)) {
+      out = prefix + '[REDACTED]' + out.slice(prefix.length).replace(/^[^/?#]*/, '');
+    }
+  }
+  return out.replace(SENSITIVE_QUERY, '$1[REDACTED]');
+}
+
 // eslint-disable-next-line no-unused-vars
 function errorHandler(err, req, res, next) {
   const isProduction = process.env.NODE_ENV === 'production';
@@ -31,13 +50,13 @@ function errorHandler(err, req, res, next) {
   // Build a safe log context
   const logContext = {
     method: req.method,
-    url: req.url,
+    url: redactUrl(req.url),
     statusCode: err.statusCode || err.status || 500,
     errorCode: err.code,
     stack: err.stack,
     body: redactSensitive(req.body),
-    params: req.params,
-    query: req.query,
+    params: redactSensitive(req.params),
+    query: redactSensitive(req.query),
   };
 
   // ── Joi ValidationError ──────────────────────────────────────────────────

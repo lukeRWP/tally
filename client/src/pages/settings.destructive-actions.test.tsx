@@ -57,10 +57,11 @@ const revokeMutation = { mutate: vi.fn(), isPending: false };
 
 const LINK = {
   id: 1,
-  token: 'tok_abc',
+  propertyId: 3,
+  createdBy: 1,
+  createdByName: 'Luke',
   entityType: 'item',
   entityId: 42,
-  url: 'https://tally.example.com/share/tok_abc',
   expiresAt: '2026-09-05T00:00:00Z',
   createdAt: '2026-08-01T00:00:00Z',
 };

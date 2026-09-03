@@ -360,6 +360,7 @@ CREATE TABLE `sessions` (
 CREATE TABLE `share_links` (
   `ID` int NOT NULL AUTO_INCREMENT,
   `TOKEN` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `TOKEN_HASHED` tinyint(1) NOT NULL DEFAULT '0',
   `ENTITY_TYPE` enum('property','area','container','item') COLLATE utf8mb4_unicode_ci NOT NULL,
   `ENTITY_ID` int NOT NULL,
   `CREATED_BY` int NOT NULL,

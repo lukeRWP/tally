@@ -319,6 +319,9 @@ Key design patterns:
 | 009 | printer agent `CREATED_BY` tether |
 | 010 | items indexes |
 | 011 | share-link disclosure choices (`share_links.DISCLOSURE` JSON; NULL = share everything) |
+| 012 | per-user daily vision usage (`vision_usage`), so the spend cap survives a restart (#340) |
+| 013 | notification dedupe: `notifications.DUE_ON` + `DISMISSED_AT`, `uq_notifications_due` (#348) |
+| 014 | share tokens hashed in place: `share_links.TOKEN_HASHED` marker + `TOKEN = SHA2(TOKEN, 256)` (#349) |
 
 ## Authentication
 
@@ -473,10 +476,12 @@ Labels can be queued for automatic printing on a USB thermal printer (Munbyn ITP
 ### Share Links
 
 - Any item, container, area, or property can be shared via a **time-limited public link** — no authentication required for viewers.
-- `POST /api/sharing/_y_/create` generates a share token with a configurable expiry (default 7 days).
-- `GET /api/sharing/_x_/:token` resolves the token and returns a read-only view of the shared entity.
-- `DELETE /api/sharing/_d_/:token` revokes a share link immediately.
-- Share links are stored in the `share_links` table with `TOKEN`, `ENTITY_TYPE`, `ENTITY_ID`, `EXPIRES_AT`, `CREATED_BY`, and `DISCLOSURE` columns.
+- `POST /api/sharing/_y_/create` generates a share token with a configurable expiry (default 7 days). **The raw token appears exactly once — in the `url` of that response.** `share_links.TOKEN` holds `sha256(token)` (hex) with `TOKEN_HASHED = 1` (migration 014, #349); `validate` hashes the incoming token and matches only hashed rows. `GET /api/sharing/_x_/my-links` rows therefore carry no `url` and no `token`, and both clients (ShareDialog, Settings) show the address only in the freshly-created panel. A `TOKEN_HASHED = 0` row is one an old server wrote between 014 running and the dependent code deploying: it is dead and the expiry purge removes it.
+- `GET /api/sharing/_x_/view/:token` resolves the token and returns a read-only view of the shared entity. **The creator must still be a member of the link's property** (inner join on `property_members`) — removing a member kills their links.
+- `DELETE /api/sharing/_d_/:linkId` revokes a share link immediately — allowed to its **creator or any owner of the property** it exposes; a row that is neither yours nor there is a 404. `my-links` is scoped the same way (creator, or owner of the property) and purges expired rows before it lists.
+- The link's property is resolved by one shared join chain (`LINK_PROPERTY_JOINS` / `LINK_PROPERTY_ID` in `sharing.service.js`): property → itself, area → `areas.PROPERTY_ID`, container → its area, item → its container's area.
+- The error handler masks the token in the logged URL by route shape (`SENSITIVE_PATH_PREFIXES` in `middleware/error-handler.js`) — `req.params` is already `{}` by the time an app-level error handler runs, so redacting params alone would not have helped.
+- Share links are stored in the `share_links` table with `TOKEN` (digest), `TOKEN_HASHED`, `ENTITY_TYPE`, `ENTITY_ID`, `EXPIRES_AT`, `CREATED_BY`, and `DISCLOSURE` columns.
 - The client renders shared content on a standalone `/share/:token` page — no nav, no auth, no sidebar.
 - **What a link publishes is a per-link choice**, catalogued in `server/src/modules/sharing/sharing.disclosure.js` — the single source of truth for both the sharer-facing list (`GET /api/sharing/_x_/disclosure`, read by `ShareDialog`) and the strip applied when the public payload is built (`applyDisclosure`, called once in `getEntityForShare`). Add a field to the public payload → add it to that catalogue, or it can never be withheld.
 - **Every category defaults to ON**, and each states so explicitly via `defaultOn` in that catalogue — changing what a *new* share publishes by default is that one line, nothing else. #298 asked specifically about the property address and the purchase price; Luke's answer was on for both, same as every other category, with opt-out left to the per-link dialog.

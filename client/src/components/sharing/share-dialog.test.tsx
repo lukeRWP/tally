@@ -5,20 +5,28 @@
  * only way to check what you had just published was to copy the URL and paste
  * it into a new tab by hand. These tests pin the anchor (and that copy, the
  * affordance that already worked, is still there beside it).
+ *
+ * Since #349 that anchor exists in exactly one place: the panel for the link
+ * you just generated. The server keeps a digest of the token, so the list of
+ * existing links has no URL to offer — only who made each one, when, and a
+ * way to revoke it.
  */
-import { fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, expect, test, vi } from 'vitest';
 import { ShareDialog } from './share-dialog';
 
 const LINK = {
   id: 1,
-  token: 'tok-1',
   entityType: 'container',
   entityId: 1,
-  url: 'https://tally.example/share/tok-1',
+  propertyId: 3,
+  createdBy: 8,
+  createdByName: 'Sam',
   expiresAt: '2026-09-05T00:00:00Z',
   createdAt: '2026-08-29T00:00:00Z',
 };
+
+const NEW_URL = 'https://tally.example/share/tok-new';
 
 /**
  * The catalogue exactly as GET /api/sharing/_x_/disclosure serves it for an
@@ -33,7 +41,16 @@ const ITEM_CATEGORIES = [
   { key: 'files', label: 'Photos and receipts', detail: 'Every file attached to this item…', optional: true, defaultValue: true },
 ];
 
-const createMutate = vi.fn();
+/**
+ * Resolves like the real hook: the create response is the LINK (`url` and
+ * all), not the `{ link }` envelope the route wraps it in. The dialog once
+ * read `.url` off the envelope and never showed the new link; a mock that
+ * handed back the envelope would keep that bug invisible.
+ */
+type CreateVars = { entityType: string; entityId: number; expiresInDays: number; disclosure?: Record<string, boolean> };
+const createMutate = vi.fn((_vars: CreateVars, opts?: { onSuccess?: (link: typeof LINK & { url: string }) => void }) => {
+  opts?.onSuccess?.({ ...LINK, id: 2, createdBy: 42, createdByName: 'Me', url: NEW_URL });
+});
 
 /**
  * What the server currently serves. A test may swap this to model a catalogue
@@ -54,7 +71,7 @@ beforeEach(() => {
   served = ITEM_CATEGORIES;
 });
 
-test('an existing share link is a real anchor that opens in a new tab', () => {
+function openContainer() {
   render(
     <ShareDialog
       entityType="container"
@@ -64,27 +81,30 @@ test('an existing share link is a real anchor that opens in a new tab', () => {
       onOpenChange={() => {}}
     />,
   );
+}
 
-  const anchor = screen.getByRole('link', { name: LINK.url });
-  expect(anchor.getAttribute('href')).toBe(LINK.url);
+test('a freshly generated link is a real anchor that opens in a new tab, with copy beside it', () => {
+  openContainer();
+  act(() => { fireEvent.click(screen.getByRole('button', { name: /generate link/i })); });
+
+  const anchor = screen.getByRole('link', { name: NEW_URL });
+  expect(anchor.getAttribute('href')).toBe(NEW_URL);
   expect(anchor.getAttribute('target')).toBe('_blank');
   // Without noopener the opened tab can reach back through window.opener.
   expect(anchor.getAttribute('rel')).toContain('noopener');
   expect(anchor.getAttribute('rel')).toContain('noreferrer');
+  expect(screen.getByTitle('Copy link')).toBeTruthy();
+  // …and the sharer is told this is the only time they will see it.
+  expect(screen.getByText(/shown only once/i)).toBeTruthy();
 });
 
-test('copy is still offered alongside the anchor, not replaced by it', () => {
-  render(
-    <ShareDialog
-      entityType="container"
-      entityId={1}
-      entityName="Bin A"
-      isOpen
-      onOpenChange={() => {}}
-    />,
-  );
+test('existing links show who made them and when they die — no URL, no copy, only revoke', () => {
+  openContainer();
 
-  expect(screen.getByTitle('Copy link')).toBeTruthy();
+  expect(screen.queryByRole('link')).toBeNull();
+  expect(screen.queryByTitle('Copy link')).toBeNull();
+  expect(screen.getByText(/by Sam/)).toBeTruthy();
+  expect(screen.getByRole('button', { name: /revoke the link created/i })).toBeTruthy();
 });
 
 // ── What the recipient will see (#298) ──────────────────────────────────────

@@ -66,14 +66,22 @@ test('validate() returns the sharer name and expiry the public page frames itsel
   assert.equal(t.expiresAt, '2026-09-05T00:00:00.000Z');
 });
 
-test('validate() joins users LEFT so a link outlives its creator row', async () => {
+test('validate() requires the creator to still be a member — a link does NOT outlive their standing', async () => {
+  // Reversed by #349. This test used to pin a LEFT join on users so that a
+  // link survived its creator's row going away; the deep dive found that the
+  // same property let a removed editor's links keep opening the household's
+  // inventory indefinitely. Now the link's property is resolved and its
+  // creator must still hold a property_members row there. With that inner
+  // join in place the users join can be inner too — every surviving row has
+  // a sharer to name — and the mapper still tolerates a NULL name.
   let seen = '';
   const Sharing = serviceWith((sql) => {
     seen = sql;
     return [{ ENTITY_TYPE: 'item', ENTITY_ID: 9, CREATED_BY: 77, CREATED_BY_NAME: null, EXPIRES_AT: null, CREATED_AT: null }];
   });
   const t = await Sharing.validate('tok');
-  assert.match(seen, /LEFT JOIN TALLY\.users/i, 'must be a LEFT join — an INNER one would 404 the link');
+  assert.match(seen, /(?<!LEFT )JOIN TALLY\.property_members pm ON [\s\S]*?pm\.USER_ID = s\.CREATED_BY/i, 'membership recheck is an INNER join');
+  assert.doesNotMatch(seen, /LEFT JOIN TALLY\.users/i);
   assert.equal(t.createdByName, null, 'null, not the string "null" — the page omits the line');
   assert.equal(t.expiresAt, null);
 });

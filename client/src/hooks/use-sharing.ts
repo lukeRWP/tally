@@ -1,14 +1,26 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 
-interface ShareLink {
+/**
+ * A share link as the list serves it. No token and no URL (#349): the server
+ * keeps only a digest of the token, so nothing after creation can rebuild the
+ * address. `createdBy`/`createdByName` matter now that an owner's list
+ * includes links other members made on their property.
+ */
+export interface ShareLink {
   id: number;
-  token: string;
   entityType: string;
   entityId: number;
-  url: string;
+  propertyId: number | null;
+  createdBy: number;
+  createdByName: string | null;
   expiresAt: string;
   createdAt: string;
+}
+
+/** The one response that carries the URL — the raw token's only appearance. */
+export interface CreatedShareLink extends ShareLink {
+  url: string;
 }
 
 /**
@@ -57,7 +69,12 @@ export function useCreateShareLink() {
       // Omitted means "every category", which is what a link published before
       // this existed — so an untouched dialog creates exactly the old link.
       disclosure?: Record<string, boolean>;
-    }) => api.post<ShareLink>('/api/sharing/_y_/create', data),
+    }) =>
+      // The route answers `{ link }`; unwrapped here so the dialog gets the
+      // link itself. It used to receive the envelope and read `.url` off it —
+      // undefined — and the "new link" panel never rendered. Nobody noticed
+      // because the active-links list showed the URL anyway; it no longer can.
+      api.post<{ link: CreatedShareLink }>('/api/sharing/_y_/create', data).then((d) => d.link),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['sharing'] }),
   });
 }
