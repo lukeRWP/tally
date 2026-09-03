@@ -1,12 +1,31 @@
 const logger = require('../utils/logger');
 const { error } = require('../utils/response');
 
-const SENSITIVE_FIELDS = new Set(['password', 'token', 'secret', 'cookie']);
+// Matched against lower-cased keys in body/params/query and as query-string
+// names in the URL. Covers the credentials this API actually carries: the
+// print agent's key (`Authorization` header, also `apiKey` when registered),
+// share tokens (`?token=`), Entra secrets and OAuth tokens (#354).
+const SENSITIVE_FIELDS = new Set([
+  'password', 'token', 'secret', 'cookie',
+  'authorization', 'apikey', 'api_key', 'x-api-key',
+  'client_secret', 'clientsecret', 'access_token', 'accesstoken',
+  'refresh_token', 'refreshtoken', 'id_token', 'idtoken',
+]);
 
+// Lock errors are retryable by design: MySQL rolled the statement (deadlock)
+// or gave up waiting (lock wait timeout) and nothing was applied. The pool
+// already retries single-statement deadlocks once (db.js #97); what reaches
+// here is the transactional case — closure-table moves, recycle-bin lock
+// ordering — where `withTransaction` correctly refuses to retry and the
+// caller must re-run. 409 + Retry-After tells the client exactly that
+// instead of a 500 (#354).
+const RETRYABLE_LOCK_MESSAGE = 'The request conflicted with another change — please retry.';
 const MYSQL_CODES = {
   ER_DUP_ENTRY: { status: 409, message: 'A record with this value already exists.' },
   ER_NO_REFERENCED_ROW: { status: 400, message: 'Referenced resource does not exist.' },
   ER_NO_REFERENCED_ROW_2: { status: 400, message: 'Referenced resource does not exist.' },
+  ER_LOCK_DEADLOCK: { status: 409, message: RETRYABLE_LOCK_MESSAGE, retryAfter: 1 },
+  ER_LOCK_WAIT_TIMEOUT: { status: 409, message: RETRYABLE_LOCK_MESSAGE, retryAfter: 2 },
 };
 
 function redactSensitive(obj) {
@@ -71,8 +90,9 @@ function errorHandler(err, req, res, next) {
 
   // ── MySQL errors ─────────────────────────────────────────────────────────
   if (err.code && MYSQL_CODES[err.code]) {
-    const { status, message } = MYSQL_CODES[err.code];
-    logger.warn('MySQL constraint error', { ...logContext, mysqlCode: err.code });
+    const { status, message, retryAfter } = MYSQL_CODES[err.code];
+    if (retryAfter) res.set('Retry-After', String(retryAfter));
+    logger.warn(retryAfter ? 'MySQL lock error' : 'MySQL constraint error', { ...logContext, mysqlCode: err.code });
     return error(res, message, status);
   }
 
@@ -87,8 +107,7 @@ function errorHandler(err, req, res, next) {
   logger.error('Unhandled error', logContext);
 
   // Hide internal error details in production to prevent information leakage
-  const isProd = process.env.NODE_ENV === 'production';
-  const message = isProd ? 'Internal Server Error' : (err.message || 'Internal Server Error');
+  const message = isProduction ? 'Internal Server Error' : (err.message || 'Internal Server Error');
 
   return error(res, message, 500);
 }
