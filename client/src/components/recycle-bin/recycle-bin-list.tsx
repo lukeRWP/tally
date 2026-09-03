@@ -6,7 +6,6 @@ import { api, ApiError } from '@/lib/api';
 import { queryKeys } from '@/lib/query-client';
 import { Button } from '@/components/ui/button';
 import { ColHead } from '@/components/ui/col-head';
-import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from '@/components/ui/toast';
 import { cn } from '@/lib/utils';
@@ -38,6 +37,10 @@ interface DeleteBatch {
   areaCount: number;
   containerCount: number;
   itemCount: number;
+  /** Owner of the batch's property. Any member can look; only an owner can
+   *  put things back (#347) — a Restore that would only ever 403 is not
+   *  offered. */
+  canRestore: boolean;
 }
 
 const ICON: Record<RootType, typeof Box> = {
@@ -124,7 +127,6 @@ export function RecycleBinList() {
   // Above every early return — hooks must run on each render.
   const wide = useLayoutMode() === 'sidebar';
   const qc = useQueryClient();
-  const [purgeOpen, setPurgeOpen] = useState(false);
   // Select mode: minimal on purpose (#229) — a toggle, checkboxes and a
   // bulk Restore, no delete/tag here. Mirrors container-detail's select
   // mode (#231) at a much smaller scale.
@@ -180,16 +182,11 @@ export function RecycleBinList() {
     },
   });
 
-  const purgeExpired = useMutation({
-    mutationFn: () => api.post('/api/items/_y_/purge-expired'),
-    onSuccess: () => {
-      invalidateEverything();
-      toast('Expired items purged');
-    },
-    onError: (err: Error) => toast(err.message),
-  });
-
   const list = batches ?? [];
+  // Select mode only ever bulk-restores, so it only ever concerns these.
+  // The 30-day purge itself is the server's (a lazy sweep on this very
+  // list request) — there is no button for it any more (#347).
+  const restorable = useMemo(() => list.filter((b) => b.canRestore), [list]);
 
   /**
    * Keyboard ring (#272) — the twin's `(type, id)` key collapses to a plain
@@ -224,16 +221,14 @@ export function RecycleBinList() {
     setHighlightedKey(visibleKeys[next]);
   }, [visibleKeys, highlightedKey, setHighlightedKey]);
 
-  // This page's only overlay — same gate shape as container-detail.tsx's
-  // `dialogOpen` (there, several dialogs; here, just the one).
-  const dialogOpen = purgeOpen;
-
-  // ringOn is `wide && !dialogOpen` further gated on the pointer inside the
-  // hook (#313) — pass THIS to anything advertising the keys, not `wide`.
+  // ringOn is `wide` further gated on the pointer inside the hook (#313) —
+  // pass THIS to anything advertising the keys, not `wide`. This page has no
+  // overlay of its own any more (the purge dialog left with #347), so there
+  // is no `dialogOpen` half to the gate here, unlike container-detail.tsx.
   const ringOn = useKeyboardNav({
-    // Off on touch chrome, or with the purge dialog up — matches every
-    // other ringed surface. The pointer half of the gate lives in the hook.
-    enabled: wide && !dialogOpen,
+    // Off on touch chrome — matches every other ringed surface. The pointer
+    // half of the gate lives in the hook.
+    enabled: wide,
     onMove: moveHighlight,
     onOpen: () => {
       if (highlightedKey == null) return false;
@@ -286,6 +281,9 @@ export function RecycleBinList() {
     // the loop's own end-of-run `setSelected(new Set(failed))` silently
     // overwrite it moments later.
     if (bulkRunning) return;
+    // A row the caller cannot restore is not a row that can be selected —
+    // the only thing a selection does is restore (#347).
+    if (!restorable.some((b) => b.id === batchId)) return;
     setSelected((prev) => {
       const next = new Set(prev);
 
@@ -293,9 +291,10 @@ export function RecycleBinList() {
       // order the rows are DRAWN — the only order this list has. Without
       // that order a range would jump around the page. Additive, never
       // subtractive, same as the twin: shift-clicking is how you GROW a
-      // selection.
+      // selection. Walks the restorable rows only, so a range can never
+      // sweep up a row the click above would have refused.
       if (shift && anchor.current != null && anchor.current !== batchId) {
-        const order = list.map((b) => b.id);
+        const order = restorable.map((b) => b.id);
         const from = order.indexOf(anchor.current);
         const to = order.indexOf(batchId);
         if (from !== -1 && to !== -1) {
@@ -348,7 +347,7 @@ export function RecycleBinList() {
   // independent of that, matching container-detail.tsx's shape.
   function handleSelectAll() {
     if (bulkRunning) return;
-    setSelected(new Set(list.map((b) => b.id)));
+    setSelected(new Set(restorable.map((b) => b.id)));
   }
 
   return (
@@ -358,11 +357,7 @@ export function RecycleBinList() {
           {isLoading ? 'Loading' : `${list.length} ${list.length === 1 ? 'deletion' : 'deletions'}`}
         </span>
         <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={() => setPurgeOpen(true)} disabled={purgeExpired.isPending || bulkRunning}>
-            <Trash2 className="w-4 h-4" />
-            Purge Expired
-          </Button>
-          {list.length > 0 && (
+          {restorable.length > 0 && (
             <Button
               variant={selecting ? 'default' : 'outline'}
               size="sm"
@@ -387,20 +382,6 @@ export function RecycleBinList() {
           )}
         </div>
       </div>
-
-      <ConfirmDialog
-        open={purgeOpen}
-        onOpenChange={setPurgeOpen}
-        title="Permanently delete expired items?"
-        description="Items past their 30-day recycle window will be permanently deleted. This cannot be undone."
-        destructive
-        confirmLabel="Delete permanently"
-        isPending={purgeExpired.isPending}
-        onConfirm={() => {
-          purgeExpired.mutate();
-          setPurgeOpen(false);
-        }}
-      />
 
       {isLoading && (
         <div className="flex flex-col gap-2">
@@ -452,11 +433,14 @@ export function RecycleBinList() {
             // ring is OFF (touch chrome, a dialog open), so no path strands.
             // Never nests the per-row Restore <Button> below: that only
             // renders `!selecting`, i.e. exactly when Comp is 'div'.
-            const Comp = selecting ? 'button' : 'div';
+            // A row the caller cannot restore stays a plain div in select
+            // mode too — there is nothing selecting it could do (#347).
+            const selectable = selecting && b.canRestore;
+            const Comp = selectable ? 'button' : 'div';
             return (
               <Comp
                 key={b.id}
-                type={selecting ? 'button' : undefined}
+                type={selectable ? 'button' : undefined}
                 data-nav-id={navId}
                 className={cn(
                   'flex w-full items-center gap-3 py-3 text-left border-b border-[var(--color-rule)] last:border-b-0 rounded-[var(--radius-sm)]',
@@ -465,11 +449,11 @@ export function RecycleBinList() {
                 // `e.shiftKey` is read here, not reconstructed from a keydown
                 // listener elsewhere — same rule ruled-row.tsx documents for
                 // every other selectable row in the app (#272).
-                onClick={selecting ? (e) => toggleSelected(b.id, e.shiftKey) : undefined}
-                aria-pressed={selecting ? isSelected : undefined}
-                aria-label={selecting ? `Select ${b.rootName}` : undefined}
+                onClick={selectable ? (e) => toggleSelected(b.id, e.shiftKey) : undefined}
+                aria-pressed={selectable ? isSelected : undefined}
+                aria-label={selectable ? `Select ${b.rootName}` : undefined}
               >
-                {selecting && (
+                {selectable && (
                   <span
                     className={cn(
                       'flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-[2px] border-[1.6px]',
@@ -501,7 +485,7 @@ export function RecycleBinList() {
                   </p>
                   {rowErrors[b.id] !== undefined && <BlockedRestoreNotice error={rowErrors[b.id]} />}
                 </div>
-                {!selecting && (
+                {!selecting && b.canRestore && (
                   <Button
                     variant="outline"
                     size="sm"

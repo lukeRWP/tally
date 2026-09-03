@@ -572,7 +572,7 @@ const ContainersService = {
 
       // Return open loans before the items go. The area cascade has always done
       // this; this path did not, which left an open loan pointing at a recycled
-      // item — and purgeExpired then refuses to purge it, forever.
+      // item — and the retention sweep then refuses to purge it, forever.
       await tx.query(
         `UPDATE TALLY.item_lending SET RETURNED_AT = NOW()
          WHERE RETURNED_AT IS NULL AND ITEM_ID IN (

@@ -42,12 +42,13 @@ interface Batch {
   id: number; rootType: 'area' | 'container' | 'item'; rootId: number; rootName: string;
   propertyName: string | null; deletedAt: string; deletedByName: string | null;
   daysLeft: number | null; areaCount: number; containerCount: number; itemCount: number;
+  canRestore: boolean;
 }
 
 function makeBatch(over: Partial<Batch> & { id: number; rootName: string }): Batch {
   return {
     rootType: 'item', rootId: over.id, propertyName: 'Home', deletedAt: '2026-08-01T00:00:00Z',
-    deletedByName: 'Luke', daysLeft: 20, areaCount: 0, containerCount: 0, itemCount: 0,
+    deletedByName: 'Luke', daysLeft: 20, areaCount: 0, containerCount: 0, itemCount: 0, canRestore: true,
     ...over,
   };
 }
@@ -61,12 +62,12 @@ const batches: Batch[] = [
 /** restorePlan maps batchId -> a Response factory, so each test can rig
  * exactly which restores succeed/fail/carry what payload. Ids with no entry
  * succeed with a plain 200. */
-function makeFetchMock(restorePlan: Record<number, () => Response>) {
+function makeFetchMock(restorePlan: Record<number, () => Response>, list: Batch[] = batches) {
   const restoreCalls: number[] = [];
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === 'string' ? input : input.toString();
     if (url.includes('/api/recycle/_x_/list')) {
-      return jsonResponse({ success: true, data: { batches } });
+      return jsonResponse({ success: true, data: { batches: list } });
     }
     const restoreMatch = url.match(/\/api\/recycle\/_y_\/restore\/(\d+)/);
     if (restoreMatch && init?.method === 'POST') {
@@ -138,6 +139,42 @@ test('Select turns on checkboxes; a row toggles selection and the bar tracks the
 
   fireEvent.click(screen.getByRole('button', { name: 'All' }));
   expect(screen.getByText('3 selected')).toBeTruthy();
+});
+
+test('#347: a row the caller cannot restore offers no Restore, is inert in select mode, and All skips it', async () => {
+  const mixed = [
+    makeBatch({ id: 1, rootName: 'Drill' }),
+    makeBatch({ id: 2, rootName: 'Sander', canRestore: false }),
+    makeBatch({ id: 3, rootName: 'Level' }),
+  ];
+  vi.stubGlobal('fetch', makeFetchMock({}, mixed).fetchMock);
+  renderList();
+
+  await screen.findByText('Sander');
+  // Two restorable rows → two Restore buttons, none on the viewer's row.
+  expect(screen.getAllByRole('button', { name: 'Restore' })).toHaveLength(2);
+  const sanderRow = await findRow('Sander');
+  expect(within(sanderRow).queryByRole('button', { name: 'Restore' })).toBeNull();
+
+  fireEvent.click(screen.getByRole('button', { name: 'Select' }));
+  expect(screen.queryByRole('button', { name: 'Select Sander' })).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: 'All' }));
+  expect(screen.getByText('2 selected')).toBeTruthy();
+});
+
+test('#347: there is no Purge Expired button — retention is the server\'s, not a click', async () => {
+  vi.stubGlobal('fetch', makeFetchMock({}).fetchMock);
+  renderList();
+  await screen.findByText('Drill');
+  expect(screen.queryByRole('button', { name: /purge/i })).toBeNull();
+});
+
+test('#347: when nothing is restorable there is no Select either', async () => {
+  const viewerOnly = [makeBatch({ id: 2, rootName: 'Sander', canRestore: false })];
+  vi.stubGlobal('fetch', makeFetchMock({}, viewerOnly).fetchMock);
+  renderList();
+  await screen.findByText('Sander');
+  expect(screen.queryByRole('button', { name: 'Select' })).toBeNull();
 });
 
 test('bulk Restore loops sequentially, continues past a failure, and reports a truthful outcome', async () => {

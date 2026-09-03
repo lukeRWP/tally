@@ -126,16 +126,6 @@ module.exports = function itemsRoutes({ app, db, logger }) {
     }
   );
 
-  // POST /api/items/_y_/purge-expired
-  app.post(
-    '/api/items/_y_/purge-expired',
-    app.locals.requireAuth,
-    async (req, res) => {
-      const count = await ItemsService.purgeExpired(req.user.id);
-      success(res, { purged: count }, `Purged ${count} expired item(s)`);
-    }
-  );
-
   // ── Read ──────────────────────────────────────────────────────────────────
 
   // GET /api/items/_x_/:itemId
