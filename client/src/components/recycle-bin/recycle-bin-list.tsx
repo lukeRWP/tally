@@ -182,7 +182,9 @@ export function RecycleBinList() {
     },
   });
 
-  const list = batches ?? [];
+  // Memoised so the loading-state fallback is one array, not a new one per
+  // render (which would defeat every useMemo below that keys on `list`).
+  const list = useMemo(() => batches ?? [], [batches]);
   // Select mode only ever bulk-restores, so it only ever concerns these.
   // The 30-day purge itself is the server's (a lazy sweep on this very
   // list request) — there is no button for it any more (#347).
@@ -261,7 +263,7 @@ export function RecycleBinList() {
       const next = new Set([...prev].filter((id) => valid.has(id)));
       return next.size === prev.size ? prev : next;
     });
-  }, [selecting, batches]);
+  }, [selecting, list]);
 
   function exitSelectMode() {
     setSelecting(false);

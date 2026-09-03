@@ -28,7 +28,9 @@ jobs:
       - uses: ./.github/actions/setup-node
       - run: npm ci
         working-directory: client
-      - run: npx tsc --noEmit
+      - run: ./node_modules/.bin/tsc --noEmit
+        working-directory: client
+      - run: ./node_modules/.bin/eslint . --max-warnings 0
         working-directory: client
       # Runs BEFORE the build: a failing test should stop the job at the cheap
       # step, and a broken build is not evidence about behaviour either way.
@@ -55,7 +57,7 @@ jobs:
       - run: npm ci
         working-directory: server
       - name: Lint
-        run: npx eslint .
+        run: ./node_modules/.bin/eslint .
         working-directory: server
       - name: Syntax check all JS files
         run: node --check index.js && find src -name '*.js' -exec node --check {} +
