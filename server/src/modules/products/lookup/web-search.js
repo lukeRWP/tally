@@ -1,8 +1,10 @@
 const axios = require('axios');
 
-// Last-resort fallback: search the web for the barcode number
-// Uses DuckDuckGo instant answer API (free, no key, no rate limit)
-// Then falls back to parsing Google search results page
+// Last-resort fallback: the DuckDuckGo instant-answer API (free, no key, a
+// documented JSON endpoint). The Google Shopping HTML scrape that used to
+// follow it is gone (#355): brittle, against ToS, and the Anthropic-backed
+// product-match flow is the sanctioned path for anything the barcode APIs
+// and this miss.
 
 async function lookupBarcode(barcode) {
   // Try DuckDuckGo instant answer first
@@ -43,55 +45,10 @@ async function lookupBarcode(barcode) {
       }
     }
   } catch {
-    // DDG failed, continue to next method
-  }
-
-  // Try Google Shopping search (RSS feed, no API key)
-  try {
-    const google = await axios.get('https://www.google.com/search', {
-      params: { q: `${barcode}`, tbm: 'shop', num: 1 },
-      timeout: 3000,
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (compatible; Tally/1.0)',
-        'Accept': 'text/html',
-      },
-      responseType: 'text',
-    });
-    const html = google.data;
-    // Extract product title from Google Shopping result
-    const titleMatch = html.match(/<h3[^>]*>([^<]+)<\/h3>/);
-    if (titleMatch?.[1]) {
-      return {
-        barcode,
-        name: decodeHTMLEntities(titleMatch[1]),
-        brand: null,
-        category: null,
-        description: null,
-        imageUrl: null,
-        // No price. The only figure available here is the first "$n.nn" in a
-        // search-results page — it belongs to whichever listing rendered first,
-        // not to this product. The item page offers a catalogue price as
-        // something you PAID, and a number this weak must not be in that offer.
-        retailPrice: null,
-        dataSource: 'web_search',
-      };
-    }
-  } catch {
-    // Google failed too
+    // DDG failed — nothing else to try
   }
 
   return null;
-}
-
-function decodeHTMLEntities(text) {
-  return text
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&#x27;/g, "'")
-    .replace(/&#x2F;/g, '/');
 }
 
 module.exports = { lookupBarcode };

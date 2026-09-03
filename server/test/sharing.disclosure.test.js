@@ -23,6 +23,10 @@ const disclosure = require('../src/modules/sharing/sharing.disclosure');
 
 const logger = { info() {}, warn() {}, error() {}, debug() {} };
 
+// The product image host the fake rows carry. A provider CDN by default so the
+// goldens below see it pass through; one test swaps in a third-party host.
+let productImageUrl = 'https://images.openfoodfacts.org/img.png';
+
 /** Rows for a fully-populated entity of every type — nothing is null-by-omission. */
 function rowsFor(sql) {
   if (/TALLY\.condition_snapshots/i.test(sql)) {
@@ -59,7 +63,7 @@ function rowsFor(sql) {
       DEPRECIATION_RATE: '0.2000',
       PRODUCT_NAME: 'DCD777',
       PRODUCT_BRAND: 'DeWalt',
-      PRODUCT_IMAGE_URL: 'https://example/img.png',
+      PRODUCT_IMAGE_URL: productImageUrl,
       PRODUCT_DESCRIPTION: '20V drill',
       PRODUCT_SPECS: { voltage: '20V' },
       CONTAINER_NAME: 'Tote',
@@ -139,6 +143,18 @@ test('an item share still carries its own purchase price — that one is rendere
   const [Sharing] = serviceWith(t);
   const env = await Sharing.getEntityForShare('item', 9);
   assert.equal(env.item.purchasePrice, 149.99, 'ItemView shows this; it is a policy question, not dead weight');
+});
+
+test('a product image on a host no catalogue provider returns is not published (#355)', async (t) => {
+  // The share page is the one place an anonymous browser fetches a URL a
+  // household member chose, so the host must be one the lookups return.
+  productImageUrl = 'https://tracker.example/pixel.gif';
+  t.after(() => { productImageUrl = 'https://images.openfoodfacts.org/img.png'; });
+  const [Sharing] = serviceWith(t);
+  const item = await Sharing.getEntityForShare('item', 9);
+  assert.equal(item.item.productImageUrl, null, 'item share');
+  const container = await Sharing.getEntityForShare('container', 3);
+  assert.equal(container.items[0].productImageUrl, null, 'container listing');
 });
 
 test('an item share drops the depreciation model and the raw product spec blob', async (t) => {
@@ -520,7 +536,7 @@ const GOLDEN_PUBLIC_PAYLOAD = {
           "createdAt": "2026-08-01T00:00:00.000Z",
           "productName": "DCD777",
           "productBrand": "DeWalt",
-          "productImageUrl": "https://example/img.png"
+          "productImageUrl": "https://images.openfoodfacts.org/img.png"
         }
       ]
     },
@@ -557,7 +573,7 @@ const GOLDEN_PUBLIC_PAYLOAD = {
           "createdAt": "2026-08-01T00:00:00.000Z",
           "productName": "DCD777",
           "productBrand": "DeWalt",
-          "productImageUrl": "https://example/img.png"
+          "productImageUrl": "https://images.openfoodfacts.org/img.png"
         }
       ]
     },
@@ -600,7 +616,7 @@ const GOLDEN_PUBLIC_PAYLOAD = {
           "createdAt": "2026-08-01T00:00:00.000Z",
           "productName": "DCD777",
           "productBrand": "DeWalt",
-          "productImageUrl": "https://example/img.png"
+          "productImageUrl": "https://images.openfoodfacts.org/img.png"
         }
       ]
     },
@@ -619,7 +635,7 @@ const GOLDEN_PUBLIC_PAYLOAD = {
         "updatedAt": "2026-08-02T00:00:00.000Z",
         "productName": "DCD777",
         "productBrand": "DeWalt",
-        "productImageUrl": "https://example/img.png",
+        "productImageUrl": "https://images.openfoodfacts.org/img.png",
         "productDescription": "20V drill",
         "breadcrumb": [
           {

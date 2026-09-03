@@ -1,6 +1,7 @@
 const crypto = require('crypto');
 const storage = require('../../infrastructure/storage');
 const disclosure = require('./sharing.disclosure');
+const { publicImageUrl } = require('../products/image-url');
 
 let _db = null;
 let _logger = null;
@@ -290,7 +291,7 @@ const SharingService = {
         createdAt: i.CREATED_AT,
         productName: i.PRODUCT_NAME || null,
         productBrand: i.PRODUCT_BRAND || null,
-        productImageUrl: i.PRODUCT_IMAGE_URL || null,
+        productImageUrl: publicImageUrl(i.PRODUCT_IMAGE_URL),
       })),
     };
   },
@@ -362,7 +363,7 @@ const SharingService = {
         createdAt: i.CREATED_AT,
         productName: i.PRODUCT_NAME || null,
         productBrand: i.PRODUCT_BRAND || null,
-        productImageUrl: i.PRODUCT_IMAGE_URL || null,
+        productImageUrl: publicImageUrl(i.PRODUCT_IMAGE_URL),
       })),
     };
   },
@@ -444,7 +445,7 @@ const SharingService = {
         createdAt: i.CREATED_AT,
         productName: i.PRODUCT_NAME || null,
         productBrand: i.PRODUCT_BRAND || null,
-        productImageUrl: i.PRODUCT_IMAGE_URL || null,
+        productImageUrl: publicImageUrl(i.PRODUCT_IMAGE_URL),
       })),
     };
   },
@@ -549,7 +550,8 @@ const SharingService = {
         // Product info
         productName: row.PRODUCT_NAME || null,
         productBrand: row.PRODUCT_BRAND || null,
-        productImageUrl: row.PRODUCT_IMAGE_URL || null,
+        // Allowlisted hosts only (#355): this is the anonymous page.
+        productImageUrl: publicImageUrl(row.PRODUCT_IMAGE_URL),
         productDescription: row.PRODUCT_DESCRIPTION || null,
         // NO productSpecs (#298): a free-form JSON blob shipped whole to an
         // anonymous viewer, and `productOf()` in share-view.tsx builds its
