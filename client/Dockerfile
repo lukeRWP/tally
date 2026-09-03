@@ -1,4 +1,10 @@
-FROM node:22-alpine AS build
+# LOCAL DEV ONLY — production does NOT build or run this image (CLAUDE.md
+# CI/CD rule 11a). Prod builds client/dist on the orchestrator VM (pw.json
+# build steps, host Node 22 on glibc) and serves it from PW's pinned
+# nginx:alpine catalog image with a generated config — see rule 11 for why
+# client/nginx.conf below is likewise local-only. The build stage matches
+# the server image so both halves of local dev use one Node.
+FROM node:22-bookworm-slim AS build
 WORKDIR /app
 COPY package*.json ./
 RUN npm ci
