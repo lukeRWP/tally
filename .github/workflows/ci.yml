@@ -139,8 +139,12 @@ jobs:
       #    non-zero exit. Never silently green.
       - name: Audit server
         run: |
-          timeout 120 npm audit --audit-level=high; rc=$?
-          if [ $rc -eq 124 ]; then
+          # `|| rc=$?` keeps the failure in a CONDITION context: this step runs
+          # under `bash -e`, so a bare `timeout …; rc=$?` aborts on the timeout
+          # before rc is ever read (observed in daybook CI, same wrapper).
+          rc=0
+          timeout 120 npm audit --audit-level=high || rc=$?
+          if [ "$rc" -eq 124 ]; then
             echo "::warning::npm audit timed out after 120s (registry stall) — advisories NOT verified for server"
             exit 0
           fi
@@ -148,8 +152,12 @@ jobs:
         working-directory: server
       - name: Audit client
         run: |
-          timeout 120 npm audit --audit-level=high; rc=$?
-          if [ $rc -eq 124 ]; then
+          # `|| rc=$?` keeps the failure in a CONDITION context: this step runs
+          # under `bash -e`, so a bare `timeout …; rc=$?` aborts on the timeout
+          # before rc is ever read (observed in daybook CI, same wrapper).
+          rc=0
+          timeout 120 npm audit --audit-level=high || rc=$?
+          if [ "$rc" -eq 124 ]; then
             echo "::warning::npm audit timed out after 120s (registry stall) — advisories NOT verified for client"
             exit 0
           fi
