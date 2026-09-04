@@ -112,9 +112,18 @@ jobs:
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v6
       - uses: ./.github/actions/setup-node
+      # No --production/--omit=dev: an omit filter makes npm fall back to
+      # POST /-/npm/v1/security/audits/quick, which the registry is retiring
+      # — it now stalls for minutes and then answers 400 ("This endpoint is
+      # being retired. Use the bulk advisory endpoint instead."), which is
+      # what red-carded this job on 2026-09-04 after 6m23s. Unfiltered audits
+      # use the bulk endpoint: 2 s for both trees, measured. The trade is
+      # that devDependency advisories now count too — with --audit-level=high
+      # that is a deliberate gate, not noise (both trees are clean today:
+      # server 3 moderate, client 0).
       - name: Audit server
-        run: npm audit --production --audit-level=high
+        run: npm audit --audit-level=high
         working-directory: server
       - name: Audit client
-        run: npm audit --production --audit-level=high
+        run: npm audit --audit-level=high
         working-directory: client
