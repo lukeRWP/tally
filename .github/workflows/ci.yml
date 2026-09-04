@@ -120,18 +120,38 @@ jobs:
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v6
       - uses: ./.github/actions/setup-node
-      # No --production/--omit=dev: an omit filter makes npm fall back to
-      # POST /-/npm/v1/security/audits/quick, which the registry is retiring
-      # — it now stalls for minutes and then answers 400 ("This endpoint is
-      # being retired. Use the bulk advisory endpoint instead."), which is
-      # what red-carded this job on 2026-09-04 after 6m23s. Unfiltered audits
-      # use the bulk endpoint: 2 s for both trees, measured. The trade is
-      # that devDependency advisories now count too — with --audit-level=high
-      # that is a deliberate gate, not noise (both trees are clean today:
-      # server 3 moderate, client 0).
+      # Two things are deliberate here.
+      #
+      # 1. No --production/--omit=dev. An omit filter makes npm fall back to
+      #    POST /-/npm/v1/security/audits/quick, which the registry is
+      #    retiring — it stalls for minutes, then answers 400 ("This endpoint
+      #    is being retired. Use the bulk advisory endpoint instead."), which
+      #    red-carded this job on 2026-09-04 after 6m23s. Unfiltered audits
+      #    use the bulk endpoint (~2 s for both trees, measured). The trade is
+      #    that devDependency advisories now count — with --audit-level=high
+      #    that is a deliberate gate, not noise.
+      #
+      # 2. Bounded. Even the bulk endpoint stalls sometimes, and `npm audit`
+      #    applies no timeout of its own, so a bad minute at the registry
+      #    would otherwise hang the job to its cap. A TIMEOUT is reported
+      #    loudly and passes (a third-party service being down is not this
+      #    repo's defect); a real advisory still fails, as does any other
+      #    non-zero exit. Never silently green.
       - name: Audit server
-        run: npm audit --audit-level=high
+        run: |
+          timeout 120 npm audit --audit-level=high; rc=$?
+          if [ $rc -eq 124 ]; then
+            echo "::warning::npm audit timed out after 120s (registry stall) — advisories NOT verified for server"
+            exit 0
+          fi
+          exit $rc
         working-directory: server
       - name: Audit client
-        run: npm audit --audit-level=high
+        run: |
+          timeout 120 npm audit --audit-level=high; rc=$?
+          if [ $rc -eq 124 ]; then
+            echo "::warning::npm audit timed out after 120s (registry stall) — advisories NOT verified for client"
+            exit 0
+          fi
+          exit $rc
         working-directory: client
