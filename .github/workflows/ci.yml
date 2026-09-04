@@ -26,7 +26,11 @@ jobs:
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v6
       - uses: ./.github/actions/setup-node
-      - run: npm ci
+      # --no-audit: npm runs an audit after installing, and the audit endpoint
+      # it uses stalls indefinitely (see #380 / lukeRWP/prevailing-winds#845).
+      # It hung this step for minutes on 2026-09-04. Auditing is the Security
+      # Audit job's business, not the install's.
+      - run: npm ci --no-audit --no-fund
         working-directory: client
       - run: ./node_modules/.bin/tsc --noEmit
         working-directory: client
@@ -54,7 +58,11 @@ jobs:
       # verified and is not. Keep this step next to the server tests.
       - name: Install poppler-utils (pdftoppm, for the label geometry test)
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends poppler-utils
-      - run: npm ci
+      # --no-audit: npm runs an audit after installing, and the audit endpoint
+      # it uses stalls indefinitely (see #380 / lukeRWP/prevailing-winds#845).
+      # It hung this step for minutes on 2026-09-04. Auditing is the Security
+      # Audit job's business, not the install's.
+      - run: npm ci --no-audit --no-fund
         working-directory: server
       - name: Lint
         run: ./node_modules/.bin/eslint .

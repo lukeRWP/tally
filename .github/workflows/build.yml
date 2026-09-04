@@ -25,7 +25,11 @@ jobs:
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v6
       - uses: ./.github/actions/setup-node
-      - run: npm ci
+      # --no-audit: npm runs an audit after installing, and the audit endpoint
+      # it uses stalls indefinitely (see #380 / lukeRWP/prevailing-winds#845).
+      # It hung this step for minutes on 2026-09-04. Auditing is the Security
+      # Audit job's business, not the install's.
+      - run: npm ci --no-audit --no-fund
         working-directory: client
       - run: npm run build
         working-directory: client
@@ -39,7 +43,11 @@ jobs:
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v6
       - uses: ./.github/actions/setup-node
-      - run: npm ci
+      # --no-audit: npm runs an audit after installing, and the audit endpoint
+      # it uses stalls indefinitely (see #380 / lukeRWP/prevailing-winds#845).
+      # It hung this step for minutes on 2026-09-04. Auditing is the Security
+      # Audit job's business, not the install's.
+      - run: npm ci --no-audit --no-fund
         working-directory: server
       - name: Syntax check all JS files
         run: node --check index.js && find src -name '*.js' -exec node --check {} +
