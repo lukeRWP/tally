@@ -68,12 +68,13 @@ These will be injected by PW from Vault into the server container:
 | `NODE_ENV` | `production` | Environment mode |
 | `PORT` | `2727` | Server port |
 | `CLIENT_URL` | `https://tally.razorwire-productions.com` | Public URL (for QR codes, redirects) |
-| `MYSQL_URL` | `10.0.130.12` | Database VM IP |
+| `DB_HOST` | `db` | Compose service hostname for MySQL (v2 runs it as a container, not a VM) |
+| `DB_PORT` | `3306` | MySQL port inside the compose network |
 | `MYSQL_USER` | Vault | DB application user |
 | `MYSQL_PASSWORD` | Vault | DB password |
 | `MYSQL_USE_SSL` | `true` | Enable SSL for MySQL |
 | `TALLY_DB` | `TALLY` | Database name |
-| `S3_ENDPOINT` | `https://10.0.130.13:9000` | MinIO endpoint |
+| `S3_ENDPOINT` | `http://storage:9000` | Compose service hostname for MinIO |
 | `S3_BUCKET` | `tally-files` | Storage bucket |
 | `S3_ACCESS_KEY` | Vault | MinIO access key |
 | `S3_SECRET_KEY` | Vault | MinIO secret key |
