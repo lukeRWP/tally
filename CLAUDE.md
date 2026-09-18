@@ -15,7 +15,7 @@ Collaborative home inventory management system. Track items across containers an
 | Storage    | MinIO via `@aws-sdk/client-s3` (presigned URLs) |
 | AI         | Claude vision photo-identify (`ANTHROPIC_API_KEY`) |
 | Testing    | Vitest (client) + `node --test` (server)        |
-| Auth       | Microsoft Entra ID (OIDC)                       |
+| Auth       | PW IAM (pwiam) through `@pw/auth-express` — OIDC code + PKCE; Microsoft is one of pwiam's sign-in methods |
 | Container  | Docker Compose (local) / PW v2 `pw.json` (prod) |
 
 ## Backlog & Issue Tracking
@@ -76,7 +76,7 @@ tally/
 │   │   │   └── ui/               # Shared primitives (button, card, badge, dialog, input, skeleton, toast)
 │   │   ├── hooks/                # 20+ hooks (use-auth, use-inventory, use-print, use-vision, …)
 │   │   ├── lib/                  # api.ts, query-client.ts, utils.ts + ~10 more helpers
-│   │   ├── pages/                # home, areas, search, property/area/container/item-detail, capture, put-down, scan, qr-redirect, matches, print-queue, notifications, recycle-bin, share-view, reports, settings, login, oauth-callback (/inventory redirects to /areas)
+│   │   ├── pages/                # home, areas, search, property/area/container/item-detail, capture, put-down, scan, qr-redirect, matches, print-queue, notifications, recycle-bin, share-view, reports, settings, login (/inventory redirects to /areas)
 │   │   ├── store/                # Zustand: auth-store, carry-store, print-queue-store, vision-store
 │   │   ├── types/                # api.ts, auth.ts, inventory.ts
 │   │   ├── globals.css           # Tailwind v4 @theme + OKLCH color tokens
@@ -98,7 +98,7 @@ tally/
 │       │   ├── error-handler.js  # Global error handler
 │       │   └── validate.js       # Joi validation middleware helper
 │       ├── modules/              # One dir per feature — server/index.js is the authoritative list
-│       │   ├── auth/             # auth.routes, auth.service, auth.middleware, auth.schema
+│       │   ├── auth/             # auth.routes (wires @pw/auth-express), auth.service (resolveUser), auth.middleware (property roles)
 │       │   ├── inventory/        # properties, areas, containers, items (+ closure-table.service.js, move-reconcile.service.js)
 │       │   ├── products/         # Barcode lookup + Claude vision photo-identify (vision.service.js, matches.*)
 │       │   ├── files/            # Upload/download + thumbnails.service.js (lazy 256px derivatives)
@@ -115,7 +115,7 @@ tally/
 │   ├── init/
 │   │   ├── 001_TALLY_Init.sql    # Full schema: 21 tables
 │   │   └── 002_apply_migrations.sh # Applies SQL/migrations/ after the base schema in local dev
-│   ├── migrations/               # 001–014 (see Database → Migrations)
+│   ├── migrations/               # 001–015 (see Database → Migrations)
 │   ├── ci/migration-gate.sh      # CI migration gate — chain applied twice + schema diff (rule 9)
 │   └── expected-schema.sql       # GENERATED. Regenerate with `SQL/ci/migration-gate.sh --write`
 ├── docker-compose.yml            # 5 services: tally-db, tally-minio, tally-server, tally-client, tally-vault (no nginx locally)
@@ -138,7 +138,7 @@ Each feature lives in `server/src/modules/{feature}/` with three files:
 
 | Module      | Prefix            | Key endpoints                                              |
 |-------------|-------------------|------------------------------------------------------------|
-| auth        | `/api/auth`       | GET `/_x_/session`, GET `/_x_/oauth/init`, GET `/_x_/oauth/callback`, POST `/_y_/logout` |
+| auth        | `/api/auth`       | `@pw/auth-express`'s paths, not `_x_`/`_y_`: GET `/login`, GET `/callback`, GET `/session`, POST `/logout`, POST `/backchannel-logout` (see Authentication) |
 | properties  | `/api/properties` | CRUD + membership: GET/POST `/_x_|_y_/:id/members`, PATCH `/_p_/:id/members/:userId` (role), DELETE `/_d_/:id/members/:userId` — all owner-only |
 | areas       | `/api/areas`      | CRUD scoped to a property                                  |
 | containers  | `/api/containers` | CRUD + move (uses closure table for hierarchy)             |
@@ -335,15 +335,21 @@ Key design patterns:
 | 012 | per-user daily vision usage (`vision_usage`), so the spend cap survives a restart (#340) |
 | 013 | notification dedupe: `notifications.DUE_ON` + `DISMISSED_AT`, `uq_notifications_due` (#348) |
 | 014 | share tokens hashed in place: `share_links.TOKEN_HASHED` marker + `TOKEN = SHA2(TOKEN, 256)` (#349) |
+| 015 | pwiam identity (PW IAM step 4): `users.SUB` + unique key, `ENTRA_ID` nullable, `sessions.SUB`/`SID`/`IAM_STATE` + indexes |
 
-## Authentication
+## Authentication — PW IAM step 4 (pwiam)
 
-- Provider: Microsoft Entra ID (Azure AD) via OIDC with PKCE
-- Sessions stored in MySQL (`TALLY.sessions`) — no Redis
-- Session token sent as an httpOnly signed cookie (`session_token`)
-- Set `BYPASS_AUTH=true` in `.env` to skip real auth during local development (auto-creates a dev user + session)
-- User identity (`req.user`) is injected into all request contexts after `requireAuth` middleware
-- CSRF: double-submit cookie (`server/src/middleware/csrf.js`, registered in `index.js`) — every non-GET client call must echo the token header
+Tally is a pwiam relying party (`prevailing-winds/docs/superpowers/specs/2026-09-08-pw-iam-design.md` §7; plan `docs/superpowers/plans/2026-09-18-pw-iam-step4-tally.md`). The whole OIDC surface is `@pw/auth-express` (git tag `github:lukeRWP/pw-auth-express#v0.1.0`), wired in `server/src/modules/auth/auth.routes.js`; tally contributes exactly one hook. Docket went first on the same template (docket #45) — keep the two in step.
+
+- **Routes are the shim's, not `_x_`/`_y_`:** `GET /api/auth/login`, `GET /api/auth/callback` (the registered redirect URI), `GET /api/auth/session` (`{ user, auth }`), `POST /api/auth/logout` (`{ redirect }` → pwiam's end-session page, so the SSO session ends too), `POST /api/auth/backchannel-logout`. None use the `{ success, data }` envelope — `client/src/store/auth-store.ts` reads them with a raw `fetch`, and `logout()` navigates itself. `app.locals.requireAuth` is the shim's; `resolvePropertyRole` / `requireRole` (`auth.middleware.js`) are unchanged and still the authority on every request (below).
+- **`AuthService.resolveUser(claims)`** (`auth.service.js`) is the hook, called at login and on every silent refresh (≤ 15 min): match `users.SUB`; else match `ENTRA_ID = entra_oid` and backfill `SUB` (one-time, no data migration); else insert. `LAST_LOGIN_AT` is pwiam's `auth_time`, written only when newer — stamping `NOW()` there would make it "last seen". `req.auth.roles` carries the token's `admin` | `member` (pw.json `iam.roles`); nothing gates on it yet — the spec's "`admin` may manage any property's members" is a follow-up, not this step.
+- **A pwiam assignment is the sign-in gate** (a user with no `tally/prod` role is refused on pwiam's own page, never reaches `/login?error=`). Grant seats in the PW dashboard → IAM → People, or `PUT /api/_u_/iam/manage/users/:id/assignments/tally/prod`.
+- **`pw.json` `iam`**: roles `admin`/`member`, `redirectUris: ["/api/auth/callback"]`, `environments.prod.publicHost`. Reconcile on every deploy creates the `tally-prod` client and renders `PW_IAM_ISSUER`/`PW_IAM_CLIENT_ID`/`PW_IAM_CLIENT_SECRET` into `.env` — never list those in `secrets`/`external_secrets`. Post-logout (`/`) and back-channel (`/api/auth/backchannel-logout`) URIs are the platform defaults derived from that path; verified against the real `ServiceCatalog.validatePwJson` + `iamDeclarations.buildDeclaration`. The per-app Entra registration is no longer read by anything; it stays until the wave completes (spec §7) and is retired in step 7. `oauth_state` is likewise unused and dropped in step 7.
+- **Sessions** (`TALLY.sessions`, migration 015): the shim stores the raw 64-hex token (the cookie carries `token.hmac`), `SUB`/`SID` for back-channel logout, and the sealed tokens + user snapshot in `IAM_STATE`. The hourly sweep is `auth.sweepExpiredSessions()` from `auth.routes.js`.
+- **CSRF keys on the cookie's presence** (`middleware/csrf.js` reads `req.cookies.session_token` or `req.signedCookies.session_token`): the shim's HMAC format is not cookie-parser's `s:` signed format, so a `signedCookies`-only check would never see it and the double-submit check would silently never run. Back-channel logout is exempt from CSRF and from the `/api/auth` rate limit — the logout_token's signature (verified against pwiam's JWKS) is that route's guard.
+- **`BYPASS_AUTH=true` needs no pwiam**: the shim gets placeholder client credentials, `/api/auth/login` answers 503 `bypass`, and `requireAuth` serves the fixed dev principal (`sub: dev`, `roles: ['admin']`) through `resolveUser`, which reuses a pre-pwiam local dev row (`ENTRA_ID='dev-user'`) so an existing local DB keeps its properties. Production still forces it off.
+- **Prove a login in Chromium or Firefox, not only a phone** — pwiam's CSP `form-action` covers `*.razorwire-productions.com`, and Safari does not enforce it across the redirect chain (IAM-RUNBOOK, onboarding step 5).
+- The Pi print agent's `tp_` bearer token is untouched by this step; the spec's "Pi agent becomes a service account" (`requireApiKey('print-agent')`) is a follow-up PR with the agent-side change.
 
 ### Property membership & roles
 

@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { api } from '@/lib/api';
+import { getCsrfToken } from '@/lib/api';
 import type { User } from '@/types/auth';
 
 type Theme = 'light' | 'dark' | 'system';
@@ -13,6 +13,15 @@ interface AuthState {
   checkSession: () => Promise<void>;
   logout: () => Promise<void>;
 }
+
+/**
+ * The two session endpoints are @pw/auth-express's (server auth.routes.js),
+ * not docket routes: `GET /api/auth/session` answers `{ user, auth }` and
+ * `POST /api/auth/logout` answers `{ redirect }` — neither is the
+ * `{ success, data }` envelope `api.get` unwraps, hence the raw fetches.
+ */
+const SESSION_URL = '/api/auth/session';
+const LOGOUT_URL = '/api/auth/logout';
 
 export const useAuthStore = create<AuthState>((set) => ({
   user: null,
@@ -29,19 +38,40 @@ export const useAuthStore = create<AuthState>((set) => ({
 
   checkSession: async () => {
     try {
-      const data = await api.get<{ user: User }>('/api/auth/_x_/session');
+      const res = await fetch(SESSION_URL, { credentials: 'include' });
+      if (!res.ok) throw new Error(`session ${res.status}`);
+      const data = (await res.json()) as { user: User };
       set({ user: data.user, isLoading: false });
     } catch {
       set({ user: null, isLoading: false });
     }
   },
 
+  /**
+   * Ends the app session, then follows the shim to pwiam's end-session page
+   * so the SSO session ends too (spec §6: app logout = destroy app session +
+   * RP-initiated end-session). Callers do not navigate afterwards — this
+   * does, and a caller's own `assign('/login')` would race it.
+   */
   logout: async () => {
+    let redirect = '/login';
     try {
-      await api.post('/api/auth/_y_/logout');
+      const csrf = getCsrfToken();
+      const res = await fetch(LOGOUT_URL, {
+        method: 'POST',
+        credentials: 'include',
+        headers: csrf ? { 'X-CSRF-Token': csrf } : {},
+      });
+      if (res.ok) {
+        const data = (await res.json()) as { redirect?: string };
+        if (typeof data.redirect === 'string' && data.redirect) redirect = data.redirect;
+      }
+    } catch {
+      /* the cookie may be gone already; the login page is the safe landing */
     } finally {
       set({ user: null });
     }
+    window.location.assign(redirect);
   },
 }));
 

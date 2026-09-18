@@ -2,11 +2,12 @@
 /**
  * #283 — sign-in had no failure path at all.
  *
- * `auth.routes.js` has always redirected a failed OAuth callback to
- * `/login?error=auth_failed`, and this page had no error branch: the user saw
- * "Signing in…", then the sign-in button again, with nothing said. Reported in
- * the review as code-traced rather than driven, because the harness always has
- * a session — these tests drive it.
+ * A failed OIDC callback has always landed on `/login?error=auth_failed`
+ * (today @pw/auth-express sends it there), and this page had no error
+ * branch: the user saw "Signing in…", then the sign-in button again, with
+ * nothing said. Reported in the review as code-traced rather than driven,
+ * because the harness always has a session — these tests drive it. A sign-in
+ * pwiam itself refuses is explained on pwiam's page and never reaches here.
  */
 import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
@@ -20,22 +21,17 @@ function renderAt(path: string) {
 test('a clean visit says nothing about errors', () => {
   renderAt('/login');
   expect(screen.queryByRole('alert')).toBeNull();
-  expect(screen.getByRole('button', { name: /sign in with microsoft/i })).toBeTruthy();
+  expect(screen.getByRole('button', { name: /^sign in$/i })).toBeTruthy();
 });
 
 test('the server\'s auth_failed is explained, not swallowed', () => {
   renderAt('/login?error=auth_failed');
 
   const alert = screen.getByRole('alert');
-  expect(alert.textContent).toMatch(/couldn't sign you in/i);
+  expect(alert.textContent).toMatch(/didn't complete/i);
   // And the way out is still right there, enabled.
-  const button = screen.getByRole('button', { name: /sign in with microsoft/i }) as HTMLButtonElement;
+  const button = screen.getByRole('button', { name: /^sign in$/i }) as HTMLButtonElement;
   expect(button.disabled).toBe(false);
-});
-
-test('a cancelled sign-in reads as a cancellation, not a fault', () => {
-  renderAt('/login?error=access_denied');
-  expect(screen.getByRole('alert').textContent).toMatch(/cancelled/i);
 });
 
 test('an error code nobody anticipated still gets a sentence, and carries the code', () => {

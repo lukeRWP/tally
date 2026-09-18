@@ -5,15 +5,15 @@ import { useSearchParams } from 'react-router';
 /**
  * What went wrong, in the user's words rather than the protocol's.
  *
- * `auth.routes.js` has always redirected a failed callback to
- * `/login?error=auth_failed`, and this page had no error branch at all — so a
- * failed sign-in showed "Signing in…" and then the sign-in button again, with
- * nothing said (#283). Anything unrecognised still gets a sentence: silence is
- * the one outcome this page must not have.
+ * @pw/auth-express sends a failed callback to `/login?error=auth_failed`;
+ * anything unrecognised still gets a sentence — a failed sign-in once showed
+ * "Signing in…" and then the button again with nothing said (#283), and
+ * silence is the one outcome this page must not have. A sign-in pwiam itself
+ * refuses (no tally role, a locked account) is explained on pwiam's own page
+ * and never lands here.
  */
 const ERRORS: Record<string, string> = {
-  auth_failed: "Microsoft couldn't sign you in. That usually means the link was opened in a different browser than the one that started it, or it sat too long — try again.",
-  access_denied: 'You cancelled the sign-in, so nothing happened. Try again when you are ready.',
+  auth_failed: "Sign-in didn't complete. That usually means the page was opened in a different browser than the one that started it, or it sat too long — try again.",
 };
 
 export function Login() {
@@ -26,7 +26,9 @@ export function Login() {
 
   function handleLogin() {
     setLoading(true);
-    window.location.href = '/api/auth/_x_/oauth/init';
+    // The shim starts the OIDC flow (PKCE + state cookie) and sends the
+    // browser to pwiam, which offers the sign-in methods.
+    window.location.href = '/api/auth/login';
   }
 
   return (
@@ -77,19 +79,19 @@ export function Login() {
           {loading ? (
             <>
               <Loader2 className="w-5 h-5 animate-spin" />
-              Connecting to Microsoft...
+              Taking you to sign in...
             </>
           ) : (
             <>
               <LogIn className="w-5 h-5" />
-              Sign in with Microsoft
+              Sign in
             </>
           )}
         </button>
 
         {loading && (
           <p className="text-xs text-[var(--color-text-muted)] text-center animate-pulse">
-            Redirecting to Microsoft login...
+            Redirecting to the sign-in page...
           </p>
         )}
       </div>

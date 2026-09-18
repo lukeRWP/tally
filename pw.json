@@ -52,13 +52,20 @@
     "COOKIE_SECRET"
   ],
   "external_secrets": [
-    "ENTRA_TENANT_ID",
-    "ENTRA_CLIENT_ID",
-    "ENTRA_CLIENT_SECRET",
     "ANTHROPIC_API_KEY"
   ],
+  "iam": {
+    "roles": [
+      "admin",
+      "member"
+    ],
+    "redirectUris": [
+      "/api/auth/callback"
+    ]
+  },
   "environments": {
     "prod": {
+      "publicHost": "tally.razorwire-productions.com",
       "pipeline": {
         "autoDeployBranch": "master",
         "requiresApproval": false

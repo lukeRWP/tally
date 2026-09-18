@@ -1,3 +1,9 @@
+> **Superseded (2026-09-18, PW IAM step 4).** Tally no longer signs in against
+> this registration: authentication is pwiam's (`CLAUDE.md` → Authentication),
+> and the `ENTRA_*` variables below are no longer read. The registration is
+> kept until the IAM wave completes (spec §7: rollback for one app is a revert)
+> and is retired in step 7. Everything below is historical.
+
 # Entra ID App Registration — Tally Production
 
 ## Steps to register Tally in Microsoft Entra ID

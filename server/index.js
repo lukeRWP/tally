@@ -73,7 +73,14 @@ app.use(
 );
 
 // Stricter rate limits for auth and public endpoints
-const authLimiter = rateLimit({ windowMs: 60 * 1000, max: 10, standardHeaders: true, legacyHeaders: false });
+// Back-channel logout is exempt from the auth limiter: it is pwiam (one IP,
+// via pw-proxy) telling us a session was revoked, and a 429 there is a
+// session that outlives its revocation. The shim verifies every logout_token
+// against the issuer's JWKS, which is that route's guard.
+const authLimiter = rateLimit({
+  windowMs: 60 * 1000, max: 10, standardHeaders: true, legacyHeaders: false,
+  skip: (req) => req.path === '/backchannel-logout',
+});
 const shareLimiter = rateLimit({ windowMs: 60 * 1000, max: 30, standardHeaders: true, legacyHeaders: false });
 app.use('/api/auth', authLimiter);
 app.use('/api/sharing/_x_/view', shareLimiter);

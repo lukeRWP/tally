@@ -1,82 +1,62 @@
-module.exports = function authRoutes({ app, db, logger, config }) {
+const pwAuth = require('@pw/auth-express');
+
+const SWEEP_INTERVAL_MS = 60 * 60 * 1000;
+
+/**
+ * Authentication is pwiam's (PW IAM step 4, spec §7): @pw/auth-express owns
+ * login (`GET /api/auth/login`), the OIDC callback (`/api/auth/callback` —
+ * the redirect URI pw.json declares), the session cookie + silent refresh,
+ * `GET /api/auth/session`, `POST /api/auth/logout` (RP-initiated end-session
+ * at pwiam) and `POST /api/auth/backchannel-logout`. Tally contributes one
+ * hook, `AuthService.resolveUser`, and keeps `resolvePropertyRole` /
+ * `requireRole` — property_members is still the authority on every request.
+ *
+ * Those five paths are the package's contract, not tally's `_x_`/`_y_`
+ * convention, and their bodies are not the `{ success, data }` envelope —
+ * the client's auth store reads them with a raw fetch (auth-store.ts).
+ *
+ * `deps.session` lets a test hand in `pwAuth.memorySession()` instead of the
+ * MySQL adapter.
+ */
+module.exports = function authRoutes({ app, db, logger, config, deps }) {
   const AuthService = require('./auth.service');
-  const { oauthCallback } = require('./auth.schema');
   AuthService.init({ db, config, logger });
 
-  const { requireAuth, resolvePropertyRole, requireRole } = require('./auth.middleware');
-  const { success, error } = require('../../utils/response');
+  const { resolvePropertyRole, requireRole } = require('./auth.middleware');
 
-  // GET /api/auth/_x_/session — get current user
-  app.get('/api/auth/_x_/session', requireAuth(AuthService), (req, res) => {
-    success(res, { user: req.user });
+  const bypass = config.auth.bypassAuth === true;
+  const { issuer, clientId, clientSecret } = config.auth.iam;
+
+  const auth = pwAuth({
+    issuer,
+    // The shim insists on client credentials even under bypass (where it
+    // never dials the issuer); local dev has none, so give it placeholders
+    // there and nowhere else — config.js already forces bypass off in prod.
+    clientId: clientId || (bypass ? 'bypass' : clientId),
+    clientSecret: clientSecret || (bypass ? 'bypass' : clientSecret),
+    baseUrl: config.clientUrl,
+    secret: config.auth.cookieSecret,
+    session: (deps && deps.session) || pwAuth.mysqlSession(db, { table: 'TALLY.sessions' }),
+    resolveUser: (claims, ctx) => AuthService.resolveUser(claims, ctx),
+    bypassAuth: bypass,
+    // Local dev is plain http; a Secure cookie would never come back.
+    cookie: { secure: config.isProduction },
+    logger,
   });
 
-  // GET /api/auth/_x_/oauth/init — start OAuth flow
-  app.get('/api/auth/_x_/oauth/init', async (req, res) => {
-    const { url, state } = await AuthService.getAuthorizationUrl();
-    // Bind the OAuth state to THIS browser. Without it, an attacker can
-    // pre-initiate login, capture a valid state, and feed the victim a crafted
-    // callback URL to log them into the attacker's account (login CSRF /
-    // session stitching) — the DB-stored state alone proves nothing about who
-    // started the flow.
-    res.cookie('oauth_state', state, {
-      httpOnly: true,
-      secure: config.isProduction,
-      sameSite: 'lax',
-      maxAge: 5 * 60 * 1000,
-      signed: true,
-    });
-    res.redirect(url);
-  });
+  app.use(auth.routes());
 
-  // GET /api/auth/_x_/oauth/callback — Entra ID callback
-  app.get('/api/auth/_x_/oauth/callback', async (req, res) => {
-    try {
-      const { error: queryError, value } = oauthCallback.validate(req.query);
-      if (queryError) {
-        throw new Error(`OAuth callback rejected: ${queryError.details.map((d) => d.message).join('; ')}`);
-      }
-      const { code, state } = value;
-
-      // The state must match the cookie set at /oauth/init (skipped under the
-      // dev bypass, which short-circuits the real flow).
-      if (!AuthService.isBypassAuth()) {
-        const boundState = req.signedCookies?.oauth_state;
-        if (!boundState || boundState !== state) {
-          throw new Error('OAuth state does not match the initiating browser');
-        }
-      }
-      res.clearCookie('oauth_state');
-
-      const profile = await AuthService.exchangeCode(code, state);
-      const user = await AuthService.findOrCreateUser(profile);
-      const session = await AuthService.createSession(user.id);
-
-      res.cookie('session_token', session.token, {
-        httpOnly: true,
-        secure: config.isProduction,
-        sameSite: 'lax',
-        maxAge: 24 * 60 * 60 * 1000,
-        signed: true,
-      });
-
-      res.redirect(config.clientUrl);
-    } catch (err) {
-      logger.error('OAuth callback failed', { error: err.message });
-      res.redirect(`${config.clientUrl}/login?error=auth_failed`);
-    }
-  });
-
-  // POST /api/auth/_y_/logout — destroy session
-  app.post('/api/auth/_y_/logout', requireAuth(AuthService), async (req, res) => {
-    const token = req.signedCookies?.session_token;
-    if (token) await AuthService.destroySession(token);
-    res.clearCookie('session_token');
-    success(res, null, 'Logged out');
-  });
+  // The shim never deletes expired rows on its own. Same cadence as before;
+  // unref so a test that wires this module can still exit (PW #807).
+  const sweep = () =>
+    auth.sweepExpiredSessions().catch((err) => logger.warn('[auth] session sweep failed', { error: err.message }));
+  sweep();
+  setInterval(sweep, SWEEP_INTERVAL_MS).unref();
 
   // Export middleware for other modules to use
-  app.locals.requireAuth = requireAuth(AuthService);
+  app.locals.requireAuth = auth.requireAuth;
   app.locals.resolvePropertyRole = resolvePropertyRole(db);
   app.locals.requireRole = requireRole;
+
+  return auth;
 };

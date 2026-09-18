@@ -1,7 +1,6 @@
 import { Routes, Route, Navigate } from 'react-router';
 import { RootLayout } from '@/components/layout/root-layout';
 import { Login } from '@/pages/login';
-import { OAuthCallback } from '@/pages/oauth-callback';
 import { QrRedirect } from '@/pages/qr-redirect';
 import { ShareView } from '@/pages/share-view';
 
@@ -27,7 +26,6 @@ export function App() {
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
-      <Route path="/oauth/callback" element={<OAuthCallback />} />
       <Route path="/s/:code" element={<QrRedirect />} />
       <Route path="/share/:token" element={<ShareView />} />
       <Route element={<RootLayout />}>

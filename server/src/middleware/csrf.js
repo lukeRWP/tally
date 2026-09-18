@@ -8,19 +8,33 @@ const { error } = require('../utils/response');
  * On state-changing requests (POST/PUT/PATCH/DELETE), validates that the
  * X-CSRF-Token header matches the csrf_token cookie.
  *
- * Safe methods (GET/HEAD/OPTIONS) and the OAuth callback are exempt.
+ * "Authenticated" means the `session_token` cookie is PRESENT, not that
+ * cookie-parser verified it: @pw/auth-express signs that cookie with its own
+ * HMAC (`value.signature`), which cookie-parser does not recognise as one of
+ * its `s:` signed cookies — so `req.signedCookies.session_token` alone would
+ * always be empty and this check would silently never run. cookie-parser
+ * moves an `s:` cookie out of req.cookies into req.signedCookies, so both are
+ * read. The shim verifies the signature itself in requireAuth; presence is
+ * all the double-submit needs to decide whether a session is at stake.
+ *
+ * Safe methods (GET/HEAD/OPTIONS) and the paths below are exempt.
  */
 
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 const EXEMPT_PATHS = [
-  '/api/auth/_x_/oauth/callback',  // OAuth redirect — no JS to set header
+  '/api/auth/backchannel-logout',  // OIDC back-channel logout: pwiam POSTs a
+                                    // logout_token with no browser, no cookie,
+                                    // no header. Verified by the shim against
+                                    // the issuer's JWKS, which is the guard.
   '/api/sharing/_x_/view/',        // Public share links — no auth
 ];
 
 function csrfProtection() {
   return (req, res, next) => {
+    const hasSession = !!(req.cookies?.session_token || req.signedCookies?.session_token);
+
     // Always set/refresh the CSRF cookie on authenticated requests
-    if (req.signedCookies?.session_token && !res.headersSent) {
+    if (hasSession && !res.headersSent) {
       let token = req.cookies?.csrf_token;
       if (!token) {
         token = crypto.randomBytes(32).toString('hex');
@@ -41,7 +55,7 @@ function csrfProtection() {
     if (EXEMPT_PATHS.some(p => req.path.startsWith(p))) return next();
 
     // Skip if no session cookie (unauthenticated requests)
-    if (!req.signedCookies?.session_token) return next();
+    if (!hasSession) return next();
 
     // Validate: X-CSRF-Token header must match csrf_token cookie
     const headerToken = req.headers['x-csrf-token'];
