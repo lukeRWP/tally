@@ -1,24 +1,8 @@
 const { error } = require('../../utils/response');
 
-function requireAuth(authService) {
-  return async (req, res, next) => {
-    // BYPASS_AUTH: auto-attach dev user
-    if (authService.isBypassAuth()) {
-      const devUser = await authService.getOrCreateDevUser();
-      req.user = devUser;
-      return next();
-    }
-
-    const token = req.signedCookies?.session_token;
-    if (!token) return error(res, 'Authentication required', 401);
-
-    const session = await authService.validateSession(token);
-    if (!session) return error(res, 'Session expired', 401);
-
-    req.user = session.user;
-    next();
-  };
-}
+// requireAuth is @pw/auth-express's (auth.routes.js sets app.locals.requireAuth
+// from it); what stays here is tally's own resource-level authority — a
+// property membership, and its role.
 
 function requireRole(...roles) {
   return (req, res, next) => {
@@ -42,4 +26,4 @@ function resolvePropertyRole(db) {
   };
 }
 
-module.exports = { requireAuth, requireRole, resolvePropertyRole };
+module.exports = { requireRole, resolvePropertyRole };

@@ -351,10 +351,15 @@ CREATE TABLE `sessions` (
   `USER_ID` int NOT NULL,
   `TOKEN` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL,
   `EXPIRES_AT` datetime NOT NULL,
+  `SUB` varchar(64) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `SID` varchar(64) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `IAM_STATE` text COLLATE utf8mb4_unicode_ci,
   `CREATED_AT` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`ID`),
   UNIQUE KEY `uq_sessions_token` (`TOKEN`),
   KEY `fk_sessions_user` (`USER_ID`),
+  KEY `idx_sessions_sid` (`SID`),
+  KEY `idx_sessions_sub` (`SUB`),
   CONSTRAINT `fk_sessions_user` FOREIGN KEY (`USER_ID`) REFERENCES `users` (`ID`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 CREATE TABLE `share_links` (
@@ -384,14 +389,16 @@ CREATE TABLE `tags` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 CREATE TABLE `users` (
   `ID` int NOT NULL AUTO_INCREMENT,
-  `ENTRA_ID` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `ENTRA_ID` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `SUB` varchar(26) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `EMAIL` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
   `DISPLAY_NAME` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
   `AVATAR_URL` text COLLATE utf8mb4_unicode_ci,
   `CREATED_AT` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `LAST_LOGIN_AT` datetime DEFAULT NULL,
   PRIMARY KEY (`ID`),
-  UNIQUE KEY `uq_users_entra_id` (`ENTRA_ID`)
+  UNIQUE KEY `uq_users_entra_id` (`ENTRA_ID`),
+  UNIQUE KEY `uq_users_sub` (`SUB`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 CREATE TABLE `vision_usage` (
   `USER_ID` int NOT NULL,

@@ -12,15 +12,18 @@ const alwaysRequired = [
   'CLIENT_URL',
 ];
 
-// Entra vars — required in production, warned in development (BYPASS_AUTH may be used)
-const entraVars = [
-  'ENTRA_CLIENT_ID',
-  'ENTRA_TENANT_ID',
+// pwiam client credentials (PW IAM step 4) — written to Vault by the
+// orchestrator's reconcile and rendered into .env on every deploy (never
+// declared in pw.json). Required in production, warned in development
+// (BYPASS_AUTH may be used).
+const iamVars = [
+  'PW_IAM_CLIENT_ID',
+  'PW_IAM_CLIENT_SECRET',
 ];
 
 const missing = {
   required: alwaysRequired.filter(key => !process.env[key]),
-  entra: entraVars.filter(key => !process.env[key]),
+  iam: iamVars.filter(key => !process.env[key]),
 };
 
 if (missing.required.length > 0) {
@@ -32,15 +35,15 @@ if (missing.required.length > 0) {
   }
 }
 
-if (missing.entra.length > 0 && process.env.BYPASS_AUTH !== 'true') {
-  const msg = `Missing Entra environment variables: ${missing.entra.join(', ')}. Auth will not work unless BYPASS_AUTH=true.`;
+if (missing.iam.length > 0 && process.env.BYPASS_AUTH !== 'true') {
+  const msg = `Missing pwiam environment variables: ${missing.iam.join(', ')}. Auth will not work unless BYPASS_AUTH=true.`;
   if (isProduction) {
     throw new Error(msg);
   } else {
     console.warn(`[config] WARNING: ${msg}`);
   }
-} else if (missing.entra.length > 0) {
-  console.warn(`[config] WARNING: Entra vars missing but BYPASS_AUTH=true — skipping auth check`);
+} else if (missing.iam.length > 0) {
+  console.warn(`[config] WARNING: pwiam vars missing but BYPASS_AUTH=true — skipping auth check`);
 }
 
 // Optional feature keys. These are absent on a fresh install and in local dev,
@@ -70,9 +73,13 @@ const config = Object.freeze({
   },
 
   auth: {
-    entraClientId: process.env.ENTRA_CLIENT_ID,
-    entraClientSecret: process.env.ENTRA_CLIENT_SECRET,
-    entraTenantId: process.env.ENTRA_TENANT_ID,
+    // @pw/auth-express reads these (auth.routes.js). The issuer is the estate's
+    // one pwiam; PW_IAM_ISSUER is rendered anyway and wins when set.
+    iam: {
+      issuer: process.env.PW_IAM_ISSUER || 'https://id.razorwire-productions.com',
+      clientId: process.env.PW_IAM_CLIENT_ID,
+      clientSecret: process.env.PW_IAM_CLIENT_SECRET,
+    },
     bypassAuth: (() => {
       if (process.env.BYPASS_AUTH !== 'true') return false;
       if (isProduction) {
