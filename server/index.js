@@ -158,6 +158,7 @@ app.get('/health/ready', async (req, res) => {
 // ── Module Routes ───────────────────────────────────────────────────────────
 require('./src/modules/auth/auth.routes')({ app, db, logger, config });
 require('./src/modules/inventory/properties.routes')({ app, db, logger, config });
+require('./src/modules/inventory/property-invites.routes')({ app, db, logger, config });
 require('./src/modules/inventory/areas.routes')({ app, db, logger, config });
 require('./src/modules/inventory/containers.routes')({ app, db, logger, config });
 require('./src/modules/inventory/items.routes')({ app, db, logger, config });

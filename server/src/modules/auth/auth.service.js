@@ -9,6 +9,8 @@
 // `iam.roles` — estate vocabulary, not property_members' owner/editor/viewer)
 // rides on req.auth.roles for whatever step 4 follow-ups need.
 
+const PropertyInvitesService = require('../inventory/property-invites.service');
+
 let _db = null;
 let _config = null;
 let _logger = null;
@@ -111,6 +113,17 @@ const AuthService = {
       [authTime, row.ID, authTime]
     );
     const lastLoginAt = row.LAST_LOGIN_AT && row.LAST_LOGIN_AT >= authTime ? row.LAST_LOGIN_AT : authTime;
+
+    // Property invites (plan 2026-09-26-property-invites.md): claim any
+    // pending invite for this sub — a brand-new user landing on their first
+    // property, or a returning one whose owner invited them again. Never
+    // blocks sign-in: a claim failure is logged and swallowed, not thrown,
+    // because the whole point of resolveUser is to hand back a session.
+    try {
+      await PropertyInvitesService.claimPending(sub, row.ID);
+    } catch (err) {
+      _logger.error('[auth] claiming pending property invites failed', { error: err.message, sub });
+    }
 
     return AuthService._mapUser({ ...row, LAST_LOGIN_AT: lastLoginAt });
   },

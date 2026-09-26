@@ -90,3 +90,25 @@ export interface PropertyMember {
   avatarUrl: string | null;
   role: 'owner' | 'editor' | 'viewer';
 }
+
+/**
+ * A pending invite through pwiam (plan 2026-09-26-property-invites.md). No
+ * email and no url — the invitee is keyed by their pwiam `sub`, minted
+ * server-side, and the join link is shown exactly once, at creation
+ * (`CreatedPropertyInvite` below), never again.
+ */
+export interface PropertyInvite {
+  id: number;
+  propertyId: number;
+  role: 'editor' | 'viewer';
+  displayName: string;
+  invitedBy: number;
+  expiresAt: string;
+  createdAt: string;
+}
+
+/** The one response that carries the join url — its only appearance. */
+export interface CreatedPropertyInvite {
+  invite: PropertyInvite;
+  url: string;
+}

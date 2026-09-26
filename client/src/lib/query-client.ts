@@ -23,6 +23,7 @@ export const queryKeys = {
     list: () => [...queryKeys.properties.all, 'list'] as const,
     detail: (id: number) => [...queryKeys.properties.all, 'detail', id] as const,
     members: (id: number) => [...queryKeys.properties.all, 'members', id] as const,
+    invites: (id: number) => [...queryKeys.properties.all, 'invites', id] as const,
   },
   areas: {
     all: ['areas'] as const,

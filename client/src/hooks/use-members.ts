@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { queryKeys } from '@/lib/query-client';
-import type { PropertyMember } from '@/types/inventory';
+import type { CreatedPropertyInvite, PropertyInvite, PropertyMember } from '@/types/inventory';
 
 export type MemberRole = PropertyMember['role'];
 
@@ -58,5 +58,40 @@ export function useRemoveMember(propertyId: number) {
     mutationFn: (userId: number) =>
       api.del<null>(`/api/properties/_d_/${propertyId}/members/${userId}`),
     onSuccess: invalidate,
+  });
+}
+
+// ── Invites (plan 2026-09-26-property-invites.md) ──────────────────────────
+//
+// A brand-new person, not an existing tally user — the pwiam side mints the
+// account grant, tally only ever sees a pending row keyed by the invitee's
+// pwiam sub. `usePropertyInvites` lists the PENDING ones only (the server
+// already excludes accepted/revoked/expired); there is no query for history.
+
+export function usePropertyInvites(propertyId: number, enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.properties.invites(propertyId),
+    queryFn: () =>
+      api.get<{ invites: PropertyInvite[] }>(`/api/properties/_x_/${propertyId}/invites`),
+    select: (data) => data.invites,
+    enabled: enabled && propertyId > 0,
+  });
+}
+
+export function useCreateInvite(propertyId: number) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: { displayName: string; role: Exclude<MemberRole, 'owner'> }) =>
+      api.post<CreatedPropertyInvite>(`/api/properties/_y_/${propertyId}/invites`, data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.properties.invites(propertyId) }),
+  });
+}
+
+export function useRevokeInvite(propertyId: number) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (inviteId: number) =>
+      api.del<null>(`/api/properties/_d_/${propertyId}/invites/${inviteId}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.properties.invites(propertyId) }),
   });
 }
