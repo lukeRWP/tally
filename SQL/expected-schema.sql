@@ -333,6 +333,29 @@ CREATE TABLE `properties` (
   KEY `fk_properties_owner` (`OWNER_ID`),
   CONSTRAINT `fk_properties_owner` FOREIGN KEY (`OWNER_ID`) REFERENCES `users` (`ID`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+CREATE TABLE `property_invites` (
+  `ID` int NOT NULL AUTO_INCREMENT,
+  `PROPERTY_ID` int NOT NULL,
+  `ROLE` enum('editor','viewer') COLLATE utf8mb4_unicode_ci NOT NULL,
+  `DISPLAY_NAME` varchar(120) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `INVITEE_SUB` varchar(26) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `PWIAM_INVITE_ID` varchar(26) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `INVITED_BY` int NOT NULL,
+  `EXPIRES_AT` datetime NOT NULL,
+  `ACCEPTED_AT` datetime DEFAULT NULL,
+  `ACCEPTED_USER_ID` int DEFAULT NULL,
+  `REVOKED_AT` datetime DEFAULT NULL,
+  `CREATED_AT` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`ID`),
+  UNIQUE KEY `uq_property_invites_pwiam_id` (`PWIAM_INVITE_ID`),
+  KEY `idx_property_invites_invitee_sub` (`INVITEE_SUB`),
+  KEY `fk_property_invites_property` (`PROPERTY_ID`),
+  KEY `fk_property_invites_invited` (`INVITED_BY`),
+  KEY `fk_property_invites_accepted` (`ACCEPTED_USER_ID`),
+  CONSTRAINT `fk_property_invites_accepted` FOREIGN KEY (`ACCEPTED_USER_ID`) REFERENCES `users` (`ID`),
+  CONSTRAINT `fk_property_invites_invited` FOREIGN KEY (`INVITED_BY`) REFERENCES `users` (`ID`),
+  CONSTRAINT `fk_property_invites_property` FOREIGN KEY (`PROPERTY_ID`) REFERENCES `properties` (`ID`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 CREATE TABLE `property_members` (
   `ID` int NOT NULL AUTO_INCREMENT,
   `PROPERTY_ID` int NOT NULL,
