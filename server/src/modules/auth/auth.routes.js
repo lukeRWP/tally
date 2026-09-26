@@ -27,6 +27,19 @@ module.exports = function authRoutes({ app, db, logger, config, deps }) {
   const bypass = config.auth.bypassAuth === true;
   const { issuer, clientId, clientSecret } = config.auth.iam;
 
+  // The shim logs login/callback failures and back-channel logout rejections
+  // at warn (pw-auth-express lib/routes.js, lib/middleware.js). Production's
+  // console transport is error-only by default (LOG_LEVEL unset in pw.json —
+  // utils/logger.js), so those lines would never reach `docker compose logs`.
+  // Raising LOG_LEVEL globally would also surface tally's OWN routine warns
+  // (a "Validation error" line on every 400, MySQL lock/constraint warns on
+  // every 409 — error-handler.js) — noise that has nothing to do with sign-in.
+  // Remap just the logger the SHIM sees, and only in production; dev's console
+  // already shows warn (LOG_LEVEL defaults to 'debug' there).
+  const shimLogger = config.isProduction
+    ? { info: (...a) => logger.info(...a), warn: (...a) => logger.error(...a), error: (...a) => logger.error(...a) }
+    : logger;
+
   const auth = pwAuth({
     issuer,
     // The shim insists on client credentials even under bypass (where it
@@ -41,7 +54,7 @@ module.exports = function authRoutes({ app, db, logger, config, deps }) {
     bypassAuth: bypass,
     // Local dev is plain http; a Secure cookie would never come back.
     cookie: { secure: config.isProduction },
-    logger,
+    logger: shimLogger,
   });
 
   app.use(auth.routes());
