@@ -64,16 +64,18 @@ jobs:
     needs: [build-client, build-server]
     runs-on: self-hosted
     environment: prod
+    # id-token: write lets this job mint GitHub Actions OIDC tokens — the orchestrator's CI
+    # credential since 2026-09-26 (PW docs/CI-OIDC.md). A job-level block REPLACES the
+    # workflow-level one, so contents: read is repeated.
+    permissions:
+      contents: read
+      id-token: write
     steps:
-      - name: Preflight — verify secrets are configured
+      - name: Preflight — verify the orchestrator URL is configured
         run: |
           FAIL=0
           if [ -z "${{ vars.ORCHESTRATOR_URL }}" ]; then
             echo "::error::Repository variable ORCHESTRATOR_URL is not set"
-            FAIL=1
-          fi
-          if [ -z "${{ secrets.ORCHESTRATOR_API_KEY }}" ]; then
-            echo "::error::Repository secret ORCHESTRATOR_API_KEY is not set"
             FAIL=1
           fi
           if [ "$FAIL" = "1" ]; then exit 1; fi
@@ -82,15 +84,25 @@ jobs:
       - name: Deploy via Orchestrator
         env:
           ORCH_URL: ${{ vars.ORCHESTRATOR_URL }}
-          ORCH_KEY: ${{ secrets.ORCHESTRATOR_API_KEY }}
           GIT_REF: ${{ github.ref_name }}
         run: |
+          # A FRESH GitHub OIDC token for every orchestrator call (the poll below outlives any
+          # single token). The orchestrator accepts it only for this repo's declared routes —
+          # PW orchestrator/api/src/config/ci-oidc.yml. No static secret.
+          orch_token() {
+            local t
+            t=$(curl -sS --fail --max-time 10 -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+              "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=pw-orchestrator" | jq -r '.value')
+            echo "::add-mask::$t"
+            printf '%s' "$t"
+          }
+
           # V2 deploy endpoint — single-VM Docker compose at <vlan>.10
           # Trigger with retry (orchestrator may be restarting)
           for RETRY in 1 2 3; do
             RESULT=$(curl -s -w "\n%{http_code}" -X POST \
               "$ORCH_URL/api/_y_/apps/tally/envs/prod/v2/deploy" \
-              -H "Authorization: Bearer $ORCH_KEY" \
+              -H "Authorization: Bearer $(orch_token)" \
               -H "Content-Type: application/json" \
               --max-time 30 \
               -d "{\"ref\": \"$GIT_REF\"}" 2>&1) || true
@@ -121,7 +133,7 @@ jobs:
           while [ $ATTEMPTS -lt 90 ]; do
             POLL=$(curl -s --max-time 10 \
               "$ORCH_URL/api/_x_/ops/$OP" \
-              -H "Authorization: Bearer $ORCH_KEY" 2>&1) || true
+              -H "Authorization: Bearer $(orch_token)" 2>&1) || true
             STATUS=$(echo "$POLL" | jq -r '.data.status' 2>/dev/null)
             case "$STATUS" in
               success)
