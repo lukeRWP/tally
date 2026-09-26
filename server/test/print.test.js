@@ -60,10 +60,31 @@ test('agentAck requires ok AND the claimId fence, and carries an optional error 
   assert.ok(schema.agentAck.validate({ ok: false, error: 'x' }).error);
 });
 
+const VALID_ULID = '01ARZ3NDEKTSV4RRFFQ69G5FAV';   // the canonical ULID-spec example, 26 chars
+
+test('bindServiceAccount requires a ULID-shaped serviceAccountId', () => {
+  assert.equal(schema.bindServiceAccount.validate({ serviceAccountId: VALID_ULID }).error, undefined);
+  assert.ok(schema.bindServiceAccount.validate({ serviceAccountId: 'dev' }).error,
+    'the bypass principal id is nowhere near ULID-shaped — this must 400 before the service ever sees it');
+  assert.ok(schema.bindServiceAccount.validate({ serviceAccountId: 'not-a-ulid-not-a-ulid-not' }).error);
+  assert.ok(schema.bindServiceAccount.validate({}).error);
+});
+
+test('createAgent accepts an optional ULID-shaped serviceAccountId', () => {
+  assert.equal(schema.createAgent.validate({ propertyId: 1, name: 'Garage Pi' }).error, undefined,
+    'serviceAccountId stays optional — the legacy tp_ flow needs none');
+  assert.equal(
+    schema.createAgent.validate({ propertyId: 1, name: 'Garage Pi', serviceAccountId: VALID_ULID }).error,
+    undefined);
+  assert.ok(schema.createAgent.validate({ propertyId: 1, name: 'Garage Pi', serviceAccountId: 'dev' }).error);
+});
+
 // ── agent auth middleware ────────────────────────────────────────────────────
 
 const crypto = require('crypto');
-const { hashToken, generateToken, requireAgent } = require('../src/modules/print/agent.middleware');
+const {
+  hashToken, generateToken, requireAgent, requireAgentAny, PWK_RE, BYPASS_SERVICE_ACCOUNT_ID,
+} = require('../src/modules/print/agent.middleware');
 
 function fakeRes() {
   return {
@@ -151,6 +172,156 @@ test('requireAgent rejects a missing, malformed, or unknown token with 401', asy
   await mw({ headers: { authorization: `Bearer ${generateToken()}` } }, res, () => { nexted = true; });
   assert.equal(nexted, false, 'an unknown token must not call next()');
   assert.equal(res.statusCode, 401);
+});
+
+// ── requireAgentAny: pwk_ / tp_ dual-accept dispatch (tally #388) ────────────
+
+// A real key's shape: pwk_<16 hex>_<43 base64url>.
+const VALID_PWK = `pwk_${'0123456789abcdef'}_${'A'.repeat(43)}`;
+
+function spyMiddleware(behavior) {
+  const mw = async (req, res, next) => { mw.calls += 1; return behavior(req, res, next); };
+  mw.calls = 0;
+  return mw;
+}
+
+test('PWK_RE matches exactly the pwk_<16hex>_<43 b64url> shape', () => {
+  assert.match(VALID_PWK, PWK_RE);
+  assert.doesNotMatch('pwk_tooshort_x', PWK_RE);
+  assert.doesNotMatch(generateToken(), PWK_RE, 'a tp_ token must never look like a pwk_ key');
+  assert.doesNotMatch('pwk_0123456789abcdef_' + 'A'.repeat(42), PWK_RE, 'one char short of 43 must not match');
+});
+
+test('requireAgentAny: a bound pwk_ key resolves req.agent via SERVICE_ACCOUNT_ID with the owner tether and live property', async () => {
+  let sql = '', params = null;
+  const requireApiKey = spyMiddleware((req, res, next) => {
+    req.principal = { kind: 'service-account', id: VALID_ULID, saKind: 'print-agent' };
+    next();
+  });
+  const db = { query: async (s, p) => {
+    sql = s; params = p;
+    return [{ ID: 7, PROPERTY_ID: 3, LOADED_MEDIA: 'large', NAME: 'Garage Pi' }];
+  } };
+  const mw = requireAgentAny({ db, requireApiKey });
+  const req = { headers: { authorization: `Bearer ${VALID_PWK}` } };
+  const res = fakeRes();
+  let nexted = false;
+  await mw(req, res, () => { nexted = true; });
+
+  assert.ok(nexted, 'a bound pwk_ key must authenticate');
+  assert.equal(requireApiKey.calls, 1);
+  assert.deepEqual(req.agent, { id: 7, propertyId: 3, loadedMedia: 'large', name: 'Garage Pi' },
+    'req.agent keeps EXACTLY the shape the tp_ path produces');
+  assert.match(sql, /SERVICE_ACCOUNT_ID = \?/i);
+  assert.match(sql, /pm\.USER_ID = a\.CREATED_BY/i, 'the same #122 owner tether the tp_ path uses');
+  assert.match(sql, /pm\.ROLE = 'owner'/i);
+  assert.match(sql, /JOIN TALLY\.properties p/i, 'must also join properties');
+  assert.match(sql, /p\.DELETED_AT IS NULL/i, 'closes the soft-delete gap the tp_ path has never had');
+  assert.deepEqual(params, [VALID_ULID]);
+});
+
+test('requireAgentAny: a valid but unbound pwk_ key is 403 with the pairing message', async () => {
+  const requireApiKey = spyMiddleware((req, res, next) => {
+    req.principal = { kind: 'service-account', id: VALID_ULID, saKind: 'print-agent' };
+    next();
+  });
+  const db = { query: async () => [] };   // no printer_agents row carries this SA id
+  const mw = requireAgentAny({ db, requireApiKey });
+  const res = fakeRes();
+  let nexted = false;
+  await mw({ headers: { authorization: `Bearer ${VALID_PWK}` } }, res, () => { nexted = true; });
+
+  assert.equal(nexted, false);
+  assert.equal(res.statusCode, 403);
+  assert.equal(res.body.message, 'This printer key is not paired with a property yet.');
+});
+
+test('requireAgentAny: demoting the binding owner denies a previously-working pwk_ key (#122 parity)', async () => {
+  // Same join as the unbound case from the caller's point of view — the
+  // INNER JOIN on property_members simply finds no row once the binder is no
+  // longer an owner. Pinned as its own test because it is a distinct failure
+  // mode from "never bound", even though the response is identical by design.
+  const requireApiKey = spyMiddleware((req, res, next) => {
+    req.principal = { kind: 'service-account', id: VALID_ULID, saKind: 'print-agent' };
+    next();
+  });
+  const db = { query: async () => [] };
+  const mw = requireAgentAny({ db, requireApiKey });
+  const res = fakeRes();
+  let nexted = false;
+  await mw({ headers: { authorization: `Bearer ${VALID_PWK}` } }, res, () => { nexted = true; });
+
+  assert.equal(nexted, false, 'a demoted binder must not authenticate the key');
+  assert.equal(res.statusCode, 403);
+});
+
+test('requireAgentAny: a soft-deleted property denies an otherwise-bound pwk_ key', async () => {
+  // The INNER JOIN on properties (DELETED_AT IS NULL) excludes the row —
+  // property_members rows survive a soft delete (it is a marker, not a
+  // cascade), so without this join the key would go on authenticating.
+  const requireApiKey = spyMiddleware((req, res, next) => {
+    req.principal = { kind: 'service-account', id: VALID_ULID, saKind: 'print-agent' };
+    next();
+  });
+  const db = { query: async () => [] };
+  const mw = requireAgentAny({ db, requireApiKey });
+  const res = fakeRes();
+  let nexted = false;
+  await mw({ headers: { authorization: `Bearer ${VALID_PWK}` } }, res, () => { nexted = true; });
+
+  assert.equal(nexted, false);
+  assert.equal(res.statusCode, 403);
+});
+
+test('requireAgentAny: the shim\'s BYPASS_AUTH principal ("dev") is never treated as bound, even if a row claims it', async () => {
+  assert.equal(BYPASS_SERVICE_ACCOUNT_ID, 'dev');
+  const requireApiKey = spyMiddleware((req, res, next) => {
+    req.principal = { kind: 'service-account', id: BYPASS_SERVICE_ACCOUNT_ID, saKind: 'print-agent' };
+    next();
+  });
+  let queried = false;
+  // Deliberately hands back a "match" to prove the guard does not depend on
+  // the data — it must refuse before this row is ever seen.
+  const db = { query: async () => { queried = true; return [{ ID: 1, PROPERTY_ID: 1, LOADED_MEDIA: 'large', NAME: 'x' }]; } };
+  const mw = requireAgentAny({ db, requireApiKey });
+  const res = fakeRes();
+  let nexted = false;
+  await mw({ headers: { authorization: `Bearer ${VALID_PWK}` } }, res, () => { nexted = true; });
+
+  assert.equal(nexted, false);
+  assert.equal(res.statusCode, 403);
+  assert.equal(queried, false, 'the dev bypass principal must be refused before ever touching the db');
+});
+
+test('requireAgentAny: a tp_ token still works, and never reaches the shim', async () => {
+  const requireApiKey = spyMiddleware((req, res, next) => next());
+  const token = generateToken();
+  const db = { query: async () => [{ ID: 7, PROPERTY_ID: 3, LOADED_MEDIA: 'large', NAME: 'Garage Pi' }] };
+  const mw = requireAgentAny({ db, requireApiKey });
+  const req = { headers: { authorization: `Bearer ${token}` } };
+  const res = fakeRes();
+  let nexted = false;
+  await mw(req, res, () => { nexted = true; });
+
+  assert.ok(nexted, 'dual-accept: the legacy token must still authenticate');
+  assert.deepEqual(req.agent, { id: 7, propertyId: 3, loadedMedia: 'large', name: 'Garage Pi' });
+  assert.equal(requireApiKey.calls, 0,
+    'a tp_ token must never be sent to the shim — it would 503 every legacy Pi during a pwiam outage');
+});
+
+test('requireAgentAny: junk bearers 401 WITHOUT ever calling the shim', async () => {
+  const requireApiKey = spyMiddleware((req, res, next) => next());
+  const mw = requireAgentAny({ db: { query: async () => [] }, requireApiKey });
+
+  for (const authorization of [undefined, 'Bearer', 'Basic abc', 'Bearer garbage', 'Bearer pwk_not_the_right_shape']) {
+    const res = fakeRes();
+    let nexted = false;
+    const headers = authorization === undefined ? {} : { authorization };
+    await mw({ headers }, res, () => { nexted = true; });
+    assert.equal(nexted, false, `${authorization} must not authenticate`);
+    assert.equal(res.statusCode, 401, `${authorization} must 401`);
+  }
+  assert.equal(requireApiKey.calls, 0, 'a junk bearer must never spend an introspection call');
 });
 
 // ── user-side job operations ─────────────────────────────────────────────────
@@ -587,6 +758,87 @@ test('createAgent refuses a property the caller is not a member of', async () =>
   assert.equal(inserted, false);
 });
 
+test('createAgent binds a service account instead of minting a tp_ token when serviceAccountId is given', async () => {
+  let insertSql = '', insertParams = null;
+  PrintService.init({ db: fakeDb((sql, params) => {
+    if (/FROM TALLY\.property_members/i.test(sql)) return [{ PROPERTY_ID: 3 }];
+    if (/INSERT INTO TALLY\.printer_agents/i.test(sql)) { insertSql = sql; insertParams = params; return { insertId: 9 }; }
+    return [];
+  }), logger, config });
+
+  const out = await PrintService.createAgent({ propertyId: 3, name: 'Garage Pi', userId: 42, serviceAccountId: VALID_ULID });
+  assert.deepEqual(out, { id: 9, name: 'Garage Pi', serviceAccountId: VALID_ULID });
+  assert.match(insertSql, /SERVICE_ACCOUNT_ID/i);
+  assert.doesNotMatch(insertSql, /TOKEN_HASH/i, 'no tp_ token column is touched when binding straight to a service account');
+  assert.ok(insertParams.includes(VALID_ULID));
+  assert.ok(insertParams.includes(42), 'CREATED_BY is still the registering owner — the #122 tether');
+});
+
+test('createAgent refuses to bind the bypass principal id "dev"', async () => {
+  let inserted = false;
+  PrintService.init({ db: fakeDb((sql) => {
+    if (/FROM TALLY\.property_members/i.test(sql)) return [{ PROPERTY_ID: 3 }];
+    if (/INSERT/i.test(sql)) { inserted = true; return { insertId: 1 }; }
+    return [];
+  }), logger, config });
+  const out = await PrintService.createAgent({ propertyId: 3, name: 'x', userId: 42, serviceAccountId: 'dev' });
+  assert.deepEqual(out, { error: 'forbidden' });
+  assert.equal(inserted, false);
+});
+
+test('createAgent surfaces a service account already bound elsewhere as a 409-shaped error', async () => {
+  PrintService.init({ db: fakeDb((sql) => {
+    if (/FROM TALLY\.property_members/i.test(sql)) return [{ PROPERTY_ID: 3 }];
+    if (/INSERT/i.test(sql)) { const e = new Error('Duplicate entry'); e.code = 'ER_DUP_ENTRY'; throw e; }
+    return [];
+  }), logger, config });
+  const out = await PrintService.createAgent({ propertyId: 3, name: 'x', userId: 42, serviceAccountId: VALID_ULID });
+  assert.deepEqual(out, { error: 'bound_elsewhere' });
+});
+
+test('bindServiceAccount pairs an existing printer and moves the #122 tether to the binder', async () => {
+  let sql = '', params = null;
+  PrintService.init({ db: fakeDb((s, p) => { sql = s; params = p; return { affectedRows: 1 }; }), logger, config });
+  const out = await PrintService.bindServiceAccount(7, VALID_ULID, 42);
+  assert.deepEqual(out, { id: 7, serviceAccountId: VALID_ULID });
+  assert.match(sql, /SET a\.SERVICE_ACCOUNT_ID = \?, a\.CREATED_BY = \?/i,
+    'binding must move CREATED_BY to the binder, not just set the SA id');
+  assert.match(sql, /property_members/i, 'the caller must be a member — the route\'s role gate double-checked at the service layer');
+  assert.deepEqual(params, [42, VALID_ULID, 42, 7]);
+});
+
+test('bindServiceAccount 404s for a printer the caller cannot reach', async () => {
+  PrintService.init({ db: fakeDb(() => ({ affectedRows: 0 })), logger, config });
+  assert.deepEqual(await PrintService.bindServiceAccount(7, VALID_ULID, 42), { error: 'not_found' });
+});
+
+test('bindServiceAccount refuses a service account id already bound to another printer', async () => {
+  PrintService.init({ db: fakeDb(() => { const e = new Error('Duplicate entry'); e.code = 'ER_DUP_ENTRY'; throw e; }), logger, config });
+  assert.deepEqual(await PrintService.bindServiceAccount(7, VALID_ULID, 42), { error: 'bound_elsewhere' });
+});
+
+test('bindServiceAccount never binds the bypass principal id "dev", without even querying', async () => {
+  let queried = false;
+  PrintService.init({ db: fakeDb(() => { queried = true; return { affectedRows: 1 }; }), logger, config });
+  const out = await PrintService.bindServiceAccount(7, BYPASS_SERVICE_ACCOUNT_ID, 42);
+  assert.deepEqual(out, { error: 'forbidden' });
+  assert.equal(queried, false);
+});
+
+test('unbindServiceAccount clears the binding, membership-scoped', async () => {
+  let sql = '', params = null;
+  PrintService.init({ db: fakeDb((s, p) => { sql = s; params = p; return { affectedRows: 1 }; }), logger, config });
+  assert.equal(await PrintService.unbindServiceAccount(7, 42), true);
+  assert.match(sql, /SET a\.SERVICE_ACCOUNT_ID = NULL/i);
+  assert.match(sql, /property_members/i);
+  assert.deepEqual(params, [42, 7]);
+});
+
+test('unbindServiceAccount returns false for a printer the caller cannot reach', async () => {
+  PrintService.init({ db: fakeDb(() => ({ affectedRows: 0 })), logger, config });
+  assert.equal(await PrintService.unbindServiceAccount(7, 42), false);
+});
+
 test('listAgents never returns a token or its hash', async () => {
   PrintService.init({ db: fakeDb(() => [{
     ID: 7, PROPERTY_ID: 3, NAME: 'Garage Pi', TOKEN_HASH: 'deadbeef',
@@ -641,13 +893,19 @@ test('revokeAgent returns false for an agent the caller cannot reach', async () 
 test('every route is mounted with the correct auth middleware', async () => {
   // Capturing only the path would verify nothing about authorization: an agent
   // route mounted with requireAuth (Pi 401s forever), or a user route mounted
-  // with none (unauthenticated job queueing), would both still register 11
+  // with none (unauthenticated job queueing), would both still register 13
   // strings and pass. Capture the handler chain and assert on it.
   const routes = [];
   const requireAuth = (req, res, next) => next();
+  // A benign stand-in for auth.routes.js's app.locals.requireApiKey. The
+  // agent routes are only ever probed here with NO Authorization header at
+  // all, so the pwk_ branch (the only branch that calls this) is never
+  // reached — it exists so requireAgentAny can be constructed the same way
+  // print.routes.js constructs it for real.
+  const requireApiKey = (req, res, next) => next();
   const record = (m) => (p, ...handlers) => routes.push({ method: m, path: p, handlers });
   const app = {
-    locals: { requireAuth },
+    locals: { requireAuth, requireApiKey },
     get: record('GET'), post: record('POST'), put: record('PUT'),
     patch: record('PATCH'), delete: record('DELETE'),
   };
@@ -662,6 +920,8 @@ test('every route is mounted with the correct auth middleware', async () => {
     ['GET', '/api/print/_x_/agents', 'user'],
     ['DELETE', '/api/print/_d_/agents/:id', 'user'],
     ['PUT', '/api/print/_u_/agents/:id/loaded-media', 'user'],
+    ['PUT', '/api/print/_u_/agents/:id/service-account', 'user'],
+    ['DELETE', '/api/print/_d_/agents/:id/service-account', 'user'],
     ['POST', '/api/print/_y_/agent/claim', 'agent'],
     ['GET', '/api/print/_x_/agent/jobs/:id/pdf', 'agent'],
     ['POST', '/api/print/_y_/agent/jobs/:id/ack', 'agent'],

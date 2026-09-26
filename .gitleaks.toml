@@ -1,6 +1,16 @@
 title = "Tally gitleaks config"
 extend.useDefault = true
 
+# pwiam service-account API key (PW service-accounts plan; tally #388's Pi
+# print agent is the first consumer). The default gitleaks ruleset has no
+# rule for this shape — until now nothing minted one.
+[[rules]]
+id = "pwiam-service-account-key"
+description = "pwiam service-account API key (pwk_<16hex>_<43 b64url>)"
+regex = '''pwk_[0-9a-f]{16}_[A-Za-z0-9_-]{43}'''
+keywords = ["pwk_"]
+tags = ["key", "pwiam", "service-account"]
+
 # Repository-specific allowlist. Add entries here when a default rule
 # flags content that is NOT actually a secret (e.g., string constants
 # named like keys, fixture data, sample env values).

@@ -70,6 +70,12 @@ module.exports = function authRoutes({ app, db, logger, config, deps }) {
   app.locals.requireAuth = auth.requireAuth;
   app.locals.resolvePropertyRole = resolvePropertyRole(db);
   app.locals.requireRole = requireRole;
+  // The Pi print agent's pwiam service account (pw.json `iam.serviceAccounts`,
+  // tally #388) — bound to the one kind print.routes.js needs, same as
+  // requireAuth above. Already bypass-safe: under BYPASS_AUTH the shim admits
+  // any bearer as its fixed dev principal without dialling pwiam (never bound
+  // to a printer — see agent.middleware.js's BYPASS_SERVICE_ACCOUNT_ID guard).
+  app.locals.requireApiKey = auth.requireApiKey('print-agent');
 
   return auth;
 };

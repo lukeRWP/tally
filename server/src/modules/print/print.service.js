@@ -1,6 +1,6 @@
 const crypto = require('crypto');   // used by claimNext's randomUUID in Task 4
 const LabelsService = require('../labels/labels.service');
-const { generateToken, hashToken } = require('./agent.middleware');
+const { generateToken, hashToken, BYPASS_SERVICE_ACCOUNT_ID } = require('./agent.middleware');
 
 let _db = null;
 let _logger = null;
@@ -313,12 +313,29 @@ const PrintService = {
 
   // ── Agent registration & roll state ───────────────────────────────────────
 
-  async createAgent({ propertyId, name, userId }) {
+  async createAgent({ propertyId, name, userId, serviceAccountId }) {
     const member = await _db.query(
       'SELECT PROPERTY_ID FROM TALLY.property_members WHERE PROPERTY_ID = ? AND USER_ID = ?',
       [propertyId, userId]
     );
     if (member.length === 0) return { error: 'not_found' };
+
+    // Register straight onto a pwiam service account — no tp_ token is
+    // minted at all (TOKEN_HASH stays NULL, migration 016). Same #122 tether:
+    // CREATED_BY is the registering owner.
+    if (serviceAccountId) {
+      if (serviceAccountId === BYPASS_SERVICE_ACCOUNT_ID) return { error: 'forbidden' };
+      try {
+        const result = await _db.query(
+          'INSERT INTO TALLY.printer_agents (PROPERTY_ID, NAME, SERVICE_ACCOUNT_ID, CREATED_BY) VALUES (?, ?, ?, ?)',
+          [propertyId, name, serviceAccountId, userId]
+        );
+        return { id: result.insertId, name, serviceAccountId };
+      } catch (err) {
+        if (err.code === 'ER_DUP_ENTRY') return { error: 'bound_elsewhere' };
+        throw err;
+      }
+    }
 
     // Plaintext is handed back exactly once and never persisted. CREATED_BY is
     // the tether requireAgent validates against (#122): the token dies with
@@ -332,16 +349,59 @@ const PrintService = {
     return { id: result.insertId, name, token };
   },
 
+  // Pairs an EXISTING printer row with a pwiam service account (owner-only,
+  // route-gated). CREATED_BY moves to the binder, so the #122 tether follows
+  // whoever did the pairing rather than whoever originally registered the
+  // printer — the same rule createAgent establishes at registration time.
+  // No proof of possession is asked for: the SA id alone grants nothing
+  // without its key, so recording who bound it is enough (the binder is
+  // already an owner, checked by the route's role gate).
+  async bindServiceAccount(agentId, serviceAccountId, userId) {
+    if (serviceAccountId === BYPASS_SERVICE_ACCOUNT_ID) return { error: 'forbidden' };
+
+    try {
+      const result = await _db.query(
+        `UPDATE TALLY.printer_agents a
+           JOIN TALLY.property_members pm ON pm.PROPERTY_ID = a.PROPERTY_ID AND pm.USER_ID = ?
+            SET a.SERVICE_ACCOUNT_ID = ?, a.CREATED_BY = ?
+          WHERE a.ID = ?`,
+        [userId, serviceAccountId, userId, agentId]
+      );
+      if (result.affectedRows === 0) return { error: 'not_found' };
+      return { id: agentId, serviceAccountId };
+    } catch (err) {
+      // The UNIQUE key on SERVICE_ACCOUNT_ID (migration 016) is what actually
+      // enforces "one printer per service account" — this catch just turns
+      // the constraint violation into the same {error} shape every other
+      // method here uses instead of a raw MySQL error reaching the route.
+      if (err.code === 'ER_DUP_ENTRY') return { error: 'bound_elsewhere' };
+      throw err;
+    }
+  },
+
+  async unbindServiceAccount(agentId, userId) {
+    const result = await _db.query(
+      `UPDATE TALLY.printer_agents a
+         JOIN TALLY.property_members pm ON pm.PROPERTY_ID = a.PROPERTY_ID AND pm.USER_ID = ?
+          SET a.SERVICE_ACCOUNT_ID = NULL
+        WHERE a.ID = ?`,
+      [userId, agentId]
+    );
+    return result.affectedRows > 0;
+  },
+
   async listAgents(propertyId, userId) {
     const rows = await _db.query(
       `SELECT a.ID, a.PROPERTY_ID, a.NAME, a.LOADED_MEDIA, a.PRINTER_STATE,
-              a.PRINTER_STATE_REASONS, a.LAST_SEEN_AT
+              a.PRINTER_STATE_REASONS, a.LAST_SEEN_AT, a.SERVICE_ACCOUNT_ID
          FROM TALLY.printer_agents a
          JOIN TALLY.property_members pm ON pm.PROPERTY_ID = a.PROPERTY_ID AND pm.USER_ID = ?
         WHERE a.PROPERTY_ID = ?`,
       [userId, propertyId]
     );
-    // TOKEN_HASH is deliberately not selected — it must never reach the client.
+    // TOKEN_HASH is deliberately not selected — it must never reach the
+    // client. SERVICE_ACCOUNT_ID is not a secret (the id alone grants nothing
+    // without its pwk_ key) and the Settings UI needs it to show pairing state.
     return rows.map(r => ({
       id: r.ID,
       propertyId: r.PROPERTY_ID,
@@ -352,6 +412,7 @@ const PrintService = {
         ? JSON.parse(r.PRINTER_STATE_REASONS || '[]')
         : (r.PRINTER_STATE_REASONS || []),
       lastSeenAt: r.LAST_SEEN_AT,
+      serviceAccountId: r.SERVICE_ACCOUNT_ID || null,
     }));
   },
 

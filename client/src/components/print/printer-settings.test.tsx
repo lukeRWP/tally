@@ -20,6 +20,8 @@ vi.mock('@/hooks/use-print', () => ({
   useSetLoadedMedia: vi.fn(),
   useCancelPrintJob: vi.fn(),
   useRetryPrintJob: vi.fn(),
+  useBindServiceAccount: vi.fn(),
+  useUnbindServiceAccount: vi.fn(),
 }));
 vi.mock('@/components/ui/toast', () => {
   const toastFn = Object.assign(vi.fn(), { success: vi.fn(), error: vi.fn() });
@@ -32,6 +34,7 @@ function makePrinter(overrides: Partial<Printer>): Printer {
   return {
     id: 1, propertyId: 1, name: 'Garage Pi', loadedMedia: 'small',
     printerState: 'idle', printerStateReasons: [], lastSeenAt: null,
+    serviceAccountId: null,
     ...overrides,
   } as Printer;
 }
@@ -46,7 +49,8 @@ beforeEach(async () => {
   vi.clearAllMocks();
   const hooks = vi.mocked(await import('@/hooks/use-print'));
   for (const h of [hooks.useCreatePrinter, hooks.useRevokePrinter, hooks.useSetLoadedMedia,
-                   hooks.useCancelPrintJob, hooks.useRetryPrintJob]) {
+                   hooks.useCancelPrintJob, hooks.useRetryPrintJob,
+                   hooks.useBindServiceAccount, hooks.useUnbindServiceAccount]) {
     h.mockReturnValue(mutation as never);
   }
 });

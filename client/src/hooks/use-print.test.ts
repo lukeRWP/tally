@@ -21,6 +21,7 @@ function printer(over: Partial<Printer> = {}): Printer {
     id: 5, propertyId: 1, name: 'Garage Pi', loadedMedia: 'small',
     printerState: 'idle', printerStateReasons: [],
     lastSeenAt: '2026-08-29T11:59:30Z', // 30s ago — online
+    serviceAccountId: null,
     ...over,
   };
 }

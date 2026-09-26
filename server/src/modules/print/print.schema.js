@@ -25,9 +25,21 @@ const setLoadedMedia = Joi.object({
   loadedMedia: Joi.string().valid(...PRINTABLE_PRESETS).required(),
 });
 
+// pwiam ids are ULIDs (Crockford base32, no I/L/O/U — same shape as
+// users.SUB, migration 015): 26 characters, case-insensitive on the wire.
+const ULID_RE = /^[0-9A-HJKMNP-TV-Z]{26}$/i;
+
 const createAgent = Joi.object({
   propertyId: Joi.number().integer().required(),
   name: Joi.string().trim().min(1).max(100).required(),
+  // Optional: bind straight to a pwiam service account at registration time
+  // instead of minting a legacy tp_ token (PrintService.createAgent leaves
+  // TOKEN_HASH NULL in that case).
+  serviceAccountId: Joi.string().pattern(ULID_RE).optional(),
+});
+
+const bindServiceAccount = Joi.object({
+  serviceAccountId: Joi.string().pattern(ULID_RE).required(),
 });
 
 // Telemetry rides the claim request, so it must NEVER be able to break the
@@ -58,4 +70,7 @@ const agentAck = Joi.object({
   error: Joi.string().max(500).allow('').optional(),
 });
 
-module.exports = { createJob, setLoadedMedia, createAgent, agentClaim, agentAck, PRINTABLE_PRESETS };
+module.exports = {
+  createJob, setLoadedMedia, createAgent, agentClaim, agentAck, bindServiceAccount,
+  PRINTABLE_PRESETS, ULID_RE,
+};
