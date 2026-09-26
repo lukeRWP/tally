@@ -102,3 +102,28 @@ test('revokeInvite: 5xx maps to 502', async () => {
     (err) => { assert.strictEqual(err.statusCode, 502); return true; }
   );
 });
+
+// The abort timer must stay armed for the whole request, including reading
+// the response body — not just until fetch() resolves headers. A slow or
+// stalled body read (pwiam hangs after sending status 200) must still be
+// abortable by the 10s timeout; clearing it right after fetch() resolves
+// leaves nothing to abort a hang that happens while awaiting res.json().
+test('createInvite: the timer is not cleared until AFTER the body has been read, not right after fetch() resolves', async () => {
+  const order = [];
+  const realClearTimeout = global.clearTimeout;
+  global.clearTimeout = (...args) => { order.push('clearTimeout'); return realClearTimeout(...args); };
+  try {
+    const fetch = async () => ({
+      status: 201,
+      json: async () => {
+        order.push('json');
+        return { id: '1', userId: '2', url: 'https://id.example.test/join/tok', expiresAt: new Date().toISOString() };
+      },
+    });
+    const client = pwiamInvitesClient({ config, logger, fetch });
+    await client.createInvite({ displayName: 'Ana', invitedBy: { sub: 'x', name: 'y' } });
+  } finally {
+    global.clearTimeout = realClearTimeout;
+  }
+  assert.deepEqual(order, ['json', 'clearTimeout']);
+});

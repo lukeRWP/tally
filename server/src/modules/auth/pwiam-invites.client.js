@@ -29,27 +29,33 @@ function pwiamInvitesClient({ config, logger, fetch: fetchImpl }) {
   async function post(path, body) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
-    let res;
+    // The timer stays armed for the WHOLE request — fetch() resolving is
+    // only the headers; a stalled or slow body read must still be abortable
+    // by the same 10s budget. Clearing it right after fetch() resolves (the
+    // original bug) leaves nothing armed to abort a hang inside res.json().
     try {
-      res = await doFetch(`${issuer}${path}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: authHeader },
-        body: JSON.stringify(body || {}),
-        signal: controller.signal,
-      });
-    } catch (err) {
-      logger.error('[pwiam-invites] request failed', { path, error: err.message });
-      const wrapped = new Error('Could not reach the invite service');
-      wrapped.statusCode = 502;
-      throw wrapped;
+      let res;
+      try {
+        res = await doFetch(`${issuer}${path}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: authHeader },
+          body: JSON.stringify(body || {}),
+          signal: controller.signal,
+        });
+      } catch (err) {
+        logger.error('[pwiam-invites] request failed', { path, error: err.message });
+        const wrapped = new Error('Could not reach the invite service');
+        wrapped.statusCode = 502;
+        throw wrapped;
+      }
+
+      let json = null;
+      try { json = await res.json(); } catch { /* not JSON — treated as no body below */ }
+
+      return { status: res.status, json };
     } finally {
       clearTimeout(timer);
     }
-
-    let json = null;
-    try { json = await res.json(); } catch { /* not JSON — treated as no body below */ }
-
-    return { status: res.status, json };
   }
 
   return {

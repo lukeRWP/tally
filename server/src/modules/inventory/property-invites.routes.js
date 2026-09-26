@@ -31,7 +31,7 @@ module.exports = function propertyInvitesRoutes({ app, db, logger, config, deps 
     app.locals.requireAuth,
     app.locals.resolvePropertyRole,
     app.locals.requireRole('owner'),
-    async (req, res) => {
+    async (req, res, next) => {
       const { error: validationError, value } = createInvite.validate(req.body, { abortEarly: false });
       if (validationError) {
         return error(res, 'Validation failed', 400, validationError.details.map((d) => d.message));
@@ -40,13 +40,17 @@ module.exports = function propertyInvitesRoutes({ app, db, logger, config, deps 
         const { invite, url } = await PropertyInvitesService.create(req.params.propertyId, value, req.user.id);
         success(res, { invite, url }, 'Invite created', 201);
       } catch (err) {
-        // pwiam's cap/not-enabled/unreachable outcomes carry their own
-        // statusCode (pwiam-invites.client.js) — surfaced as-is, not folded
-        // into the generic error handler, which would flatten every 5xx to
-        // a masked 500 in production (middleware/error-handler.js only
-        // trusts an explicit statusCode in the 4xx range).
+        // Only a deliberate error carries `.statusCode` — pwiam's mapped
+        // outcomes (pwiam-invites.client.js) and property-invites.service.js's
+        // own throws (404/409/etc). Anything else (a raw MySQL error, a bug)
+        // has no statusCode and must reach the error handler instead of being
+        // echoed here: middleware/error-handler.js is what maps MySQL codes
+        // (ER_DUP_ENTRY → 409, deadlocks → 409 + Retry-After) and masks an
+        // unrecognised message in production — answering it directly here
+        // would leak the raw DB error message past that masking.
+        if (!err.statusCode) return next(err);
         logger.warn('create invite failed', { error: err.message });
-        error(res, err.message, err.statusCode || 500);
+        error(res, err.message, err.statusCode);
       }
     }
   );
@@ -57,7 +61,7 @@ module.exports = function propertyInvitesRoutes({ app, db, logger, config, deps 
     app.locals.requireAuth,
     app.locals.resolvePropertyRole,
     app.locals.requireRole('owner'),
-    async (req, res) => {
+    async (req, res, next) => {
       const inviteId = Number(req.params.inviteId);
       if (!Number.isInteger(inviteId) || inviteId <= 0) {
         return error(res, 'Invalid invite id', 400);
@@ -66,8 +70,11 @@ module.exports = function propertyInvitesRoutes({ app, db, logger, config, deps 
         await PropertyInvitesService.revoke(req.params.propertyId, inviteId, req.user.id);
         success(res, null, 'Invite revoked');
       } catch (err) {
+        // Same rule as the create route above: only a deliberate .statusCode
+        // is ours to answer directly.
+        if (!err.statusCode) return next(err);
         logger.warn('revoke invite failed', { error: err.message });
-        error(res, err.message, err.statusCode || 500);
+        error(res, err.message, err.statusCode);
       }
     }
   );
