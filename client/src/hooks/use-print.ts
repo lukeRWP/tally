@@ -12,6 +12,10 @@ export interface Printer {
   printerState: 'idle' | 'printing' | 'stopped' | 'unknown';
   printerStateReasons: string[];
   lastSeenAt: string | null;
+  // The pwiam service account (a ULID) this printer is paired to, or null if
+  // it is still legacy-tp_-token-only. Not a secret — the id alone grants
+  // nothing without its pwk_ key — so it's safe to show in Settings.
+  serviceAccountId: string | null;
 }
 
 export interface PrintJob {
@@ -160,5 +164,25 @@ export function useSetLoadedMedia(propertyId?: number) {
         qc.invalidateQueries({ queryKey: printerKeys.jobs(propertyId) });
       }
     },
+  });
+}
+
+// Pairs an EXISTING printer row to a pwiam service account id (no proof of
+// possession asked for — the id alone grants nothing without its pwk_ key).
+export function useBindServiceAccount(propertyId?: number) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { id: number; serviceAccountId: string }) =>
+      api.put<{ id: number; serviceAccountId: string }>(
+        `/api/print/_u_/agents/${vars.id}/service-account`, { serviceAccountId: vars.serviceAccountId }),
+    onSuccess: () => { if (propertyId) qc.invalidateQueries({ queryKey: printerKeys.printers(propertyId) }); },
+  });
+}
+
+export function useUnbindServiceAccount(propertyId?: number) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) => api.del(`/api/print/_d_/agents/${id}/service-account`),
+    onSuccess: () => { if (propertyId) qc.invalidateQueries({ queryKey: printerKeys.printers(propertyId) }); },
   });
 }

@@ -2,14 +2,18 @@ module.exports = function printRoutes({ app, db, logger, config }) {
   const PrintService = require('./print.service');
   PrintService.init({ db, logger, config });
 
-  const { requireAgent } = require('./agent.middleware');
+  const { requireAgentAny } = require('./agent.middleware');
   const { requirePrintRole } = require('./role.middleware');
-  const { createJob, setLoadedMedia, createAgent, agentClaim, agentAck } = require('./print.schema');
+  const { createJob, setLoadedMedia, createAgent, agentClaim, agentAck, bindServiceAccount } = require('./print.schema');
   const validate = require('../../middleware/validate');
   const { success, error } = require('../../utils/response');
 
-  const { requireAuth } = app.locals;
-  const agentAuth = requireAgent({ db });
+  const { requireAuth, requireApiKey } = app.locals;
+  // Dual-accept during the pwiam migration (tally #388): dispatches on the
+  // bearer's prefix to either the legacy tp_ lookup or the pwk_/requireApiKey
+  // path. See agent.middleware.js for why neither shape is tried against the
+  // other's mechanism.
+  const agentAuth = requireAgentAny({ db, requireApiKey });
 
   // Device management is owner-only; queueing/cancelling a print is an editing
   // action; listing is any member. Mirrors items/containers/tags — this module
@@ -51,13 +55,21 @@ module.exports = function printRoutes({ app, db, logger, config }) {
   });
 
   // ── POST /api/print/_y_/agents — register a printer ───────────────────────
+  // Either mints a legacy tp_ token (the default) or, given serviceAccountId,
+  // pairs straight onto a pwiam service account with no token at all.
   app.post('/api/print/_y_/agents', requireAuth, role(OWNER, 'body'), validate(createAgent, 'body'), async (req, res) => {
     const out = await PrintService.createAgent({
       propertyId: req.body.propertyId, name: req.body.name, userId: req.user.id,
+      serviceAccountId: req.body.serviceAccountId,
     });
-    if (out.error) return error(res, 'Property not found', 404);
-    // The plaintext token appears in this response and nowhere else, ever.
-    return success(res, out, 'Copy this token now — it will not be shown again');
+    if (out.error === 'not_found') return error(res, 'Property not found', 404);
+    if (out.error === 'bound_elsewhere') return error(res, 'This service account is already bound to another printer', 409);
+    if (out.error) return error(res, 'That service account cannot be bound', 400);
+    // The plaintext token (when one was minted) appears in this response and
+    // nowhere else, ever.
+    return out.token
+      ? success(res, out, 'Copy this token now — it will not be shown again')
+      : success(res, out);
   });
 
   // ── GET /api/print/_x_/agents ─────────────────────────────────────────────
@@ -77,6 +89,23 @@ module.exports = function printRoutes({ app, db, logger, config }) {
   app.put('/api/print/_u_/agents/:id/loaded-media', requireAuth, role(OWNER, 'agent'), validate(setLoadedMedia, 'body'), async (req, res) => {
     const out = await PrintService.setLoadedMedia(Number(req.params.id), req.body.loadedMedia, req.user.id);
     return out ? success(res, out) : error(res, 'Printer not found', 404);
+  });
+
+  // ── PUT /api/print/_u_/agents/:id/service-account — pair a pwiam SA ───────
+  // Binds an EXISTING printer row to a pwiam service account id. CREATED_BY
+  // moves to the binder (the #122 tether follows whoever paired it).
+  app.put('/api/print/_u_/agents/:id/service-account', requireAuth, role(OWNER, 'agent'), validate(bindServiceAccount, 'body'), async (req, res) => {
+    const out = await PrintService.bindServiceAccount(Number(req.params.id), req.body.serviceAccountId, req.user.id);
+    if (out.error === 'not_found') return error(res, 'Printer not found', 404);
+    if (out.error === 'bound_elsewhere') return error(res, 'This service account is already bound to another printer', 409);
+    if (out.error) return error(res, 'That service account cannot be bound', 400);
+    return success(res, out);
+  });
+
+  // ── DELETE /api/print/_d_/agents/:id/service-account — unpair ─────────────
+  app.delete('/api/print/_d_/agents/:id/service-account', requireAuth, role(OWNER, 'agent'), async (req, res) => {
+    const ok = await PrintService.unbindServiceAccount(Number(req.params.id), req.user.id);
+    return ok ? success(res, { unbound: true }) : error(res, 'Printer not found', 404);
   });
 
   // ── Agent endpoints (bearer token; no session, no CSRF) ───────────────────

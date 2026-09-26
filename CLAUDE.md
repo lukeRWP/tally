@@ -336,6 +336,7 @@ Key design patterns:
 | 013 | notification dedupe: `notifications.DUE_ON` + `DISMISSED_AT`, `uq_notifications_due` (#348) |
 | 014 | share tokens hashed in place: `share_links.TOKEN_HASHED` marker + `TOKEN = SHA2(TOKEN, 256)` (#349) |
 | 015 | pwiam identity (PW IAM step 4): `users.SUB` + unique key, `ENTRA_ID` nullable, `sessions.SUB`/`SID`/`IAM_STATE` + indexes |
+| 016 | print agent service accounts: `printer_agents.SERVICE_ACCOUNT_ID` (26-char ULID) + unique key, `TOKEN_HASH` nullable |
 
 ## Authentication — PW IAM step 4 (pwiam)
 
@@ -349,7 +350,7 @@ Tally is a pwiam relying party (`prevailing-winds/docs/superpowers/specs/2026-09
 - **CSRF keys on the cookie's presence** (`middleware/csrf.js` reads `req.cookies.session_token` or `req.signedCookies.session_token`): the shim's HMAC format is not cookie-parser's `s:` signed format, so a `signedCookies`-only check would never see it and the double-submit check would silently never run. Back-channel logout is exempt from CSRF and from the `/api/auth` rate limit — the logout_token's signature (verified against pwiam's JWKS) is that route's guard.
 - **`BYPASS_AUTH=true` needs no pwiam**: the shim gets placeholder client credentials, `/api/auth/login` answers 503 `bypass`, and `requireAuth` serves the fixed dev principal (`sub: dev`, `roles: ['admin']`) through `resolveUser`, which reuses a pre-pwiam local dev row (`ENTRA_ID='dev-user'`) so an existing local DB keeps its properties. Production still forces it off.
 - **Prove a login in Chromium or Firefox, not only a phone** — pwiam's CSP `form-action` covers `*.razorwire-productions.com`, and Safari does not enforce it across the redirect chain (IAM-RUNBOOK, onboarding step 5).
-- The Pi print agent's `tp_` bearer token is untouched by this step; the spec's "Pi agent becomes a service account" (`requireApiKey('print-agent')`) is a follow-up PR with the agent-side change.
+- The Pi print agent's `tp_` bearer token was untouched by this step; the spec's "Pi agent becomes a service account" landed in PW service-accounts plan phase 2 (tally #388) — see Auto-Print below for the dual-accept `requireApiKey('print-agent')` path.
 
 ### Property membership & roles
 
@@ -428,8 +429,15 @@ Labels can be queued for automatic printing on a USB thermal printer (Munbyn ITP
 - **A `stopped` printer is dealt nothing** — the claim succeeds but returns no job, so a jammed printer stops consuming work instead of burning the 3-attempt cap; a job that dies mid-print is failed with reason `Printer stopped responding mid-job`.
 - **`LAST_SEEN_AT` is stamped on every claim** and drives an `Offline · last seen <relative>` badge on `/print` (online = seen <60s ago). The queue poll must keep running or the badge goes stale exactly when it matters.
 - **Agent tokens are tethered to `printer_agents.CREATED_BY`** (migration 009) — an agent registered by a since-removed property member stops authenticating.
+- **The Pi is moving onto pwiam service-account API keys, dual-accept alongside the `tp_` token above** (PW service-accounts plan phase 2, tally #388). `pw.json` declares `iam.serviceAccounts: ["print-agent"]`; `app.locals.requireApiKey` (`auth.routes.js`) is `@pw/auth-express`'s `requireApiKey('print-agent')`, already bypass-safe (the shim admits `BYPASS_AUTH`'s fixed dev principal without dialling pwiam). `agent.middleware.js`'s `requireAgentAny` dispatches on the bearer's PREFIX before any lookup runs — a junk credential must never spend an introspection call, and a `tp_` token must never reach the shim (it would 503 every legacy Pi during a pwiam outage):
+  - `pwk_<16hex>_<43 b64url>` (`PWK_RE`) → the shim introspects it, then `printer_agents.SERVICE_ACCOUNT_ID = req.principal.id` resolves the row with the SAME #122 owner-tether join the `tp_` path uses, **plus** `properties.DELETED_AT IS NULL` — a soft-delete gap the legacy path still has (property_members rows survive a soft delete; closing this only for the new path, not backporting it). An unbound or no-longer-owned key gets `403 {message: 'This printer key is not paired with a property yet.'}`.
+  - `tp_...` → the original hash lookup, byte-for-byte unchanged.
+  - Anything else → `401`, no shim call.
+  - The shim's fixed `BYPASS_AUTH` principal id (`'dev'`) can never be bound to a printer — checked at bind time (`PrintService.bindServiceAccount`/`createAgent`) AND again at lookup time, so turning `BYPASS_AUTH` on anywhere can never authenticate as a paired printer.
+- **Pairing**: owner-only `PUT /api/print/_u_/agents/:id/service-account` `{serviceAccountId}` (a ULID) binds a pwiam SA id to an existing printer row — `CREATED_BY` moves to the binder, so the #122 tether follows whoever paired it, not whoever originally registered the printer; `DELETE` the same path unpairs. No proof of possession is asked for: the SA id alone grants nothing without its `pwk_` key, so the binding just records who paired it. `POST /agents` also accepts `serviceAccountId` directly to register a new printer bound straight to a service account, skipping the `tp_` mint entirely (`TOKEN_HASH` stays `NULL` — migration 016 made it nullable). Either binding path 409s if the SA id is already bound to another printer (`uq_printer_agents_service_account`). The actual `pwk_` key material is minted in pwiam (kind `print-agent`) and never touches tally — it goes straight onto the Pi's SD card at `/etc/tally-printer/agent.env` as `TALLY_TOKEN=pwk_...` (NOT `tally-printer.conf`, which nothing reads).
+- **Retirement** (once every live Pi carries a `pwk_` key): null the remaining `TOKEN_HASH` values, then delete the `tp_` branch of `requireAgentAny` and `requireAgent` itself.
 - **Rate limiting:** the agent paths are exempted from the global 200/min limiter (via a segment-aware `skip`) and given their own 600/min budget, because draining a label batch fires claim+pdf+ack per label. The exemption must match on segment boundaries so the user-facing `/agents` routes stay limited.
-- UI lives on the dedicated **`/print` page** (nav tab — job queue, agent status) and **Settings → Printing** (register, loaded roll), plus a **Send to printer** action in the label dialog. There is still no `/labels` page.
+- UI lives on the dedicated **`/print` page** (nav tab — job queue, agent status) and **Settings → Printing** (register, loaded roll, pwiam pairing), plus a **Send to printer** action in the label dialog. There is still no `/labels` page.
 
 ### Tags System (property-scoped, polymorphic)
 

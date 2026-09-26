@@ -1,10 +1,10 @@
 // @vitest-environment jsdom
 /**
- * #278 — removing a printer agent had no confirm, even though the agent
- * token is shown exactly once at registration: a mis-click here means
- * re-flashing tally-printer.conf on the Pi from scratch. The remove button
- * also carried no aria-label, so a screen reader announced an empty button
- * next to the printer's name.
+ * #278 — removing a printer agent had no confirm, even though the agent's
+ * credential is shown exactly once at registration: a mis-click here means
+ * putting a new one on the Pi from scratch. The remove button also carried
+ * no aria-label, so a screen reader announced an empty button next to the
+ * printer's name.
  *
  * Mocking follows printer-settings.test.tsx: the data hooks are mocked
  * directly, so no QueryClientProvider or network is needed.
@@ -23,6 +23,8 @@ vi.mock('@/hooks/use-print', () => ({
   useSetLoadedMedia: vi.fn(),
   useCancelPrintJob: vi.fn(),
   useRetryPrintJob: vi.fn(),
+  useBindServiceAccount: vi.fn(),
+  useUnbindServiceAccount: vi.fn(),
 }));
 vi.mock('@/components/ui/toast', () => {
   const toastFn = Object.assign(vi.fn(), { success: vi.fn(), error: vi.fn() });
@@ -36,6 +38,7 @@ function makePrinter(overrides: Partial<Printer>): Printer {
   return {
     id: 1, propertyId: 1, name: 'Garage Pi', loadedMedia: 'small',
     printerState: 'idle', printerStateReasons: [], lastSeenAt: null,
+    serviceAccountId: null,
     ...overrides,
   } as Printer;
 }
@@ -52,7 +55,8 @@ beforeEach(async () => {
   revokeMutation.isPending = false;
   const hooks = vi.mocked(await import('@/hooks/use-print'));
   for (const h of [hooks.useCreatePrinter, hooks.useSetLoadedMedia,
-                   hooks.useCancelPrintJob, hooks.useRetryPrintJob]) {
+                   hooks.useCancelPrintJob, hooks.useRetryPrintJob,
+                   hooks.useBindServiceAccount, hooks.useUnbindServiceAccount]) {
     h.mockReturnValue(idleMutation as never);
   }
   hooks.useRevokePrinter.mockReturnValue(revokeMutation as never);
@@ -71,7 +75,7 @@ test('removing a printer asks first and names the irreversibility', () => {
   const dialog = screen.getByRole('dialog');
   expect(within(dialog).getByText('Remove Garage Pi?')).toBeTruthy();
   expect(within(dialog).getByText(/can't be undone/i)).toBeTruthy();
-  expect(within(dialog).getByText(/re-flashing/i)).toBeTruthy();
+  expect(within(dialog).getByText(/agent\.env/i)).toBeTruthy();
   expect(revokeMutation.mutate).not.toHaveBeenCalled();
 });
 

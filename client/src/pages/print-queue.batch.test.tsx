@@ -67,6 +67,7 @@ vi.mock('@/hooks/use-print', async (importOriginal) => {
       data: [{
         id: 1, propertyId: 1, name: 'Garage Pi', loadedMedia: 'small',
         printerState: 'idle', printerStateReasons: [], lastSeenAt: new Date().toISOString(),
+        serviceAccountId: null,
       } satisfies Printer],
       isLoading: false, isError: false,
     }),

@@ -9,8 +9,14 @@ import { toast } from '@/components/ui/toast';
 import {
   usePrinters, usePrintJobs, useCreatePrinter, useRevokePrinter,
   useSetLoadedMedia, useCancelPrintJob, useRetryPrintJob,
+  useBindServiceAccount, useUnbindServiceAccount,
   type PrintablePreset,
 } from '@/hooks/use-print';
+
+// pwiam ids are ULIDs (Crockford base32, no I/L/O/U): 26 characters. Checked
+// client-side only as a typo guard — the server is the actual authority
+// (print.schema.js's bindServiceAccount).
+const ULID_RE = /^[0-9A-HJKMNP-TV-Z]{26}$/i;
 
 const ROLLS: { value: PrintablePreset; label: string }[] = [
   { value: 'small', label: 'Small · 2×1' },
@@ -49,13 +55,16 @@ export function PrinterSettings({ propertyId }: { propertyId?: number }) {
   const setLoadedMedia = useSetLoadedMedia(propertyId);
   const cancelJob = useCancelPrintJob(propertyId);
   const retryJob = useRetryPrintJob(propertyId);
+  const bindServiceAccount = useBindServiceAccount(propertyId);
+  const unbindServiceAccount = useUnbindServiceAccount(propertyId);
 
   const [newName, setNewName] = React.useState('');
   const [issuedToken, setIssuedToken] = React.useState<string | null>(null);
+  const [saId, setSaId] = React.useState('');
   // The agent token is shown exactly once, at registration (see the
   // issuedToken panel below). Removing the printer here has no undo and the
-  // same token can't be reissued — a mis-click means re-flashing
-  // tally-printer.conf on the Pi from scratch (#278).
+  // same token can't be reissued — a mis-click means re-pairing the Pi with a
+  // new credential from scratch (#278).
   const [removeOpen, setRemoveOpen] = React.useState(false);
   const printer = printers?.[0];
 
@@ -84,24 +93,44 @@ export function PrinterSettings({ propertyId }: { propertyId?: number }) {
     });
   }
 
+  function handlePair() {
+    if (!printer) return;
+    const id = saId.trim();
+    if (!ULID_RE.test(id)) { toast("That doesn't look like a pwiam service-account ID"); return; }
+    bindServiceAccount.mutate({ id: printer.id, serviceAccountId: id }, {
+      onSuccess: () => { setSaId(''); toast('Paired — put the pwk_ key on the Pi and it will take over'); },
+      onError: (e) => toast(e instanceof Error ? e.message : 'Could not pair that service account'),
+    });
+  }
+
+  function handleUnpair() {
+    if (!printer) return;
+    unbindServiceAccount.mutate(printer.id, {
+      onError: (e) => toast(e instanceof Error ? e.message : 'Could not unpair that service account'),
+    });
+  }
+
   return (
     <div className="flex flex-col gap-4">
       {!printer && (
-        <div className="flex gap-2">
-          <Input placeholder="Printer name (e.g. Garage Pi)" value={newName}
-                 onChange={(e) => setNewName(e.target.value)} />
-          <Button size="sm" onClick={handleAdd} disabled={createPrinter.isPending}>Add printer</Button>
+        <div className="flex flex-col gap-2">
+          <ColHead>Add printer (legacy)</ColHead>
+          <div className="flex gap-2">
+            <Input placeholder="Printer name (e.g. Garage Pi)" value={newName}
+                   onChange={(e) => setNewName(e.target.value)} />
+            <Button size="sm" onClick={handleAdd} disabled={createPrinter.isPending}>Add printer</Button>
+          </div>
         </div>
       )}
 
       {issuedToken && (
         <div className="rounded-[var(--radius-sm)] border border-[var(--color-rule)] p-3 flex flex-col gap-2">
           <p className="text-xs text-[var(--color-text-secondary)]">
-            Copy this now — it is shown only once. Paste it into <code>tally-printer.conf</code> on the SD card:
+            Copy this now — it is shown only once. Put it on the Pi's SD card in{' '}
+            <code>/etc/tally-printer/agent.env</code>:
           </p>
           <pre className="text-[10px] font-mono bg-[var(--color-elevated)] p-2 rounded-[var(--radius-sm)] overflow-x-auto">
-{`tally_url   = ${window.location.origin}
-agent_token = ${issuedToken}`}
+{`TALLY_TOKEN=${issuedToken}`}
           </pre>
           <Button variant="outline" size="sm" onClick={() => {
             navigator.clipboard.writeText(issuedToken).then(
@@ -132,7 +161,7 @@ agent_token = ${issuedToken}`}
             open={removeOpen}
             onOpenChange={(open) => { if (!revokePrinter.isPending) setRemoveOpen(open); }}
             title={`Remove ${printer.name}?`}
-            description="This can't be undone. The Pi's saved token stops working immediately, and the same token can't be reissued — re-adding the printer means re-flashing tally-printer.conf with a new one."
+            description="This can't be undone. The Pi's saved credential stops working immediately and can't be reissued — re-adding the printer means putting a new one in agent.env on the SD card."
             destructive
             confirmLabel="Remove"
             isPending={revokePrinter.isPending}
@@ -155,6 +184,34 @@ agent_token = ${issuedToken}`}
                 </Button>
               ))}
             </div>
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <p className="font-mono text-[10px] uppercase tracking-[0.1em] text-[var(--color-text-muted)]">pwiam service account</p>
+            {printer.serviceAccountId ? (
+              <div className="flex items-center gap-2">
+                <Badge variant="success">Paired</Badge>
+                <span className="font-mono text-xs truncate">{printer.serviceAccountId}</span>
+                <Button variant="outline" size="sm" className="ml-auto"
+                        disabled={unbindServiceAccount.isPending}
+                        onClick={handleUnpair}>
+                  Unpair
+                </Button>
+              </div>
+            ) : (
+              <div className="flex flex-col gap-2">
+                <p className="text-xs text-[var(--color-text-secondary)]">
+                  Mint a <code>pwk_</code> key for this printer in pwiam (kind <code>print-agent</code>), put it on
+                  the Pi in <code>/etc/tally-printer/agent.env</code> as <code>TALLY_TOKEN=pwk_…</code>, then paste
+                  the service account's ID here to pair it.
+                </p>
+                <div className="flex gap-2">
+                  <Input placeholder="Service account ID (ULID)" value={saId}
+                         onChange={(e) => setSaId(e.target.value)} />
+                  <Button size="sm" onClick={handlePair} disabled={bindServiceAccount.isPending}>Pair</Button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}
