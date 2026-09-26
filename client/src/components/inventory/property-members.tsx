@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Copy, Loader2, Share2, UserMinus, UserPlus, X } from 'lucide-react';
+import { Copy, Loader2, Send, Share2, UserMinus, UserPlus, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
@@ -225,7 +225,7 @@ export function PropertyMembers({ propertyId }: { propertyId: number }) {
         <Input
           type="text"
           aria-label="Name of the person to invite"
-          placeholder="Their name"
+          placeholder="Invite by name (new to Tally)"
           value={inviteName}
           onChange={(e) => setInviteName(e.target.value)}
           maxLength={120}
@@ -241,13 +241,16 @@ export function PropertyMembers({ propertyId }: { propertyId: number }) {
           <option value="editor">Editor</option>
           <option value="viewer">Viewer</option>
         </Select>
+        {/* Icon-sized like "Add member" above: a text label here starved the
+            name input to ~70px at 390px wide. */}
         <Button
           type="submit"
           variant="outline"
-          size="sm"
+          size="icon"
+          aria-label="Invite someone new"
           disabled={createInvite.isPending || !inviteName.trim()}
         >
-          {createInvite.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Invite someone new'}
+          {createInvite.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
         </Button>
       </form>
 
