@@ -188,3 +188,21 @@ test('adding someone who is already a member is 409, not a 500', async () => {
   assert.equal(status, 409);
   assert.match(body.message, /already a member/i);
 });
+
+// EMAIL carries no unique key and collation is case-insensitive, so two
+// self-registered accounts can collide on the same address differing only by
+// case. Picking users[0] would silently grant the seat to whichever one
+// happens to sort first — refuse instead, and prove nothing was inserted.
+test('adding someone whose email matches more than one account is 409, grants nothing', async () => {
+  const db = fakeDb({ members: ONE_OWNER, me: 'owner' });
+  db.query = ((orig) => async (sql, params) => {
+    if (/SELECT ID FROM TALLY\.users WHERE EMAIL/.test(sql) && params[0] === 'dup@example.com') {
+      return [{ ID: 10 }, { ID: 11 }];
+    }
+    return orig(sql, params);
+  })(db.query);
+  const { status, body } = await call(makeApp(db), 'POST', `/api/properties/_y_/${PROPERTY}/members`, { email: 'dup@example.com', role: 'viewer' });
+  assert.equal(status, 409);
+  assert.match(body.message, /more than one account/i);
+  assert.equal(db.writes.length, 0);
+});

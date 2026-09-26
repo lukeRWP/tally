@@ -201,6 +201,16 @@ const PropertiesService = {
       err.statusCode = 404;
       throw err;
     }
+    // EMAIL has no unique key and collation is case-insensitive, so two
+    // self-registered accounts can collide on the same address. Picking
+    // users[0] would silently grant the seat to an arbitrary one of them.
+    if (users.length > 1) {
+      const err = new Error(
+        'More than one account uses that email address — ask the person to sign in once, then add them from the members list for this property'
+      );
+      err.statusCode = 409;
+      throw err;
+    }
 
     const userId = users[0].ID;
 

@@ -36,16 +36,28 @@ function buildConfig({ bypassAuth, credentials = !bypassAuth }) {
   };
 }
 
-async function startApp({ bypassAuth = true } = {}) {
+async function startApp({ bypassAuth = true, logger = fakeLogger, isProduction = false } = {}) {
   const app = express();
   app.use(express.json());
   app.use(cookieParser(COOKIE_SECRET));
   app.use(csrfProtection());
   const db = fakeUsersDb({ users: [] });
-  authRoutes({ app, db, logger: fakeLogger, config: buildConfig({ bypassAuth }), deps: { session: pwAuth.memorySession() } });
+  authRoutes({ app, db, logger, config: { ...buildConfig({ bypassAuth }), isProduction }, deps: { session: pwAuth.memorySession() } });
   app.get('/api/guarded', app.locals.requireAuth, (req, res) => res.json({ id: req.user.id, sub: req.auth.sub, roles: req.auth.roles }));
   const server = await new Promise((resolve) => { const s = app.listen(0, () => resolve(s)); });
   return { server, baseUrl: `http://127.0.0.1:${server.address().port}`, db };
+}
+
+// Records every call by level instead of discarding it, so a test can tell
+// WHICH level a message actually went to.
+function collectingLogger() {
+  const calls = { info: [], warn: [], error: [] };
+  return {
+    calls,
+    info: (...a) => calls.info.push(a),
+    warn: (...a) => calls.warn.push(a),
+    error: (...a) => calls.error.push(a),
+  };
 }
 
 test('bypass: GET /api/auth/session serves the dev principal through resolveUser', async (t) => {
@@ -95,6 +107,41 @@ test('real mode: no session cookie is a 401 with the login URL for a JSON client
   const browser = await fetch(`${baseUrl}/api/guarded`, { redirect: 'manual', headers: { Accept: 'text/html' } });
   assert.strictEqual(browser.status, 302);
   assert.strictEqual(browser.headers.get('location'), '/api/auth/login?return_to=%2Fapi%2Fguarded');
+});
+
+// ── logging: the shim's sign-in failures must survive prod's error-only console (utils/logger.js) ──
+//
+// The shim logs login/callback failures and back-channel logout rejections at
+// warn (pw-auth-express lib/routes.js, lib/middleware.js). Production's
+// console transport defaults to error-only (LOG_LEVEL unset in pw.json), so
+// those lines never reach `docker compose logs` — a sign-in outage would be
+// invisible. auth.routes.js remaps only the LOGGER IT HANDS THE SHIM, and
+// only in production, so tally's own warns elsewhere (validation errors on
+// every 400, etc.) are untouched.
+
+test('prod: the shim\'s warn-level sign-in failures surface at error, where prod\'s console actually listens', async (t) => {
+  const fake = collectingLogger();
+  const { server, baseUrl } = await startApp({ bypassAuth: false, logger: fake, isProduction: true });
+  t.after(() => server.close());
+
+  // No state cookie at all is the cheapest way to make the shim's callback
+  // route fail — it logs `pw-auth: login failed — no valid state cookie` at
+  // warn and redirects to loginErrorRedirect.
+  const res = await fetch(`${baseUrl}/api/auth/callback`, { redirect: 'manual' });
+  assert.strictEqual(res.status, 302, 'the shim still redirects to loginErrorRedirect');
+  assert.strictEqual(fake.calls.warn.length, 0, 'nothing from the shim reaches warn in production');
+  assert.ok(fake.calls.error.some((a) => String(a[0]).includes('pw-auth: login failed')),
+    'the failure is visible at error instead');
+});
+
+test('dev: the same failure stays at warn — LOG_LEVEL already shows warn outside production', async (t) => {
+  const fake = collectingLogger();
+  const { server, baseUrl } = await startApp({ bypassAuth: false, logger: fake, isProduction: false });
+  t.after(() => server.close());
+
+  await fetch(`${baseUrl}/api/auth/callback`, { redirect: 'manual' });
+  assert.ok(fake.calls.warn.some((a) => String(a[0]).includes('pw-auth: login failed')), 'unchanged outside production');
+  assert.strictEqual(fake.calls.error.length, 0);
 });
 
 test('real mode: the shim refuses to boot without client credentials — a misconfigured prod cannot come up half-authenticated', () => {
