@@ -57,7 +57,7 @@
   "iam": {
     "roles": [
       "admin",
-      "member"
+      "user"
     ],
     "redirectUris": [
       "/api/auth/callback"

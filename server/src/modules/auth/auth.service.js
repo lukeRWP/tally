@@ -5,8 +5,9 @@
 //
 // Property authority is untouched: property_members.ROLE, resolved per
 // request by resolvePropertyRole (auth.middleware.js), stays the only thing a
-// route gates on. The token's `roles` claim (`admin` | `member`, pw.json
-// `iam.roles`) rides on req.auth.roles for whatever step 4 follow-ups need.
+// route gates on. The token's `roles` claim (`admin` | `user`, pw.json
+// `iam.roles` — estate vocabulary, not property_members' owner/editor/viewer)
+// rides on req.auth.roles for whatever step 4 follow-ups need.
 
 let _db = null;
 let _config = null;
@@ -23,7 +24,7 @@ const LEGACY_DEV_ENTRA_ID = 'dev-user';
 // without this gate a refreshed ID token's `roles: []` would still resolve to
 // a real user here (nothing downstream of resolveUser looks at roles) and the
 // session would ride out the shim's 24h max instead of ending immediately.
-const TALLY_ROLES = ['admin', 'member'];
+const TALLY_ROLES = ['admin', 'user'];
 
 function hasTallyRole(claims) {
   return Array.isArray(claims.roles) && claims.roles.some((r) => TALLY_ROLES.includes(r));
