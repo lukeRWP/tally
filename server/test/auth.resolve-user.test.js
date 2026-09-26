@@ -52,7 +52,7 @@ test('resolveUser: an unknown subject is inserted with no Entra id and a display
   assert.strictEqual(db.users[0].SUB, '01JX');
   assert.strictEqual(db.users[0].ENTRA_ID, null);
 
-  const noName = await AuthService.resolveUser({ sub: '01JNONAME', preferred_username: 'nn', auth_time: AUTH_TIME }, { tokens: TOKENS });
+  const noName = await AuthService.resolveUser({ sub: '01JNONAME', preferred_username: 'nn', roles: ['member'], auth_time: AUTH_TIME }, { tokens: TOKENS });
   assert.strictEqual(noName.displayName, 'nn', 'preferred_username stands in for a missing name');
   assert.strictEqual(noName.email, '', 'EMAIL is NOT NULL — an absent email is the empty string, as before');
 });
@@ -67,23 +67,23 @@ test('resolveUser: under bypass the legacy dev row (ENTRA_ID=dev-user) is reused
 
 test('resolveUser: a real login never matches the dev row — only the bypass principal does', async () => {
   const db = boot({ users: [row({ ID: 1, ENTRA_ID: 'dev-user', DISPLAY_NAME: 'Dev User' })] });
-  const user = await AuthService.resolveUser({ sub: 'dev', name: 'Impostor', auth_time: AUTH_TIME }, { tokens: TOKENS });
+  const user = await AuthService.resolveUser({ sub: 'dev', name: 'Impostor', roles: ['member'], auth_time: AUTH_TIME }, { tokens: TOKENS });
   assert.notStrictEqual(user.id, 1);
   assert.strictEqual(db.users.length, 2);
 });
 
 test('resolveUser: LAST_LOGIN_AT is auth_time and only moves forward — a refresh with the same auth_time is a no-op', async () => {
   const db = boot({ users: [row({ ID: 3, SUB: '01JSUB' })] });
-  const login = await AuthService.resolveUser({ sub: '01JSUB', auth_time: AUTH_TIME }, { tokens: TOKENS });
+  const login = await AuthService.resolveUser({ sub: '01JSUB', roles: ['member'], auth_time: AUTH_TIME }, { tokens: TOKENS });
   assert.strictEqual(login.lastLoginAt.getTime(), AUTH_TIME * 1000);
   assert.strictEqual(db.users[0].LAST_LOGIN_AT.getTime(), AUTH_TIME * 1000);
 
-  await AuthService.resolveUser({ sub: '01JSUB', auth_time: AUTH_TIME }, { tokens: TOKENS });
+  await AuthService.resolveUser({ sub: '01JSUB', roles: ['member'], auth_time: AUTH_TIME }, { tokens: TOKENS });
   const stamp = db.calls.filter((c) => /SET LAST_LOGIN_AT/.test(c.sql));
   assert.strictEqual(stamp.length, 2);
   assert.strictEqual(stamp[1].params[0].getTime(), AUTH_TIME * 1000, 'the predicate carries auth_time, not NOW()');
 
-  const older = await AuthService.resolveUser({ sub: '01JSUB', auth_time: AUTH_TIME - 3600 }, { tokens: TOKENS });
+  const older = await AuthService.resolveUser({ sub: '01JSUB', roles: ['member'], auth_time: AUTH_TIME - 3600 }, { tokens: TOKENS });
   assert.strictEqual(older.lastLoginAt.getTime(), AUTH_TIME * 1000, 'an older auth_time never rewinds it');
 });
 
@@ -99,7 +99,7 @@ test('resolveUser: losing the unique race on a first login reads the winner\'s r
     return realQuery(sql, params);
   };
   AuthService.init({ db, config, logger: fakeLogger });
-  const user = await AuthService.resolveUser({ sub: '01JRACE', name: 'Race', auth_time: AUTH_TIME }, { tokens: TOKENS });
+  const user = await AuthService.resolveUser({ sub: '01JRACE', name: 'Race', roles: ['member'], auth_time: AUTH_TIME }, { tokens: TOKENS });
   assert.strictEqual(db.users.length, 1);
   assert.strictEqual(user.id, db.users[0].ID);
 });
@@ -107,4 +107,41 @@ test('resolveUser: losing the unique race on a first login reads the winner\'s r
 test('resolveUser: refuses claims with no sub', async () => {
   boot({});
   await assert.rejects(() => AuthService.resolveUser({ name: 'nobody' }, { tokens: TOKENS }), /claims\.sub/);
+});
+
+// ── role gate: a claims payload with none of tally's pwiam roles gets no session ──
+//
+// pwiam's unassign deletes only the assignment row — it never touches an
+// already-issued session. Without this gate, the refreshed ID token's
+// `roles: []` would still resolve to a real user (nothing downstream of
+// resolveUser looks at roles), so the session would ride out the shim's 24h
+// max instead of ending the moment the assignment is gone.
+
+test('resolveUser: a login with no tally role (pw.json iam.roles: admin/member) is refused — no user is ever inserted', async () => {
+  const db = boot({ users: [] });
+  const user = await AuthService.resolveUser({ sub: '01JNOROLE', name: 'No Role', email: 'nr@b.test', roles: [], auth_time: AUTH_TIME }, { tokens: TOKENS });
+  assert.strictEqual(user, null);
+  assert.strictEqual(db.users.length, 0, 'no row is created for a claims payload with no tally role');
+});
+
+test('resolveUser: a claims payload carrying only unrelated roles is refused the same way', async () => {
+  const db = boot({ users: [] });
+  const user = await AuthService.resolveUser({ sub: '01JODD', roles: ['some-other-app-role'], auth_time: AUTH_TIME }, { tokens: TOKENS });
+  assert.strictEqual(user, null);
+  assert.strictEqual(db.users.length, 0);
+});
+
+test('resolveUser: a refresh after pwiam\'s unassign (roles now []) ends the session — the existing row is left untouched', async () => {
+  const db = boot({ users: [row({ ID: 9, SUB: '01JGONE', LAST_LOGIN_AT: new Date('2026-01-01T00:00:00Z') })] });
+  const user = await AuthService.resolveUser({ sub: '01JGONE', name: 'Formerly Member', roles: [], auth_time: AUTH_TIME }, { tokens: TOKENS });
+  assert.strictEqual(user, null);
+  assert.strictEqual(db.users[0].LAST_LOGIN_AT.getTime(), new Date('2026-01-01T00:00:00Z').getTime(),
+    'the refusal short-circuits before any write — LAST_LOGIN_AT is not touched');
+});
+
+test('resolveUser: the dev-bypass principal (roles: ["admin"]) is not caught by the role gate', async () => {
+  boot({ users: [row({ ID: 1, ENTRA_ID: 'dev-user' })] });
+  const user = await AuthService.resolveUser({ sub: 'dev', name: 'Dev User', roles: ['admin'], entra_oid: null, auth_time: AUTH_TIME }, { tokens: null });
+  assert.notStrictEqual(user, null);
+  assert.strictEqual(user.id, 1);
 });

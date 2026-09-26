@@ -18,6 +18,17 @@ let _logger = null;
 // across the migration instead of minting a second one with nothing.
 const LEGACY_DEV_ENTRA_ID = 'dev-user';
 
+// Tally's pwiam roles (pw.json `iam.roles`). A claims payload carrying none of
+// these gets no session: pwiam's unassign deletes only the assignment row, so
+// without this gate a refreshed ID token's `roles: []` would still resolve to
+// a real user here (nothing downstream of resolveUser looks at roles) and the
+// session would ride out the shim's 24h max instead of ending immediately.
+const TALLY_ROLES = ['admin', 'member'];
+
+function hasTallyRole(claims) {
+  return Array.isArray(claims.roles) && claims.roles.some((r) => TALLY_ROLES.includes(r));
+}
+
 function displayNameFrom(claims) {
   return claims.name || claims.preferred_username || claims.sub;
 }
@@ -40,6 +51,9 @@ const AuthService = {
    * projection that becomes `req.user` (and is sealed into the session row
    * and served by GET /api/auth/session — never a raw row).
    *
+   *  0. no tally role (pw.json `iam.roles`) in `claims.roles` → null, before
+   *     touching the DB. Refuses a login with no assignment, and ends an
+   *     existing session the instant a refresh reports the assignment gone.
    *  1. match `users.SUB`;
    *  2. miss → match `ENTRA_ID = entra_oid` and backfill SUB (one-time, covers
    *     every pre-pwiam row with no data migration — spec §7);
@@ -52,6 +66,7 @@ const AuthService = {
     if (!claims || typeof claims.sub !== 'string' || !claims.sub) {
       throw new Error('resolveUser: claims.sub missing');
     }
+    if (!hasTallyRole(claims)) return null;
     const sub = claims.sub;
 
     let row = await AuthService._bySub(sub);
