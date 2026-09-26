@@ -14,6 +14,9 @@ import {
   useAddMember,
   useUpdateMemberRole,
   useRemoveMember,
+  usePropertyInvites,
+  useCreateInvite,
+  useRevokeInvite,
 } from '@/hooks/use-members';
 import type { PropertyMember } from '@/types/inventory';
 
@@ -22,6 +25,9 @@ vi.mock('@/hooks/use-members', () => ({
   useAddMember: vi.fn(),
   useUpdateMemberRole: vi.fn(),
   useRemoveMember: vi.fn(),
+  usePropertyInvites: vi.fn(),
+  useCreateInvite: vi.fn(),
+  useRevokeInvite: vi.fn(),
 }));
 
 vi.mock('@/store/auth-store', () => ({
@@ -36,6 +42,8 @@ vi.mock('@/components/ui/toast', () => {
 const add = { mutate: vi.fn(), isPending: false };
 const update = { mutate: vi.fn(), isPending: false };
 const remove = { mutate: vi.fn(), isPending: false };
+const createInvite = { mutate: vi.fn(), isPending: false };
+const revokeInvite = { mutate: vi.fn(), isPending: false };
 
 const member = (userId: number, role: PropertyMember['role'], displayName: string): PropertyMember => ({
   id: userId, userId, role, displayName, email: `${displayName.toLowerCase()}@example.com`, avatarUrl: null,
@@ -49,9 +57,13 @@ function renderWith(members: PropertyMember[]) {
 beforeEach(() => {
   vi.clearAllMocks();
   add.mutate = vi.fn(); update.mutate = vi.fn(); remove.mutate = vi.fn();
+  createInvite.mutate = vi.fn(); revokeInvite.mutate = vi.fn();
   vi.mocked(useAddMember).mockReturnValue(add as never);
   vi.mocked(useUpdateMemberRole).mockReturnValue(update as never);
   vi.mocked(useRemoveMember).mockReturnValue(remove as never);
+  vi.mocked(usePropertyInvites).mockReturnValue({ data: [], isLoading: false } as never);
+  vi.mocked(useCreateInvite).mockReturnValue(createInvite as never);
+  vi.mocked(useRevokeInvite).mockReturnValue(revokeInvite as never);
 });
 
 test('the only owner is locked: role select and remove are disabled and the row says so', () => {
@@ -137,4 +149,58 @@ test('the add form sends a trimmed email and the chosen non-owner role, and is d
 
   expect(add.mutate).toHaveBeenCalledTimes(1);
   expect(add.mutate.mock.calls[0][0]).toEqual({ email: 'sam@example.com', role: 'viewer' });
+});
+
+// ── invites (plan 2026-09-26-property-invites.md) ──────────────────────────
+
+const MINTED = {
+  invite: { id: 1, propertyId: 3, role: 'editor' as const, displayName: 'Ana', invitedBy: 42, expiresAt: '2026-10-03T00:00:00Z', createdAt: '2026-09-26T00:00:00Z' },
+  url: 'https://id.example.test/join/tok123',
+};
+
+test('the invite form sends a trimmed name and the chosen role, and is disabled while empty', () => {
+  renderWith([member(42, 'owner', 'Luke')]);
+
+  const inviteButton = screen.getByRole('button', { name: 'Invite someone new' }) as HTMLButtonElement;
+  expect(inviteButton.disabled).toBe(true);
+
+  const roleSelect = screen.getByLabelText('Role for the invite') as HTMLSelectElement;
+  fireEvent.change(screen.getByLabelText('Name of the person to invite'), { target: { value: '  Ana  ' } });
+  fireEvent.change(roleSelect, { target: { value: 'viewer' } });
+  expect(inviteButton.disabled).toBe(false);
+  fireEvent.click(inviteButton);
+
+  expect(createInvite.mutate).toHaveBeenCalledTimes(1);
+  expect(createInvite.mutate.mock.calls[0][0]).toEqual({ displayName: 'Ana', role: 'viewer' });
+});
+
+test('a minted invite opens the result dialog with the url, shown once; copy works', async () => {
+  createInvite.mutate = vi.fn((_data, opts) => opts.onSuccess(MINTED));
+  vi.mocked(useCreateInvite).mockReturnValue(createInvite as never);
+  const writeText = vi.fn().mockResolvedValue(undefined);
+  Object.assign(navigator, { clipboard: { writeText } });
+
+  renderWith([member(42, 'owner', 'Luke')]);
+  fireEvent.change(screen.getByLabelText('Name of the person to invite'), { target: { value: 'Ana' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Invite someone new' }));
+
+  const dialog = screen.getByRole('dialog');
+  expect(within(dialog).getByText(MINTED.url)).toBeTruthy();
+
+  fireEvent.click(within(dialog).getByRole('button', { name: /copy link/i }));
+  expect(writeText).toHaveBeenCalledWith(MINTED.url);
+});
+
+test('pending invites list shows each invite and revokes by id', () => {
+  vi.mocked(usePropertyInvites).mockReturnValue({
+    data: [{ id: 7, propertyId: 3, role: 'viewer', displayName: 'Ana', invitedBy: 42, expiresAt: '2026-10-03T00:00:00Z', createdAt: '2026-09-26T00:00:00Z' }],
+    isLoading: false,
+  } as never);
+
+  renderWith([member(42, 'owner', 'Luke')]);
+  expect(screen.getByText(/Ana/)).toBeTruthy();
+
+  fireEvent.click(screen.getByRole('button', { name: 'Revoke the invite to Ana' }));
+  expect(revokeInvite.mutate).toHaveBeenCalledTimes(1);
+  expect(revokeInvite.mutate.mock.calls[0][0]).toBe(7);
 });

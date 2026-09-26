@@ -1,10 +1,11 @@
 import * as React from 'react';
-import { UserMinus, UserPlus } from 'lucide-react';
+import { Copy, Loader2, Share2, UserMinus, UserPlus, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { toast } from '@/components/ui/toast';
 import { useAuthStore } from '@/store/auth-store';
 import {
@@ -12,9 +13,12 @@ import {
   useAddMember,
   useUpdateMemberRole,
   useRemoveMember,
+  usePropertyInvites,
+  useCreateInvite,
+  useRevokeInvite,
   type MemberRole,
 } from '@/hooks/use-members';
-import type { PropertyMember } from '@/types/inventory';
+import type { CreatedPropertyInvite, PropertyMember } from '@/types/inventory';
 
 const ROLES: { value: MemberRole; label: string }[] = [
   { value: 'owner', label: 'Owner' },
@@ -35,9 +39,12 @@ const ROLES: { value: MemberRole; label: string }[] = [
 export function PropertyMembers({ propertyId }: { propertyId: number }) {
   const me = useAuthStore((s) => s.user);
   const { data: members = [], isLoading } = usePropertyMembers(propertyId);
+  const { data: invites = [] } = usePropertyInvites(propertyId);
   const addMember = useAddMember(propertyId);
   const updateRole = useUpdateMemberRole(propertyId);
   const removeMember = useRemoveMember(propertyId);
+  const createInvite = useCreateInvite(propertyId);
+  const revokeInvite = useRevokeInvite(propertyId);
 
   const [removeTarget, setRemoveTarget] = React.useState<PropertyMember | null>(null);
   // Demoting YOURSELF is the one role change that removes the control you
@@ -46,6 +53,14 @@ export function PropertyMembers({ propertyId }: { propertyId: number }) {
   const [selfDemote, setSelfDemote] = React.useState<MemberRole | null>(null);
   const [email, setEmail] = React.useState('');
   const [newRole, setNewRole] = React.useState<'editor' | 'viewer'>('editor');
+
+  // Inviting a brand-new person (plan 2026-09-26-property-invites.md), not
+  // an existing tally user — a separate form from "add by email" above,
+  // since there is no account to look up yet.
+  const [inviteName, setInviteName] = React.useState('');
+  const [inviteRole, setInviteRole] = React.useState<'editor' | 'viewer'>('editor');
+  const [minted, setMinted] = React.useState<CreatedPropertyInvite | null>(null);
+  const [copied, setCopied] = React.useState(false);
 
   const ownerCount = members.filter((m) => m.role === 'owner').length;
   const isLastOwner = (m: PropertyMember) => m.role === 'owner' && ownerCount <= 1;
@@ -91,6 +106,41 @@ export function PropertyMembers({ propertyId }: { propertyId: number }) {
       onSuccess: (data) => { toast.success(`${data.member.displayName} added as ${newRole}`); setEmail(''); },
       onError: (err) => toast.error(err.message),
     });
+  }
+
+  function onInvite(e: React.FormEvent) {
+    e.preventDefault();
+    const trimmed = inviteName.trim();
+    if (!trimmed) return;
+    createInvite.mutate({ displayName: trimmed, role: inviteRole }, {
+      onSuccess: (data) => { setMinted(data); setCopied(false); setInviteName(''); },
+      onError: (err) => toast.error(err.message),
+    });
+  }
+
+  function onRevokeInvite(id: number) {
+    revokeInvite.mutate(id, {
+      onSuccess: () => toast.success('Invite revoked'),
+      onError: (err) => toast.error(err.message),
+    });
+  }
+
+  function copyInviteUrl(url: string) {
+    navigator.clipboard.writeText(url).then(
+      () => { setCopied(true); toast.success('Link copied to clipboard'); },
+      () => toast.error('Failed to copy link'),
+    );
+  }
+
+  function shareInviteUrl(invite: CreatedPropertyInvite) {
+    const expires = new Date(invite.invite.expiresAt).toLocaleDateString(undefined, {
+      month: 'short', day: 'numeric',
+    });
+    navigator.share?.({
+      title: 'Tally invite',
+      text: `You're invited to a property on Tally (expires ${expires}).`,
+      url: invite.url,
+    }).catch(() => { /* user cancelled — nothing to do */ });
   }
 
   return (
@@ -167,6 +217,108 @@ export function PropertyMembers({ propertyId }: { propertyId: number }) {
           <UserPlus className="w-4 h-4" />
         </Button>
       </form>
+
+      {/* Invite someone new — no tally account yet, so there is nothing to
+          look up by email. pwiam mints the account grant; this just names
+          who and what role (plan 2026-09-26-property-invites.md). */}
+      <form onSubmit={onInvite} className="flex items-center gap-2 pt-2">
+        <Input
+          type="text"
+          aria-label="Name of the person to invite"
+          placeholder="Their name"
+          value={inviteName}
+          onChange={(e) => setInviteName(e.target.value)}
+          maxLength={120}
+          className="min-w-0 flex-1"
+          autoComplete="off"
+        />
+        <Select
+          aria-label="Role for the invite"
+          value={inviteRole}
+          onChange={(e) => setInviteRole(e.target.value as 'editor' | 'viewer')}
+          className="w-28"
+        >
+          <option value="editor">Editor</option>
+          <option value="viewer">Viewer</option>
+        </Select>
+        <Button
+          type="submit"
+          variant="outline"
+          size="sm"
+          disabled={createInvite.isPending || !inviteName.trim()}
+        >
+          {createInvite.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Invite someone new'}
+        </Button>
+      </form>
+
+      {invites.length > 0 && (
+        <div className="pt-3">
+          <p className="text-xs font-medium text-[var(--color-text-muted)] mb-2">Pending invites</p>
+          <div className="flex flex-col gap-2">
+            {invites.map((invite) => (
+              <div
+                key={invite.id}
+                className="flex items-center gap-2 p-2 rounded-[var(--radius-md)] bg-[var(--color-elevated)] border border-[var(--color-border)]"
+              >
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs text-[var(--color-text)] truncate">
+                    {invite.displayName} <span className="text-[var(--color-text-muted)]">· {invite.role}</span>
+                  </p>
+                  <p className="text-[10px] text-[var(--color-text-muted)] mt-0.5">
+                    Expires {new Date(invite.expiresAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                  </p>
+                </div>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => onRevokeInvite(invite.id)}
+                  disabled={revokeInvite.isPending}
+                  className="shrink-0 text-[var(--color-red)] hover:bg-[var(--color-red)] hover:text-white"
+                  aria-label={`Revoke the invite to ${invite.displayName}`}
+                >
+                  <X className="w-3.5 h-3.5" />
+                </Button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* The new invite's join link — its only appearance. pwiam never gives
+          it back, and tally never stores it (plan "url returned once"). */}
+      <Dialog open={!!minted} onOpenChange={(open) => { if (!open) setMinted(null); }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Invite ready</DialogTitle>
+            <DialogDescription>
+              Send this link to {minted?.invite.displayName}. It expires{' '}
+              {minted && new Date(minted.invite.expiresAt).toLocaleDateString(undefined, {
+                month: 'short', day: 'numeric',
+              })}
+              , and only works once.
+            </DialogDescription>
+          </DialogHeader>
+          {minted && (
+            <div className="flex flex-col gap-2">
+              <p className="font-mono text-xs break-all p-2 rounded-[var(--radius-md)] bg-[var(--color-elevated)] border border-[var(--color-border)]">
+                {minted.url}
+              </p>
+              <div className="flex gap-2">
+                <Button variant="outline" className="flex-1" onClick={() => copyInviteUrl(minted.url)}>
+                  <Copy className="w-4 h-4" />
+                  {copied ? 'Copied' : 'Copy link'}
+                </Button>
+                {typeof navigator !== 'undefined' && !!navigator.share && (
+                  <Button variant="outline" className="flex-1" onClick={() => shareInviteUrl(minted)}>
+                    <Share2 className="w-4 h-4" />
+                    Share
+                  </Button>
+                )}
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
 
       <ConfirmDialog
         open={!!removeTarget}
