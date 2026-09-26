@@ -86,23 +86,28 @@ jobs:
           ORCH_URL: ${{ vars.ORCHESTRATOR_URL }}
           GIT_REF: ${{ github.ref_name }}
         run: |
-          # A FRESH GitHub OIDC token for every orchestrator call (the poll below outlives any
-          # single token). The orchestrator accepts it only for this repo's declared routes —
-          # PW orchestrator/api/src/config/ci-oidc.yml. No static secret.
-          orch_token() {
+          # Every orchestrator call mints a FRESH GitHub OIDC token (the poll below outlives any
+          # single token) and sends it — PW docs/CI-OIDC.md. The orchestrator accepts it only for
+          # this repo's declared routes (PW orchestrator/api/src/config/ci-oidc.yml); no static
+          # secret. A failed mint stops HERE, loudly, instead of sending an empty/"null" bearer.
+          # No ::add-mask:: — echoed inside a function called from $(...), it would be captured
+          # into the output, not seen by the runner; the token is never printed and expires fast.
+          orch_curl() {
             local t
             t=$(curl -sS --fail --max-time 10 -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
-              "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=pw-orchestrator" | jq -r '.value')
-            echo "::add-mask::$t"
-            printf '%s' "$t"
+              "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=pw-orchestrator" | jq -r '.value // empty') || t=""
+            if [ -z "$t" ]; then
+              echo "::error::could not mint a GitHub OIDC token (does the job have permissions: id-token: write?)" >&2
+              return 97
+            fi
+            curl -H "Authorization: Bearer $t" "$@"
           }
 
           # V2 deploy endpoint — single-VM Docker compose at <vlan>.10
           # Trigger with retry (orchestrator may be restarting)
           for RETRY in 1 2 3; do
-            RESULT=$(curl -s -w "\n%{http_code}" -X POST \
+            RESULT=$(orch_curl -s -w "\n%{http_code}" -X POST \
               "$ORCH_URL/api/_y_/apps/tally/envs/prod/v2/deploy" \
-              -H "Authorization: Bearer $(orch_token)" \
               -H "Content-Type: application/json" \
               --max-time 30 \
               -d "{\"ref\": \"$GIT_REF\"}" 2>&1) || true
@@ -131,9 +136,8 @@ jobs:
           # Poll for completion
           ATTEMPTS=0
           while [ $ATTEMPTS -lt 90 ]; do
-            POLL=$(curl -s --max-time 10 \
-              "$ORCH_URL/api/_x_/ops/$OP" \
-              -H "Authorization: Bearer $(orch_token)" 2>&1) || true
+            POLL=$(orch_curl -s --max-time 10 \
+              "$ORCH_URL/api/_x_/ops/$OP" 2>&1) || true
             STATUS=$(echo "$POLL" | jq -r '.data.status' 2>/dev/null)
             case "$STATUS" in
               success)
