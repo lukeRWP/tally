@@ -27,7 +27,13 @@ Existing tally users are still added by email (unchanged `POST .../members`).
 ### pwiam
 
 `RP_INVITES` env: comma list of `app:role`, e.g. `tally:user`. Parsed in `config.js`; boot FAILS if any
-entry's role is `admin` or the entry is malformed. Unset/empty = feature off (routes answer 404).
+entry's role is `admin` or the entry is malformed. The `/rp/invites` router is always mounted regardless —
+unset/empty just means no app has a grant. Auth (Basic, the caller's own WEB client) runs FIRST for every
+caller and is checked before anything else: a wrong secret, an unknown client, and a service-account
+client's otherwise-valid secret all answer the identical 401 `invalid_client`. Only once that passes does
+mint check whether the caller's app is actually in `RP_INVITES`, answering 403 `not_enabled` if not — an
+app with no grant is never distinguishable from one whose credentials failed; it just never gets past
+the same 401 everyone else doesn't.
 `RP_INVITE_DAILY_CAP` (default 20, non-negative integer, per app, rolling 24h; garbled = boot failure).
 
 `POST /rp/invites` — Basic auth with the app's WEB client credentials (same rule as
