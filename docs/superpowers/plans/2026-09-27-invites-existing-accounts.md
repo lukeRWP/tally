@@ -39,11 +39,21 @@ a log line or the redirect.
 Policy: a `login`-prompt Check `join_claim` — REQUEST_PROMPT when the request carries a
 `__Host-pwiam_join` cookie whose nonce maps to a usable ticket for THIS client's app+env. Otherwise
 NO_NEED_TO_PROMPT (an unrelated or stale cookie never blocks a login; a stale nonce clears itself).
+**This fires REGARDLESS of whether the browser already carries a live SSO session for the client —
+an existing session is deliberately never enough on its own.** Two reasons: (1) tally's own
+`resolveUser` only asks pwiam which invites a `sub` redeemed on a FRESH sign-in — it compares the ID
+token's `auth_time` against what it already has on file for that sub, so finishing straight off an
+old session would leave `auth_time` unchanged and the redemption would silently never be noticed on
+tally's side; (2) granting new access should rest on a fresh proof of account ownership, not a
+session that predates the claim. Forcing the `login` prompt here is what sends even an already-
+signed-in browser through the ordinary sign-in form again — `interaction.routes.js`'s
+`GET /interaction/:uid` renders it (not the `no_assignment` 403 refusal) whenever `join_claim` is
+ALSO a reason, so an existing session with no role on the app can still reauthenticate and redeem.
 
-One helper `redeemJoinClaim({ req, res, user, app, clientId })`, called on every completed-sign-in path
-BEFORE the role check: password `finishLogin`, passkey, Microsoft (`entra.routes.js`), and the GET
-`/interaction/:uid` path when `details.session.accountId` exists and the prompt reason is `join_claim`
-(then finish the interaction with that session's account). It:
+One helper `redeemJoinClaim({ req, res, user, app, clientId })`, called on every completed-sign-in
+path BEFORE the role check: password `finishLogin`, passkey, Microsoft (`entra.routes.js`). There is
+no special case for an existing session finishing without a fresh credential — the `join_claim`
+Check above guarantees one of these three paths is what runs. It:
 1. resolves the nonce → invite; no cookie / unknown nonce / different app+env → no-op;
 2. one transaction: `SELECT … FROM RP_INVITES WHERE ID = :id FOR UPDATE`, re-check usable; if the user
    ALREADY holds any role on that app+env → assign nothing (never downgrade an admin), else
@@ -52,6 +62,11 @@ BEFORE the role check: password `finishLogin`, passkey, Microsoft (`entra.routes
    role was granted);
 3. after commit: ntfy "PW IAM: invite accepted by existing account" (fixed facts first, user-supplied
    values JSON-quoted last); clear the nonce and the cookie.
+
+Test coverage must assert the fresh-`auth_time` property directly: sign in once (establishing a
+baseline session/`auth_time`), then run the join-claim flow on the SAME browser and assert the ID
+token's `auth_time` afterwards is STRICTLY GREATER than the baseline — proving the interaction really
+re-authenticated rather than resuming the old session.
 A break-glass account never redeems (skip + audit). A redemption failure must not turn a good sign-in
 into a 500: log at error, clear the claim, carry on to the normal role check.
 
