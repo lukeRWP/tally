@@ -225,6 +225,68 @@ const PropertyInvitesService = {
       }
     });
   },
+
+  /**
+   * Which of this app's invites did `sub` redeem at pwiam (plan
+   * 2026-09-27-invites-existing-accounts.md) — a thin pass-through to the
+   * pwiam client, kept here rather than exposing `_client` so every pwiam
+   * call from this module stays in one place. Its errors are not caught
+   * here: AuthService.resolveUser is the one place that decides a failure
+   * here must never block sign-in.
+   */
+  async redeemedBy(sub) {
+    return _client.redeemedBy(sub);
+  },
+
+  /**
+   * `claimRedeemed(inviteIds, userId)` — the existing-account half of
+   * claiming (plan 2026-09-27-invites-existing-accounts.md): the invitee
+   * already had a pwiam account, so pwiam recorded which invites they
+   * redeemed by `sub` rather than tally matching `INVITEE_SUB` (that `sub`
+   * belongs to the pre-allocated brand-new-user identity, not the existing
+   * account that actually signed in). Same semantics as `claimPending`:
+   * one transaction, `FOR UPDATE`, only rows still pending
+   * (`ACCEPTED_AT IS NULL AND REVOKED_AT IS NULL`), an existing membership is
+   * left exactly as it is, and every claim is audited. Matches
+   * `PWIAM_INVITE_ID IN (...)` instead of `INVITEE_SUB`. An empty list is a
+   * pure no-op — no transaction, no query — since resolveUser calls this on
+   * every fresh sign-in whether or not pwiam reported anything redeemed.
+   */
+  async claimRedeemed(inviteIds, userId) {
+    if (!_db) throw new Error('PropertyInvitesService not initialized');
+    if (!Array.isArray(inviteIds) || inviteIds.length === 0) return;
+
+    await _db.withTransaction(async (tx) => {
+      const placeholders = inviteIds.map(() => '?').join(', ');
+      const invites = await tx.query(
+        `SELECT * FROM TALLY.property_invites
+          WHERE PWIAM_INVITE_ID IN (${placeholders}) AND ACCEPTED_AT IS NULL AND REVOKED_AT IS NULL
+          FOR UPDATE`,
+        inviteIds
+      );
+
+      for (const invite of invites) {
+        const existing = await tx.query(
+          'SELECT ID FROM TALLY.property_members WHERE PROPERTY_ID = ? AND USER_ID = ?',
+          [invite.PROPERTY_ID, userId]
+        );
+        if (!existing.length) {
+          await tx.query(
+            `INSERT INTO TALLY.property_members (PROPERTY_ID, USER_ID, ROLE, INVITED_BY)
+             VALUES (?, ?, ?, ?)`,
+            [invite.PROPERTY_ID, userId, invite.ROLE, invite.INVITED_BY]
+          );
+        }
+        await tx.query(
+          'UPDATE TALLY.property_invites SET ACCEPTED_AT = NOW(), ACCEPTED_USER_ID = ? WHERE ID = ?',
+          [userId, invite.ID]
+        );
+        AuditService.logChange(userId, 'property', invite.PROPERTY_ID, 'updated',
+          { member: { userId, role: invite.ROLE, invited: true, claimedInviteId: invite.ID } },
+          invite.PROPERTY_ID);
+      }
+    });
+  },
 };
 
 module.exports = PropertyInvitesService;

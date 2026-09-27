@@ -103,6 +103,66 @@ test('revokeInvite: 5xx maps to 502', async () => {
   );
 });
 
+// redeemedBy — the existing-account half (plan
+// 2026-09-27-invites-existing-accounts.md): "which of this app's invites did
+// this sub redeem". Contract: POST /rp/invites/redeemed { sub } → 200
+// { invites: [{ id }] }; 401/403/429/5xx/network are all failures.
+
+test('redeemedBy: 200 returns the invite ids, sending Basic auth + { sub }', async () => {
+  const fetch = fakeFetch([{ status: 200, body: { invites: [{ id: 'inv1' }, { id: 'inv2' }] } }]);
+  const client = pwiamInvitesClient({ config, logger, fetch });
+
+  const ids = await client.redeemedBy('01JEXISTING');
+  assert.deepStrictEqual(ids, ['inv1', 'inv2']);
+
+  assert.strictEqual(fetch.calls.length, 1);
+  assert.strictEqual(fetch.calls[0].url, 'https://id.example.test/rp/invites/redeemed');
+  assert.strictEqual(fetch.calls[0].opts.headers.Authorization, `Basic ${Buffer.from('tally-web:s3cret').toString('base64')}`);
+  assert.deepStrictEqual(JSON.parse(fetch.calls[0].opts.body), { sub: '01JEXISTING' });
+});
+
+test('redeemedBy: 200 with no invites returns an empty list', async () => {
+  const client = pwiamInvitesClient({ config, logger, fetch: fakeFetch([{ status: 200, body: { invites: [] } }]) });
+  assert.deepStrictEqual(await client.redeemedBy('01JEXISTING'), []);
+});
+
+test('redeemedBy: a malformed 200 body (invites missing / not an array / bad shape) is a failure, not an empty list', async () => {
+  for (const body of [{}, { invites: null }, { invites: [{ notId: 'x' }] }, { invites: 'inv1' }]) {
+    const client = pwiamInvitesClient({ config, logger, fetch: fakeFetch([{ status: 200, body }]) });
+    await assert.rejects(() => client.redeemedBy('01JEXISTING'), (err) => { assert.strictEqual(err.statusCode, 502); return true; });
+  }
+});
+
+test('redeemedBy: 401 maps to 502, never exposes the pwiam body', async () => {
+  const client = pwiamInvitesClient({ config, logger, fetch: fakeFetch([{ status: 401, body: { error: 'invalid_client' } }]) });
+  await assert.rejects(
+    () => client.redeemedBy('01JEXISTING'),
+    (err) => { assert.strictEqual(err.statusCode, 502); assert.doesNotMatch(err.message, /invalid_client/); return true; }
+  );
+});
+
+test('redeemedBy: 403 maps to 503', async () => {
+  const client = pwiamInvitesClient({ config, logger, fetch: fakeFetch([{ status: 403, body: { error: 'not_enabled' } }]) });
+  await assert.rejects(() => client.redeemedBy('01JEXISTING'), (err) => { assert.strictEqual(err.statusCode, 503); return true; });
+});
+
+test('redeemedBy: 429 maps to 429', async () => {
+  const client = pwiamInvitesClient({ config, logger, fetch: fakeFetch([{ status: 429, body: { error: 'cap_reached' } }]) });
+  await assert.rejects(() => client.redeemedBy('01JEXISTING'), (err) => { assert.strictEqual(err.statusCode, 429); return true; });
+});
+
+test('redeemedBy: 5xx maps to 502', async () => {
+  const client = pwiamInvitesClient({ config, logger, fetch: fakeFetch([{ status: 500, body: {} }]) });
+  await assert.rejects(() => client.redeemedBy('01JEXISTING'), (err) => { assert.strictEqual(err.statusCode, 502); return true; });
+});
+
+test('redeemedBy: a network failure (fetch throws) maps to 502, logged without the sub in a URL', async () => {
+  const client = pwiamInvitesClient({ config, logger, fetch: fakeFetch([new Error('ECONNREFUSED')]) });
+  await assert.rejects(() => client.redeemedBy('01JEXISTING'), (err) => { assert.strictEqual(err.statusCode, 502); return true; });
+  assert.strictEqual(logs.length, 1);
+  assert.strictEqual(logs[0][1].path, '/rp/invites/redeemed');
+});
+
 // The abort timer must stay armed for the whole request, including reading
 // the response body — not just until fetch() resolves headers. A slow or
 // stalled body read (pwiam hangs after sending status 200) must still be
