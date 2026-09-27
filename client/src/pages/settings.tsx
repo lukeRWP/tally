@@ -152,7 +152,8 @@ export function SettingsPage() {
   const { data: properties = [] } = useProperties();
 
   const [selectedPropertyId, setSelectedPropertyId] = React.useState<number>(0);
-  const selectedRole = properties.find((p) => p.id === selectedPropertyId)?.role ?? null;
+  const selectedProperty = properties.find((p) => p.id === selectedPropertyId) ?? null;
+  const selectedRole = selectedProperty?.role ?? null;
 
   // Auto-select first property
   React.useEffect(() => {
@@ -300,7 +301,7 @@ export function SettingsPage() {
           {selectedRole === 'owner' && (
             <section className="flex flex-col animate-fade-up" style={{ animationDelay: '200ms' }}>
               <ColHead>Members</ColHead>
-              <PropertyMembers propertyId={selectedPropertyId} />
+              <PropertyMembers propertyId={selectedPropertyId} propertyName={selectedProperty?.name ?? ''} />
             </section>
           )}
         </div>
