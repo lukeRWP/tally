@@ -26,7 +26,10 @@ function formatExpiry(iso: string): string {
 /**
  * The invite-ready view — link box, copy, share. Used both by the add-person
  * dialog (after a fallthrough or a no-email invite) and by "New link" on a
- * pending row, so the two never drift apart.
+ * pending row, so the two never drift apart. Focus lands on Copy on mount —
+ * this view only ever appears as the RESULT of an action (never the first
+ * thing open), so the next useful thing to do is always here, not back on
+ * whatever was focused before.
  */
 export function InviteReadyPanel({
   minted,
@@ -40,7 +43,12 @@ export function InviteReadyPanel({
   propertyName: string;
 }) {
   const [copied, setCopied] = React.useState(false);
+  const copyRef = React.useRef<HTMLButtonElement>(null);
   const expires = formatExpiry(minted.invite.expiresAt);
+
+  React.useEffect(() => {
+    copyRef.current?.focus();
+  }, []);
 
   function copyUrl() {
     navigator.clipboard.writeText(minted.url).then(
@@ -74,7 +82,7 @@ export function InviteReadyPanel({
           {minted.url}
         </p>
         <div className="flex gap-2">
-          <Button variant="outline" className="flex-1" onClick={copyUrl}>
+          <Button ref={copyRef} variant="outline" className="flex-1" onClick={copyUrl}>
             <Copy className="w-4 h-4" />
             {copied ? 'Copied' : 'Copy link'}
           </Button>
@@ -89,6 +97,8 @@ export function InviteReadyPanel({
     </>
   );
 }
+
+const EMAIL_HELP_ID = 'add-person-email-help';
 
 /**
  * One "Add person" flow (add-person-flow spec, 2026-09-27) replaces the old
@@ -119,14 +129,27 @@ export function AddPersonDialog({
   const [minted, setMinted] = React.useState<CreatedPropertyInvite | null>(null);
   const [fallbackNote, setFallbackNote] = React.useState<string | null>(null);
 
+  const pending = addMember.isPending || createInvite.isPending;
+
   function reset() {
     setName(''); setEmail(''); setRole('editor');
     setError(null); setMinted(null); setFallbackNote(null);
   }
 
+  // A request really is in flight on pwiam/the server — closing (Escape,
+  // outside click, the X, or a stray onOpenChange(false)) must not abandon
+  // it: the invite gets created either way, so the one place it must land is
+  // here, where the owner can still see it (code-review finding #2).
   function handleOpenChange(next: boolean) {
-    if (!next) reset();
+    if (!next) {
+      if (pending) return;
+      reset();
+    }
     onOpenChange(next);
+  }
+
+  function preventCloseWhilePending(e: Event) {
+    if (pending) e.preventDefault();
   }
 
   function mintInvite(displayName: string, note: string | null) {
@@ -154,8 +177,12 @@ export function AddPersonDialog({
         handleOpenChange(false);
       },
       onError: (err: ApiError) => {
-        if (err.status === 404 || (err.status === 409 && !isAlreadyMember(err))) {
+        if (err.status === 404) {
           mintInvite(trimmedName, `No Tally account uses ${trimmedEmail}, so we made an invite link instead.`);
+          return;
+        }
+        if (err.status === 409 && !isAlreadyMember(err)) {
+          mintInvite(trimmedName, `More than one Tally account uses ${trimmedEmail}, so we made an invite link instead.`);
           return;
         }
         setError(err.message);
@@ -163,11 +190,15 @@ export function AddPersonDialog({
     });
   }
 
-  const pending = addMember.isPending || createInvite.isPending;
-
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="max-w-sm">
+      <DialogContent
+        className="max-w-sm"
+        closeDisabled={pending}
+        onEscapeKeyDown={preventCloseWhilePending}
+        onPointerDownOutside={preventCloseWhilePending}
+        onInteractOutside={preventCloseWhilePending}
+      >
         {minted ? (
           <InviteReadyPanel minted={minted} note={fallbackNote ?? undefined} myDisplayName={myDisplayName} propertyName={propertyName} />
         ) : (
@@ -192,13 +223,14 @@ export function AddPersonDialog({
                 <span className="text-sm font-medium text-[var(--color-text)]">Email</span>
                 <Input
                   aria-label="Email"
+                  aria-describedby={EMAIL_HELP_ID}
                   type="email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   placeholder="name@example.com"
                   autoComplete="off"
                 />
-                <span className="text-xs text-[var(--color-text-muted)]">
+                <span id={EMAIL_HELP_ID} className="text-xs text-[var(--color-text-muted)]">
                   Optional — if they already use Tally, they're added straight away.
                 </span>
               </label>
@@ -234,7 +266,7 @@ export function AddPersonDialog({
                 </label>
               </fieldset>
 
-              {error && <p className="text-sm text-[var(--color-red)]">{error}</p>}
+              {error && <p role="alert" className="text-sm text-[var(--color-red)]">{error}</p>}
 
               <Button type="submit" disabled={pending || !name.trim()} className="w-full">
                 {pending && <Loader2 className="w-4 h-4 animate-spin" />}

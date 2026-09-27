@@ -29,8 +29,18 @@ DialogOverlay.displayName = 'DialogOverlay';
 
 export const DialogContent = React.forwardRef<
   React.ElementRef<typeof RadixDialog.Content>,
-  React.ComponentPropsWithoutRef<typeof RadixDialog.Content>
->(({ className, children, ...props }, ref) => {
+  React.ComponentPropsWithoutRef<typeof RadixDialog.Content> & {
+    /**
+     * A request in flight (add-person-flow spec) must land SOMEWHERE — the
+     * invite really does get created even if the owner walks away, so the
+     * one moment that must never close is while we're waiting on it. Disables
+     * the X; `onOpenChange` on the controlling `Dialog` is the caller's job
+     * to also ignore a close while pending (this alone doesn't stop Escape/
+     * outside-click, since those are wired to `onOpenChange`, not this flag).
+     */
+    closeDisabled?: boolean;
+  }
+>(({ className, children, closeDisabled, ...props }, ref) => {
   const contentRef = React.useRef<HTMLDivElement | null>(null);
 
   // Adjust dialog position when mobile keyboard opens/closes
@@ -91,16 +101,27 @@ export const DialogContent = React.forwardRef<
         {...props}
       >
         {children}
-        <RadixDialog.Close
-          className={cn(
-            'absolute top-3 right-3 w-8 h-8 flex items-center justify-center rounded-full',
-            'text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-elevated)]',
-            'transition-colors cursor-pointer'
-          )}
-        >
-          <X size={16} />
-          <span className="sr-only">Close</span>
-        </RadixDialog.Close>
+        {closeDisabled ? (
+          <button
+            type="button"
+            disabled
+            className="absolute top-3 right-3 w-8 h-8 flex items-center justify-center rounded-full text-[var(--color-text-muted)] opacity-40 cursor-not-allowed"
+          >
+            <X size={16} />
+            <span className="sr-only">Close</span>
+          </button>
+        ) : (
+          <RadixDialog.Close
+            className={cn(
+              'absolute top-3 right-3 w-8 h-8 flex items-center justify-center rounded-full',
+              'text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-elevated)]',
+              'transition-colors cursor-pointer'
+            )}
+          >
+            <X size={16} />
+            <span className="sr-only">Close</span>
+          </RadixDialog.Close>
+        )}
       </RadixDialog.Content>
     </DialogPortal>
   );

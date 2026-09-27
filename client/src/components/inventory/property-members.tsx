@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { UserMinus, UserPlus } from 'lucide-react';
+import { Loader2, UserMinus, UserPlus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Select } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -63,10 +63,31 @@ export function PropertyMembers({ propertyId, propertyName }: { propertyId: numb
   const [addOpen, setAddOpen] = React.useState(false);
   const [revokeTarget, setRevokeTarget] = React.useState<PropertyInvite | null>(null);
   const [relinked, setRelinked] = React.useState<CreatedPropertyInvite | null>(null);
+  // The one pending invite currently mid "New link" — the guard against a
+  // double-tap (or tapping a second row) firing a second revoke+create chain
+  // while the first is still in flight (code-review finding #1: TanStack's
+  // per-call mutate() callbacks only fire for the LATEST call, so a second
+  // chain silently drops the first one's onSuccess).
+  const [relinkingId, setRelinkingId] = React.useState<number | null>(null);
+  const addButtonRef = React.useRef<HTMLButtonElement>(null);
+  const wasAddOpen = React.useRef(false);
+
+  // Radix's Dialog doesn't know what opened it — this is a controlled
+  // dialog with no DialogTrigger — so focus back to "Add person" is ours to
+  // restore explicitly (code-review finding #6).
+  React.useEffect(() => {
+    if (wasAddOpen.current && !addOpen) addButtonRef.current?.focus();
+    wasAddOpen.current = addOpen;
+  }, [addOpen]);
 
   const ownerCount = members.filter((m) => m.role === 'owner').length;
   const isLastOwner = (m: PropertyMember) => m.role === 'owner' && ownerCount <= 1;
   const busy = updateRole.isPending || removeMember.isPending;
+  // Disables New link + Revoke on EVERY pending-invite row while any one of
+  // them is relinking or revoking — not just the row being acted on — so a
+  // second click anywhere can't start a second chain against a row this one
+  // is already touching (code-review finding #1).
+  const invitesBusy = relinkingId !== null || revokeInvite.isPending || createInvite.isPending;
 
   function applyRole(member: PropertyMember, role: MemberRole) {
     updateRole.mutate({ userId: member.userId, role }, {
@@ -101,26 +122,45 @@ export function PropertyMembers({ propertyId, propertyName }: { propertyId: numb
   }
 
   // "New link": revoke the pending invite, then mint a fresh one with the
-  // same name and role — the owner never re-types either.
-  function onNewLink(invite: PropertyInvite) {
-    revokeInvite.mutate(invite.id, {
-      onSuccess: () => {
-        createInvite.mutate({ displayName: invite.displayName, role: invite.role }, {
-          onSuccess: (data) => setRelinked(data),
-          onError: (err: ApiError) => toast.error(err.message),
-        });
-      },
-      onError: (err: ApiError) => {
-        // The invitee accepted between our list render and this click —
-        // there is no invite left to relink, only a member to refresh in.
-        if (err.status === 409 && err.message.includes('accepted')) {
-          toast.success(`${invite.displayName} already accepted — they're a member now`);
-        } else {
-          toast.error(err.message);
-        }
-        invalidateMembership();
-      },
-    });
+  // same name and role — the owner never re-types either. ONE async chain
+  // (mutateAsync, not two chained mutate() calls) guarded by relinkingId:
+  // per-call mutate() callbacks in TanStack only fire for the LATEST call, so
+  // a double-tap (or New link on a second row while the first is still
+  // running) would otherwise drop the first chain's onSuccess entirely —
+  // its revoke lands, its create never runs, and the SECOND revoke then
+  // 409s against a row that's already gone (code-review finding #1).
+  async function onNewLink(invite: PropertyInvite) {
+    if (relinkingId !== null) return;
+    setRelinkingId(invite.id);
+    try {
+      await revokeInvite.mutateAsync(invite.id);
+    } catch (e) {
+      const err = e as ApiError;
+      // The server's "already resolved" 409 covers BOTH an invite already
+      // accepted and one already revoked before this click — it does not
+      // distinguish, so neither do we (code-review finding #4).
+      if (err.status === 409) {
+        toast.error(`${invite.displayName}'s invite was already used or revoked`);
+      } else {
+        toast.error(err.message);
+      }
+      invalidateMembership();
+      setRelinkingId(null);
+      return;
+    }
+    try {
+      const data = await createInvite.mutateAsync({ displayName: invite.displayName, role: invite.role });
+      setRelinked(data);
+    } catch (e) {
+      const err = e as ApiError;
+      // The revoke already committed — the old link is dead either way, so
+      // the toast has to say so rather than reading like nothing happened
+      // (code-review finding #3).
+      toast.error(`${invite.displayName}'s old link was revoked, but a new one couldn't be made (${err.message}). Use Add person to invite them again.`);
+      invalidateMembership();
+    } finally {
+      setRelinkingId(null);
+    }
   }
 
   function confirmRevoke() {
@@ -135,7 +175,7 @@ export function PropertyMembers({ propertyId, propertyName }: { propertyId: numb
   return (
     <div className="flex flex-col">
       <div className="flex items-center justify-end pb-2">
-        <Button onClick={() => setAddOpen(true)}>
+        <Button ref={addButtonRef} onClick={() => setAddOpen(true)}>
           <UserPlus className="w-4 h-4" />
           Add person
         </Button>
@@ -203,13 +243,20 @@ export function PropertyMembers({ propertyId, propertyName }: { propertyId: numb
             </span>
           </span>
           <span className="w-28 shrink-0 text-sm text-[var(--color-text-muted)] capitalize">{invite.role}</span>
-          <Button variant="ghost" size="sm" onClick={() => onNewLink(invite)}>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => onNewLink(invite)}
+            disabled={invitesBusy}
+          >
+            {relinkingId === invite.id && <Loader2 className="w-4 h-4 animate-spin" />}
             New link
           </Button>
           <Button
             variant="ghost"
             size="sm"
             onClick={() => setRevokeTarget(invite)}
+            disabled={invitesBusy}
             className="text-[var(--color-red)] hover:bg-[var(--color-red)] hover:text-white"
             aria-label={`Revoke the invite to ${invite.displayName}`}
           >
