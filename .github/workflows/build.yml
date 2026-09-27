@@ -134,20 +134,38 @@ jobs:
           echo "Dashboard: $ORCH_URL/operations/$OP"
 
           # Poll for completion
+          # GitHub runs this step under `bash -e`: an assignment takes its command's exit
+          # status, so a jq parse error on a non-JSON poll (a failed OIDC mint's stderr, an
+          # nginx page while the orchestrator restarts) used to end the step mid-deploy.
+          # A poll that fails or isn't JSON is just a failed poll; give up only after 30
+          # in a row. orch_curl's stderr stays out of POLL so it can never reach jq.
           ATTEMPTS=0
+          FAILED_POLLS=0
           while [ $ATTEMPTS -lt 90 ]; do
-            POLL=$(orch_curl -s --max-time 10 \
-              "$ORCH_URL/api/_x_/ops/$OP" 2>&1) || true
-            STATUS=$(echo "$POLL" | jq -r '.data.status' 2>/dev/null)
+            if ! POLL=$(orch_curl -sS --fail-with-body --max-time 10 \
+                "$ORCH_URL/api/_x_/ops/$OP"); then
+              POLL=""
+            fi
+            STATUS=$(printf '%s' "$POLL" | jq -r '.data.status // empty' 2>/dev/null) || STATUS=""
+            if [ -z "$STATUS" ]; then
+              FAILED_POLLS=$((FAILED_POLLS + 1))
+              echo "Poll failed ($FAILED_POLLS consecutive)"
+              if [ $FAILED_POLLS -ge 30 ]; then
+                echo "::error::Gave up after 30 consecutive failed polls — check operation $OP on the orchestrator (the source of truth, rule 7)"
+                exit 1
+              fi
+            else
+              FAILED_POLLS=0
+            fi
             case "$STATUS" in
               success)
                 echo "Deploy succeeded"
                 exit 0
                 ;;
               failed)
-                ERROR=$(echo "$POLL" | jq -r '.data.error // "unknown error"' 2>/dev/null)
+                ERROR=$(printf '%s' "$POLL" | jq -r '.data.error // "unknown error"' 2>/dev/null) || ERROR="unknown error"
                 echo "::error::Deploy failed: $ERROR"
-                echo "$POLL" | jq -r '.data.output // ""' 2>/dev/null | tail -30
+                printf '%s' "$POLL" | jq -r '.data.output // ""' 2>/dev/null | tail -30 || true
                 exit 1
                 ;;
               *)
