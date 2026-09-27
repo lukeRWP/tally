@@ -168,7 +168,17 @@ export function PropertyMembers({ propertyId, propertyName }: { propertyId: numb
     const target = revokeTarget;
     revokeInvite.mutate(target.id, {
       onSuccess: () => { toast.success('Invite revoked'); setRevokeTarget(null); },
-      onError: (err) => { toast.error(err.message); setRevokeTarget(null); },
+      onError: (err) => {
+        // Same reading as New link's 409: the invite was accepted or revoked
+        // elsewhere since this list loaded — say so and refresh the stale row.
+        if (err.status === 409) {
+          toast.error(`${target.displayName}'s invite was already used or revoked`);
+          invalidateMembership();
+        } else {
+          toast.error(err.message);
+        }
+        setRevokeTarget(null);
+      },
     });
   }
 

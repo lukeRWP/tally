@@ -371,6 +371,34 @@ test('Revoke confirms before firing', () => {
   expect(revokeInvite.mutate.mock.calls[0][0]).toBe(7);
 });
 
+test('Revoke answering 409 says the invite was already used or revoked and refreshes the list', async () => {
+  const { toast } = await import('@/components/ui/toast');
+  vi.mocked(usePropertyInvites).mockReturnValue({ data: [PENDING], isLoading: false } as never);
+  renderWith([member(42, 'owner', 'Luke')]);
+
+  fireEvent.click(screen.getByRole('button', { name: 'Revoke the invite to Ana' }));
+  fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Revoke' }));
+  const { onError } = revokeInvite.mutate.mock.calls[0][1];
+  onError(new ApiError('Invite already resolved', 409));
+
+  expect(toast.error).toHaveBeenCalledWith("Ana's invite was already used or revoked");
+  expect(invalidateMembership).toHaveBeenCalled();
+});
+
+test('Revoke failing for any other reason shows the server message and does not refresh', async () => {
+  const { toast } = await import('@/components/ui/toast');
+  vi.mocked(usePropertyInvites).mockReturnValue({ data: [PENDING], isLoading: false } as never);
+  renderWith([member(42, 'owner', 'Luke')]);
+
+  fireEvent.click(screen.getByRole('button', { name: 'Revoke the invite to Ana' }));
+  fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Revoke' }));
+  const { onError } = revokeInvite.mutate.mock.calls[0][1];
+  onError(new ApiError('Could not reach the invite service', 502));
+
+  expect(toast.error).toHaveBeenCalledWith('Could not reach the invite service');
+  expect(invalidateMembership).not.toHaveBeenCalled();
+});
+
 test('New link revokes then mints a fresh invite with the same name and role, and opens the invite-ready view', async () => {
   vi.mocked(usePropertyInvites).mockReturnValue({ data: [PENDING], isLoading: false } as never);
   revokeInvite.mutateAsync = vi.fn().mockResolvedValue(undefined);

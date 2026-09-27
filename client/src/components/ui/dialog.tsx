@@ -105,7 +105,7 @@ export const DialogContent = React.forwardRef<
           <button
             type="button"
             disabled
-            className="absolute top-3 right-3 w-8 h-8 flex items-center justify-center rounded-full text-[var(--color-text-muted)] opacity-40 cursor-not-allowed"
+            className="absolute top-3 right-3 w-[max(2rem,var(--tap-min))] h-[max(2rem,var(--tap-min))] flex items-center justify-center rounded-full text-[var(--color-text-muted)] opacity-40 cursor-not-allowed"
           >
             <X size={16} />
             <span className="sr-only">Close</span>
@@ -113,7 +113,7 @@ export const DialogContent = React.forwardRef<
         ) : (
           <RadixDialog.Close
             className={cn(
-              'absolute top-3 right-3 w-8 h-8 flex items-center justify-center rounded-full',
+              'absolute top-3 right-3 w-[max(2rem,var(--tap-min))] h-[max(2rem,var(--tap-min))] flex items-center justify-center rounded-full',
               'text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-elevated)]',
               'transition-colors cursor-pointer'
             )}
