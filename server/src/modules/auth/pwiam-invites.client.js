@@ -102,6 +102,32 @@ function pwiamInvitesClient({ config, logger, fetch: fetchImpl }) {
       err.statusCode = status === 403 ? 503 : 502;
       throw err;
     },
+
+    /**
+     * `redeemedBy(sub)` — the existing-account half (plan
+     * 2026-09-27-invites-existing-accounts.md): which of THIS app's invites
+     * did this pwiam `sub` redeem. 200 with a well-formed body → the invite
+     * ids. Every other outcome — 401/403/429/5xx, a network failure, or a
+     * malformed 200 body — is a failure the caller (AuthService.resolveUser)
+     * treats as non-fatal to sign-in; nothing here is worth distinguishing
+     * from any other "could not reach pwiam" case.
+     */
+    async redeemedBy(sub) {
+      const { status, json } = await post('/rp/invites/redeemed', { sub });
+      if (status === 200 && json && Array.isArray(json.invites)
+        && json.invites.every((inv) => inv && typeof inv.id === 'string')) {
+        return json.invites.map((inv) => inv.id);
+      }
+      if (status === 429) {
+        const err = new Error('Invite limit reached for today');
+        err.statusCode = 429;
+        throw err;
+      }
+      logger.error('[pwiam-invites] redeemedBy rejected', { status, pwiamError: json && json.error });
+      const err = new Error('Could not reach the invite service');
+      err.statusCode = status === 403 ? 503 : 502;
+      throw err;
+    },
   };
 }
 

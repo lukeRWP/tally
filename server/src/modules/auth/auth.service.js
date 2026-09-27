@@ -107,12 +107,18 @@ const AuthService = {
     }
 
     const authTime = Number.isFinite(claims.auth_time) ? new Date(claims.auth_time * 1000) : new Date();
-    await _db.query(
+    const loginUpdate = await _db.query(
       `UPDATE TALLY.users SET LAST_LOGIN_AT = ?
         WHERE ID = ? AND (LAST_LOGIN_AT IS NULL OR LAST_LOGIN_AT < ?)`,
       [authTime, row.ID, authTime]
     );
     const lastLoginAt = row.LAST_LOGIN_AT && row.LAST_LOGIN_AT >= authTime ? row.LAST_LOGIN_AT : authTime;
+    // The UPDATE's own predicate IS the fresh-sign-in test: it wrote a newer
+    // LAST_LOGIN_AT (insert branch — row.LAST_LOGIN_AT was NULL — or a
+    // returning row whose stored auth_time was older) exactly when
+    // affectedRows > 0. A silent refresh replays the same auth_time, the
+    // predicate matches nothing, and affectedRows is 0.
+    const isFreshSignIn = loginUpdate.affectedRows > 0;
 
     // Property invites (plan 2026-09-26-property-invites.md): claim any
     // pending invite for this sub — a brand-new user landing on their first
@@ -123,6 +129,24 @@ const AuthService = {
       await PropertyInvitesService.claimPending(sub, row.ID);
     } catch (err) {
       _logger.error('[auth] claiming pending property invites failed', { error: err.message, sub });
+    }
+
+    // Existing-account invites (plan 2026-09-27-invites-existing-accounts.md):
+    // an invitee who already had a pwiam account redeemed the ticket during
+    // their OWN sign-in interaction there, keyed by their existing `sub` —
+    // pwiam records that against REDEEMED_USER_ID, not INVITEE_SUB, so
+    // claimPending above can never see it. Asking pwiam is only meaningful on
+    // a fresh sign-in: a silent refresh re-asking on every token renewal (up
+    // to every 15 min) would hit pwiam for nothing, since nothing new could
+    // have been redeemed between refreshes of the same session. Same rule as
+    // claimPending — logged and swallowed, never allowed to fail a sign-in.
+    if (isFreshSignIn) {
+      try {
+        const inviteIds = await PropertyInvitesService.redeemedBy(sub);
+        await PropertyInvitesService.claimRedeemed(inviteIds, row.ID);
+      } catch (err) {
+        _logger.error('[auth] claiming existing-account redeemed invites failed', { error: err.message, sub });
+      }
     }
 
     return AuthService._mapUser({ ...row, LAST_LOGIN_AT: lastLoginAt });

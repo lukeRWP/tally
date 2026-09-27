@@ -22,18 +22,31 @@ const row = (o) => ({ ID: 1, SUB: null, ENTRA_ID: null, EMAIL: 'a@b.test', DISPL
   CREATED_AT: new Date('2026-01-01T00:00:00Z'), LAST_LOGIN_AT: null, ...o });
 
 let originalClaimPending;
+let originalRedeemedBy;
+let originalClaimRedeemed;
 let calls;
 let loggedErrors;
 const logger = { info() {}, warn() {}, error: (...a) => loggedErrors.push(a) };
 
 test.beforeEach(() => {
   originalClaimPending = PropertyInvitesService.claimPending;
+  originalRedeemedBy = PropertyInvitesService.redeemedBy;
+  originalClaimRedeemed = PropertyInvitesService.claimRedeemed;
+  // This file's own subject is claimPending's wiring; the existing-account
+  // redemption path (plan 2026-09-27-invites-existing-accounts.md) fires on
+  // the same fresh sign-ins and is covered separately in
+  // auth.resolve-user.redeemed.test.js — stubbed to a no-op here so it can't
+  // add its own log entries to these assertions.
+  PropertyInvitesService.redeemedBy = async () => [];
+  PropertyInvitesService.claimRedeemed = async () => {};
   calls = [];
   loggedErrors = [];
 });
 
 test.afterEach(() => {
   PropertyInvitesService.claimPending = originalClaimPending;
+  PropertyInvitesService.redeemedBy = originalRedeemedBy;
+  PropertyInvitesService.claimRedeemed = originalClaimRedeemed;
 });
 
 test('resolveUser claims pending invites for a brand-new user (insert branch)', async () => {
