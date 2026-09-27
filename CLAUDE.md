@@ -115,7 +115,7 @@ tally/
 │   ├── init/
 │   │   ├── 001_TALLY_Init.sql    # Full schema: 21 tables
 │   │   └── 002_apply_migrations.sh # Applies SQL/migrations/ after the base schema in local dev
-│   ├── migrations/               # 001–015 (see Database → Migrations)
+│   ├── migrations/               # 001–017 (see Database → Migrations)
 │   ├── ci/migration-gate.sh      # CI migration gate — chain applied twice + schema diff (rule 9)
 │   └── expected-schema.sql       # GENERATED. Regenerate with `SQL/ci/migration-gate.sh --write`
 ├── docker-compose.yml            # 5 services: tally-db, tally-minio, tally-server, tally-client, tally-vault (no nginx locally)
@@ -557,27 +557,21 @@ curl -s https://tally.razorwire-productions.com/health/ready
 Vault bundle the deploy writes `.env` from, and is declared in `pw.json`
 `external_secrets` (NOT `secrets` — that list is auto-generated and fail-closed;
 an operator-supplied key there would be overwritten with a random string and
-would fail every deploy until populated). Fill it with:
-
-```bash
-vault kv patch secret/apps/tally/prod ANTHROPIC_API_KEY=<key>
-```
+would fail every deploy until populated). Fill it via PW UI → tally → Secrets →
+prod, or with `vault kv patch` on the app's Vault path — the exact command is in
+the private PW repo, `docs/apps/tally-infra.md`.
 
 **`patch`, never `put`** — `put` replaces the whole bundle and takes
-`MYSQL_ROOT_PASSWORD`, the S3 keys and `COOKIE_SECRET` with it. (KV-v2 CLI paths
-omit `data/`.) Or PW UI → tally → Secrets → prod.
+`MYSQL_ROOT_PASSWORD`, the S3 keys and `COOKIE_SECRET` with it.
 
 **2. Is it the browser, not the server?** There is a per-device on/off switch
 (`client/src/store/vision-store.ts`, persisted, default on). If it fails on one
 device and works on another, that is the cause.
 
 **3. Otherwise it is the upstream call, and only the logs distinguish why.**
-PW UI → tally → prod → Logs (service `app`), or:
-
-```bash
-curl -s "http://10.0.5.42:8500/api/_x_/apps/tally/envs/prod/server-logs/snapshot?service=app&lines=500" \
-  -H "Authorization: Bearer $ORCHESTRATOR_API_KEY" | grep -i vision
-```
+PW UI → tally → prod → Logs (service `app`), or the orchestrator's server-logs
+snapshot API from the management network (command in PW `docs/apps/tally-infra.md`),
+then `grep -i vision`.
 
 | Log line | Level | Means |
 |---|---|---|
@@ -590,14 +584,13 @@ None of the three means the request never reached the service.
 **Ruled out on 2026-08-30, so don't re-derive:** the model default
 `claude-sonnet-5` is current and `VISION_MODEL` is unset in `pw.json`; the
 server image builds with `npm ci --production`, so the SDK is lockfile-pinned
-and cannot drift on a redeploy; and the 2026-08 UniFi firewall audit deleted no
-tally egress rule (its 8 deletions were `Servers→Tally :22/:80`, the IMP-side
-rules, the IMP-DEV superset, `THD to EMP_DB`, Airplay and Internal-to-Work).
+and cannot drift on a redeploy; and the 2026-08 firewall audit removed no tally
+egress rule (details in PW `docs/apps/tally-infra.md`).
 
 ### Deployment (PW v2)
 
 - Tally deploys via the **PW v2 contract** — `pw.json` in the repo root is the single deployment manifest (services `app`/`db`/`storage`/`web`, secrets, health check `/health/ready`). No `app.yml`, no dual-repo manifest sync: the orchestrator clones this repo fresh and reads `pw.json`.
-- `pw.json` contains no IPs, VLANs, VMIDs, or Ansible groups — the PW registry owns those. Production is a single Docker Compose VM at **10.0.135.10 (VLAN 135, VMID 132)**. (Not VLAN 130 — that was a placeholder in the Phase 5 plan doc; `docs/entra-id-setup.md` still carries stale `10.0.130.x` IPs.)
+- `pw.json` contains no IPs, VLANs, VMIDs, or Ansible groups — the PW registry owns those. Production is a single Docker Compose VM on its own VLAN; its address, VLAN and VM id live in the PW registry and the private PW doc `docs/apps/tally-infra.md` — **never add them here: this repo is public** (#798). (Older docs in this repo, e.g. `docs/entra-id-setup.md`, still carry a stale placeholder network — ignore it.)
 - Local development uses `docker-compose.yml` + Taskfile, unrelated to the prod manifest.
 
 ### CI/CD (GitHub Actions + PW Orchestrator)
@@ -609,9 +602,9 @@ rules, the IMP-DEV superset, `THD to EMP_DB`, Airplay and Internal-to-Work).
 - All jobs use the `.github/actions/setup-node` composite action.
 
 **Required GitHub Config:**
-- Repository variable: `ORCHESTRATOR_URL` = `http://10.0.5.42:8500`
-- Repository secret: `ORCHESTRATOR_API_KEY` = the orchestrator admin token
-- Self-hosted runner: `tally-runner-shared` registered at `/opt/actions-runner-tally` on VMID 105
+- Repository variable: `ORCHESTRATOR_URL` — the orchestrator's internal API (value in PW `docs/apps/tally-infra.md`; reachable only from the self-hosted runners).
+- **No orchestrator secret.** `build.yml` authenticates with a **GitHub Actions OIDC token** (`permissions: id-token: write`; the `orch_curl` helper mints one per call) that PW's `ci-oidc.yml` binds to this repo, `master` and push/workflow_dispatch (#396).
+- Self-hosted runners: PW-managed ephemeral JIT runners carrying the `tally` label — nothing to register by hand.
 
 ### CI/CD Rules — READ BEFORE MAKING CHANGES
 
@@ -639,13 +632,9 @@ These rules exist because every one of them was learned from a production failur
 
 8. **`Build & Deploy` never runs migrations — and a pending one now REFUSES the deploy, not "deploy green then 500."** The orchestrator's deploy op updates containers only; applying schema is a *separate* op (`executor.js` says so explicitly). That used to mean a PR that adds a migration would deploy green and then 500 on every endpoint touching the new tables. It no longer does: PW's v2 schema gate (step 1, `orchestrator/api/src/services/v2/schemaGate.js`) reads `SQL/migrations/` at the deploy's ref (a blobless clone — nothing is mutated) and compares it against `schema_migrations` on the target *before* the real clone rm -rf's the checkout; any pending migration is a FATAL refusal of the whole deploy. The one escape hatch, `{"allowSchemaDrift": true}` in the deploy body, is never set by tally's `build.yml` trigger (it posts only `{"ref": ...}`), so for this app the refusal is unconditional. (An unreadable ledger — a first deploy, before the DB container exists — still passes as `COULD NOT VERIFY`; that's the gate's one deliberate gap, not one tally can hit post-launch.) Either way, `migrate-all` is still a step the deploy itself will never run — after merging any migration, run it first (or the auto-triggered deploy for that merge will simply fail and need retrying):
 
-    ```bash
-    curl -X POST http://10.0.5.42:8500/api/_y_/apps/tally/envs/prod/db/migrate-all \
-      -H "Authorization: Bearer $ORCHESTRATOR_API_KEY" \
-      -H 'Content-Type: application/json' -d '{"ref":"master"}'
-    ```
+    It is `POST /api/_y_/apps/tally/envs/prod/db/migrate-all` with `{"ref":"master"}` and an admin token — the exact command (run from the management network) is in PW `docs/apps/tally-infra.md`.
 
-    `migrate-all` auto-applies: it diffs `SQL/migrations/` against `schema_migrations` on the target and applies what's pending, in order. It takes a pre-migration `mysqldump` first. **The orchestrator is only reachable from the management VLAN (10.0.5.0/24)** — not from a normal client machine.
+    `migrate-all` auto-applies: it diffs `SQL/migrations/` against `schema_migrations` on the target and applies what's pending, in order. It takes a pre-migration `mysqldump` first. **The orchestrator is only reachable from the management network** — not from a normal client machine.
 
 9. **Migrations MUST be idempotent.** The playbook stops at the first error, so one failing migration blocks every later one behind it. This is not hypothetical: 002 added indexes that were later folded into `SQL/init/001_TALLY_Init.sql`, so it died with `ERROR 1061 Duplicate key name` on any database built from the current base schema — and blocked 003, leaving the print tables absent while the deploy reported success. MySQL 8 has no `ADD KEY ... IF NOT EXISTS`; guard with an `information_schema` check plus a prepared statement (see 002 for the pattern). Prefer `CREATE TABLE IF NOT EXISTS` for new tables.
 
@@ -667,11 +656,11 @@ These rules exist because every one of them was learned from a production failur
 
 #### Environment & Secrets
 
-14. **GitHub repo secrets must be configured for the deploy step** — `ORCHESTRATOR_URL` (variable) and `ORCHESTRATOR_API_KEY` (secret). Missing secrets cause the deploy step to silently send empty auth headers and empty URLs, which fail with unhelpful curl exit codes.
+14. **The deploy step needs `permissions: id-token: write` and the `ORCHESTRATOR_URL` variable** — it authenticates with a GitHub Actions OIDC token, not a stored secret (#396). A failed mint prints `::error::could not mint a GitHub OIDC token` and the helper exits 97; a missing `ORCHESTRATOR_URL` makes curl fail with an unhelpful exit code.
 
 15. **After every push, check GH Actions run status** — `gh run list --limit 3`. If a run fails, diagnose and fix BEFORE pushing more commits. Stacking fixes on failures creates queued broken runs. Cancel stale runs with `gh run cancel <id>`. Never leave a failed run uninvestigated.
 
-16. **The self-hosted runner must be registered for this repo** — a new runner registration requires: (a) `gh api -X POST repos/lukeRWP/tally/actions/runners/registration-token`, (b) configure at `/opt/actions-runner-tally` on the runner VM, (c) install as systemd service. If the runner is offline, GH Actions jobs queue indefinitely.
+16. **Self-hosted jobs run on PW's ephemeral JIT runners** (label `tally`), minted per job by the orchestrator — never registered by hand. If jobs queue indefinitely the fleet is down: that is PW's `gh-runners` monitor check to chase (details in PW `docs/apps/tally-infra.md`).
 
 ## Tally v1.0 — Complete Feature Set
 
@@ -681,4 +670,4 @@ These rules exist because every one of them was learned from a production failur
 | **Phase 2** — Files & Products | File upload/download (presigned MinIO URLs), Condition snapshots (photo + rating history), Product catalog with barcode lookup (Open Food Facts + UPC Database), camera barcode scanning (`html5-qrcode`) |
 | **Phase 3** — Labels & Tags | QR code generation (`TLY-{TYPE}-{HEX}` format), PDF label printing with 4 presets (2×1 item tag, 3×3 bin/location tag, 4×6 contents manifest, Avery 5160 sheet), QR deep-link resolution, Scan-Scan-Done move workflow, polymorphic tag system (property-scoped, works across items/containers/areas) |
 | **Phase 4** — Advanced Features | Lending (lend/return/overdue tracking), User-defined dates (warranty, service, etc.) with upcoming alerts, Accessories (item-to-item links), Audit trail (full change log), Notifications (opt-in, per-type preferences), Recycle bin (30-day soft delete), Client-side depreciation calculation |
-| **Phase 5** — Reports, Sharing & Deployment | 6 report types in PDF/CSV, Time-limited public share links (no-auth viewer page), PW v2 `pw.json` deployment (VLAN 135), GitHub Actions CI (`ci.yml`) + build+deploy (`build.yml`) pipeline |
+| **Phase 5** — Reports, Sharing & Deployment | 6 report types in PDF/CSV, Time-limited public share links (no-auth viewer page), PW v2 `pw.json` deployment, GitHub Actions CI (`ci.yml`) + build+deploy (`build.yml`) pipeline |
