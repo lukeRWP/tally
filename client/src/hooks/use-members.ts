@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { api } from '@/lib/api';
+import { api, type ApiError } from '@/lib/api';
 import { queryKeys } from '@/lib/query-client';
 import type { CreatedPropertyInvite, PropertyInvite, PropertyMember } from '@/types/inventory';
 
@@ -26,18 +26,19 @@ export function usePropertyMembers(propertyId: number, enabled = true) {
  * to refetch that too — otherwise the Members section keeps rendering for
  * someone who can no longer use it.
  */
-function useInvalidateMembership(propertyId: number) {
+export function useInvalidateMembership(propertyId: number) {
   const qc = useQueryClient();
   return () => {
     qc.invalidateQueries({ queryKey: queryKeys.properties.members(propertyId) });
+    qc.invalidateQueries({ queryKey: queryKeys.properties.invites(propertyId) });
     qc.invalidateQueries({ queryKey: queryKeys.properties.list() });
   };
 }
 
 export function useAddMember(propertyId: number) {
   const invalidate = useInvalidateMembership(propertyId);
-  return useMutation({
-    mutationFn: (data: { email: string; role: Exclude<MemberRole, 'owner'> }) =>
+  return useMutation<{ member: PropertyMember }, ApiError, { email: string; role: Exclude<MemberRole, 'owner'> }>({
+    mutationFn: (data) =>
       api.post<{ member: PropertyMember }>(`/api/properties/_y_/${propertyId}/members`, data),
     onSuccess: invalidate,
   });
@@ -80,8 +81,8 @@ export function usePropertyInvites(propertyId: number, enabled = true) {
 
 export function useCreateInvite(propertyId: number) {
   const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (data: { displayName: string; role: Exclude<MemberRole, 'owner'> }) =>
+  return useMutation<CreatedPropertyInvite, ApiError, { displayName: string; role: Exclude<MemberRole, 'owner'> }>({
+    mutationFn: (data) =>
       api.post<CreatedPropertyInvite>(`/api/properties/_y_/${propertyId}/invites`, data),
     onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.properties.invites(propertyId) }),
   });
@@ -89,8 +90,8 @@ export function useCreateInvite(propertyId: number) {
 
 export function useRevokeInvite(propertyId: number) {
   const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (inviteId: number) =>
+  return useMutation<null, ApiError, number>({
+    mutationFn: (inviteId) =>
       api.del<null>(`/api/properties/_d_/${propertyId}/invites/${inviteId}`),
     onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.properties.invites(propertyId) }),
   });

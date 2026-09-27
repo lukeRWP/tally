@@ -1,30 +1,35 @@
 import * as React from 'react';
-import { Copy, Loader2, Send, Share2, UserMinus, UserPlus, X } from 'lucide-react';
+import { UserMinus, UserPlus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
+import { Dialog, DialogContent } from '@/components/ui/dialog';
 import { toast } from '@/components/ui/toast';
 import { useAuthStore } from '@/store/auth-store';
+import { ApiError } from '@/lib/api';
+import { AddPersonDialog, InviteReadyPanel } from './add-person-dialog';
 import {
   usePropertyMembers,
-  useAddMember,
   useUpdateMemberRole,
   useRemoveMember,
   usePropertyInvites,
   useCreateInvite,
   useRevokeInvite,
+  useInvalidateMembership,
   type MemberRole,
 } from '@/hooks/use-members';
-import type { CreatedPropertyInvite, PropertyMember } from '@/types/inventory';
+import type { CreatedPropertyInvite, PropertyInvite, PropertyMember } from '@/types/inventory';
 
 const ROLES: { value: MemberRole; label: string }[] = [
   { value: 'owner', label: 'Owner' },
   { value: 'editor', label: 'Editor' },
   { value: 'viewer', label: 'Viewer' },
 ];
+
+function formatExpiry(iso: string): string {
+  return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }).toUpperCase();
+}
 
 /**
  * Who can see and change this property (#345). Owner-only: the page only
@@ -35,32 +40,29 @@ const ROLES: { value: MemberRole; label: string }[] = [
  * enforces it (409) inside a row lock; here it is reflected as a disabled
  * control on the only owner, because a select that lets you pick something
  * and then refuses is worse than one that tells you up front.
+ *
+ * One "Add person" flow (add-person-flow spec, 2026-09-27) replaced the old
+ * two unlabelled rows, and pending invites now render as rows in this same
+ * list instead of a separate card — see `add-person-dialog.tsx`.
  */
-export function PropertyMembers({ propertyId }: { propertyId: number }) {
+export function PropertyMembers({ propertyId, propertyName }: { propertyId: number; propertyName: string }) {
   const me = useAuthStore((s) => s.user);
   const { data: members = [], isLoading } = usePropertyMembers(propertyId);
   const { data: invites = [] } = usePropertyInvites(propertyId);
-  const addMember = useAddMember(propertyId);
   const updateRole = useUpdateMemberRole(propertyId);
   const removeMember = useRemoveMember(propertyId);
   const createInvite = useCreateInvite(propertyId);
   const revokeInvite = useRevokeInvite(propertyId);
+  const invalidateMembership = useInvalidateMembership(propertyId);
 
   const [removeTarget, setRemoveTarget] = React.useState<PropertyMember | null>(null);
   // Demoting YOURSELF is the one role change that removes the control you
   // are using, so it confirms; changing someone else's role is reversible
   // from this same row and just applies.
   const [selfDemote, setSelfDemote] = React.useState<MemberRole | null>(null);
-  const [email, setEmail] = React.useState('');
-  const [newRole, setNewRole] = React.useState<'editor' | 'viewer'>('editor');
-
-  // Inviting a brand-new person (plan 2026-09-26-property-invites.md), not
-  // an existing tally user — a separate form from "add by email" above,
-  // since there is no account to look up yet.
-  const [inviteName, setInviteName] = React.useState('');
-  const [inviteRole, setInviteRole] = React.useState<'editor' | 'viewer'>('editor');
-  const [minted, setMinted] = React.useState<CreatedPropertyInvite | null>(null);
-  const [copied, setCopied] = React.useState(false);
+  const [addOpen, setAddOpen] = React.useState(false);
+  const [revokeTarget, setRevokeTarget] = React.useState<PropertyInvite | null>(null);
+  const [relinked, setRelinked] = React.useState<CreatedPropertyInvite | null>(null);
 
   const ownerCount = members.filter((m) => m.role === 'owner').length;
   const isLastOwner = (m: PropertyMember) => m.role === 'owner' && ownerCount <= 1;
@@ -98,53 +100,47 @@ export function PropertyMembers({ propertyId }: { propertyId: number }) {
     setSelfDemote(null);
   }
 
-  function onAdd(e: React.FormEvent) {
-    e.preventDefault();
-    const trimmed = email.trim();
-    if (!trimmed) return;
-    addMember.mutate({ email: trimmed, role: newRole }, {
-      onSuccess: (data) => { toast.success(`${data.member.displayName} added as ${newRole}`); setEmail(''); },
-      onError: (err) => toast.error(err.message),
+  // "New link": revoke the pending invite, then mint a fresh one with the
+  // same name and role — the owner never re-types either.
+  function onNewLink(invite: PropertyInvite) {
+    revokeInvite.mutate(invite.id, {
+      onSuccess: () => {
+        createInvite.mutate({ displayName: invite.displayName, role: invite.role }, {
+          onSuccess: (data) => setRelinked(data),
+          onError: (err: ApiError) => toast.error(err.message),
+        });
+      },
+      onError: (err: ApiError) => {
+        // The invitee accepted between our list render and this click —
+        // there is no invite left to relink, only a member to refresh in.
+        if (err.status === 409 && err.message.includes('accepted')) {
+          toast.success(`${invite.displayName} already accepted — they're a member now`);
+        } else {
+          toast.error(err.message);
+        }
+        invalidateMembership();
+      },
     });
   }
 
-  function onInvite(e: React.FormEvent) {
-    e.preventDefault();
-    const trimmed = inviteName.trim();
-    if (!trimmed) return;
-    createInvite.mutate({ displayName: trimmed, role: inviteRole }, {
-      onSuccess: (data) => { setMinted(data); setCopied(false); setInviteName(''); },
-      onError: (err) => toast.error(err.message),
+  function confirmRevoke() {
+    if (!revokeTarget) return;
+    const target = revokeTarget;
+    revokeInvite.mutate(target.id, {
+      onSuccess: () => { toast.success('Invite revoked'); setRevokeTarget(null); },
+      onError: (err) => { toast.error(err.message); setRevokeTarget(null); },
     });
-  }
-
-  function onRevokeInvite(id: number) {
-    revokeInvite.mutate(id, {
-      onSuccess: () => toast.success('Invite revoked'),
-      onError: (err) => toast.error(err.message),
-    });
-  }
-
-  function copyInviteUrl(url: string) {
-    navigator.clipboard.writeText(url).then(
-      () => { setCopied(true); toast.success('Link copied to clipboard'); },
-      () => toast.error('Failed to copy link'),
-    );
-  }
-
-  function shareInviteUrl(invite: CreatedPropertyInvite) {
-    const expires = new Date(invite.invite.expiresAt).toLocaleDateString(undefined, {
-      month: 'short', day: 'numeric',
-    });
-    navigator.share?.({
-      title: 'Tally invite',
-      text: `You're invited to a property on Tally (expires ${expires}).`,
-      url: invite.url,
-    }).catch(() => { /* user cancelled — nothing to do */ });
   }
 
   return (
     <div className="flex flex-col">
+      <div className="flex items-center justify-end pb-2">
+        <Button onClick={() => setAddOpen(true)}>
+          <UserPlus className="w-4 h-4" />
+          Add person
+        </Button>
+      </div>
+
       {isLoading && <Skeleton className="h-14 w-full mt-2" />}
 
       {members.map((member) => {
@@ -192,133 +188,50 @@ export function PropertyMembers({ propertyId }: { propertyId: number }) {
         );
       })}
 
-      {/* Add by email. Owner is deliberately not offered here: promote after
-          adding, from the row, so a typo in the address never mints an owner. */}
-      <form onSubmit={onAdd} className="flex items-center gap-2 pt-3">
-        <Input
-          type="email"
-          aria-label="Email address to add"
-          placeholder="name@example.com"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          className="min-w-0 flex-1"
-          autoComplete="off"
-        />
-        <Select
-          aria-label="Role for the new member"
-          value={newRole}
-          onChange={(e) => setNewRole(e.target.value as 'editor' | 'viewer')}
-          className="w-28"
+      {invites.map((invite) => (
+        <div
+          key={invite.id}
+          className="flex items-center gap-2 min-h-[44px] py-2 border-b border-[var(--color-rule)] last:border-b-0"
         >
-          <option value="editor">Editor</option>
-          <option value="viewer">Viewer</option>
-        </Select>
-        <Button type="submit" size="icon" aria-label="Add member" disabled={addMember.isPending || !email.trim()}>
-          <UserPlus className="w-4 h-4" />
-        </Button>
-      </form>
-
-      {/* Invite someone new — no tally account yet, so there is nothing to
-          look up by email. pwiam mints the account grant; this just names
-          who and what role (plan 2026-09-26-property-invites.md). */}
-      <form onSubmit={onInvite} className="flex items-center gap-2 pt-2">
-        <Input
-          type="text"
-          aria-label="Name of the person to invite"
-          placeholder="Invite by name (new to Tally)"
-          value={inviteName}
-          onChange={(e) => setInviteName(e.target.value)}
-          maxLength={120}
-          className="min-w-0 flex-1"
-          autoComplete="off"
-        />
-        <Select
-          aria-label="Role for the invite"
-          value={inviteRole}
-          onChange={(e) => setInviteRole(e.target.value as 'editor' | 'viewer')}
-          className="w-28"
-        >
-          <option value="editor">Editor</option>
-          <option value="viewer">Viewer</option>
-        </Select>
-        {/* Icon-sized like "Add member" above: a text label here starved the
-            name input to ~70px at 390px wide. */}
-        <Button
-          type="submit"
-          variant="outline"
-          size="icon"
-          aria-label="Invite someone new"
-          disabled={createInvite.isPending || !inviteName.trim()}
-        >
-          {createInvite.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-        </Button>
-      </form>
-
-      {invites.length > 0 && (
-        <div className="pt-3">
-          <p className="text-xs font-medium text-[var(--color-text-muted)] mb-2">Pending invites</p>
-          <div className="flex flex-col gap-2">
-            {invites.map((invite) => (
-              <div
-                key={invite.id}
-                className="flex items-center gap-2 p-2 rounded-[var(--radius-md)] bg-[var(--color-elevated)] border border-[var(--color-border)]"
-              >
-                <div className="flex-1 min-w-0">
-                  <p className="text-xs text-[var(--color-text)] truncate">
-                    {invite.displayName} <span className="text-[var(--color-text-muted)]">· {invite.role}</span>
-                  </p>
-                  <p className="text-[10px] text-[var(--color-text-muted)] mt-0.5">
-                    Expires {new Date(invite.expiresAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
-                  </p>
-                </div>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => onRevokeInvite(invite.id)}
-                  disabled={revokeInvite.isPending}
-                  className="shrink-0 text-[var(--color-red)] hover:bg-[var(--color-red)] hover:text-white"
-                  aria-label={`Revoke the invite to ${invite.displayName}`}
-                >
-                  <X className="w-3.5 h-3.5" />
-                </Button>
-              </div>
-            ))}
-          </div>
+          <span aria-hidden className="w-8 h-8 shrink-0 rounded-[var(--radius-sm)] border border-[var(--color-text)] flex items-center justify-center font-mono text-xs font-bold text-[var(--color-text)]">
+            {invite.displayName.charAt(0).toUpperCase()}
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="block truncate text-sm font-semibold text-[var(--color-text)]">{invite.displayName}</span>
+            <span className="block truncate font-mono text-[10px] uppercase tracking-[0.06em] text-[var(--color-text-muted)]">
+              INVITED &middot; EXPIRES {formatExpiry(invite.expiresAt)}
+            </span>
+          </span>
+          <span className="w-28 shrink-0 text-sm text-[var(--color-text-muted)] capitalize">{invite.role}</span>
+          <Button variant="ghost" size="sm" onClick={() => onNewLink(invite)}>
+            New link
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setRevokeTarget(invite)}
+            className="text-[var(--color-red)] hover:bg-[var(--color-red)] hover:text-white"
+            aria-label={`Revoke the invite to ${invite.displayName}`}
+          >
+            Revoke
+          </Button>
         </div>
-      )}
+      ))}
 
-      {/* The new invite's join link — its only appearance. pwiam never gives
-          it back, and tally never stores it (plan "url returned once"). */}
-      <Dialog open={!!minted} onOpenChange={(open) => { if (!open) setMinted(null); }}>
+      <AddPersonDialog
+        open={addOpen}
+        onOpenChange={setAddOpen}
+        propertyId={propertyId}
+        propertyName={propertyName}
+        myDisplayName={me?.displayName ?? ''}
+      />
+
+      {/* "New link"'s result — same invite-ready view as the add-person
+          dialog, opened directly since there is nothing left to fill in. */}
+      <Dialog open={!!relinked} onOpenChange={(open) => { if (!open) setRelinked(null); }}>
         <DialogContent className="max-w-sm">
-          <DialogHeader>
-            <DialogTitle>Invite ready</DialogTitle>
-            <DialogDescription>
-              Send this link to {minted?.invite.displayName}. It expires{' '}
-              {minted && new Date(minted.invite.expiresAt).toLocaleDateString(undefined, {
-                month: 'short', day: 'numeric',
-              })}
-              , and only works once.
-            </DialogDescription>
-          </DialogHeader>
-          {minted && (
-            <div className="flex flex-col gap-2">
-              <p className="font-mono text-xs break-all p-2 rounded-[var(--radius-md)] bg-[var(--color-elevated)] border border-[var(--color-border)]">
-                {minted.url}
-              </p>
-              <div className="flex gap-2">
-                <Button variant="outline" className="flex-1" onClick={() => copyInviteUrl(minted.url)}>
-                  <Copy className="w-4 h-4" />
-                  {copied ? 'Copied' : 'Copy link'}
-                </Button>
-                {typeof navigator !== 'undefined' && !!navigator.share && (
-                  <Button variant="outline" className="flex-1" onClick={() => shareInviteUrl(minted)}>
-                    <Share2 className="w-4 h-4" />
-                    Share
-                  </Button>
-                )}
-              </div>
-            </div>
+          {relinked && (
+            <InviteReadyPanel minted={relinked} myDisplayName={me?.displayName ?? ''} propertyName={propertyName} />
           )}
         </DialogContent>
       </Dialog>
@@ -347,6 +260,17 @@ export function PropertyMembers({ propertyId }: { propertyId: number }) {
         confirmLabel="Change my role"
         isPending={updateRole.isPending}
         onConfirm={confirmSelfDemote}
+      />
+
+      <ConfirmDialog
+        open={!!revokeTarget}
+        onOpenChange={(open) => { if (!open && !revokeInvite.isPending) setRevokeTarget(null); }}
+        title={`Revoke ${revokeTarget?.displayName ?? ''}'s invite?`}
+        description="The link stops working."
+        destructive
+        confirmLabel="Revoke"
+        isPending={revokeInvite.isPending}
+        onConfirm={confirmRevoke}
       />
     </div>
   );
