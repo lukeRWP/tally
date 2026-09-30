@@ -24,7 +24,7 @@ jobs:
     name: Test Client
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
       - uses: ./.github/actions/setup-node
       # --no-audit: npm runs an audit after installing, and the audit endpoint
       # it uses stalls indefinitely (see #380 / lukeRWP/prevailing-winds#845).
@@ -49,7 +49,7 @@ jobs:
     name: Test Server
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
       - uses: ./.github/actions/setup-node
       # test/labels.geometry.test.js rasterises the real label PDFs with
       # `pdftoppm -r 203` and checks the printed QR / Code 128 module grid
@@ -79,7 +79,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
         with:
           # The gate compares against the PR base to decide whether SQL/ was
           # touched, so the base commit has to be in the local history.
@@ -118,7 +118,7 @@ jobs:
     name: Security Audit
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
       - uses: ./.github/actions/setup-node
       # Two things are deliberate here.
       #
