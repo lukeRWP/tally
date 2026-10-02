@@ -5,13 +5,15 @@ import { Button } from '@/components/ui/button';
 import { ColHead } from '@/components/ui/col-head';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { Input } from '@/components/ui/input';
+import { Select } from '@/components/ui/select';
 import { toast } from '@/components/ui/toast';
 import {
   usePrinters, usePrintJobs, useCreatePrinter, useRevokePrinter,
   useSetLoadedMedia, useCancelPrintJob, useRetryPrintJob,
-  useBindServiceAccount, useUnbindServiceAccount,
+  useBindServiceAccount, useUnbindServiceAccount, useMovePrinter,
   type PrintablePreset,
 } from '@/hooks/use-print';
+import { useProperties } from '@/hooks/use-inventory';
 
 // pwiam ids are ULIDs (Crockford base32, no I/L/O/U): 26 characters. Checked
 // client-side only as a typo guard — the server is the actual authority
@@ -47,9 +49,18 @@ function offlineLabel(lastSeenAt: string | null): string {
   return lastSeenAt ? `Offline · last seen ${relativeTime(lastSeenAt)}` : 'Offline';
 }
 
-export function PrinterSettings({ propertyId }: { propertyId?: number }) {
+export function PrinterSettings({
+  propertyId, onMoved,
+}: {
+  propertyId?: number;
+  // Settings follows the printer: after a successful move, the caller
+  // re-selects the destination property so the Printing panel doesn't go
+  // on showing a printer that just left.
+  onMoved?: (propertyId: number) => void;
+}) {
   const { data: printers } = usePrinters(propertyId);
   const { data: jobs } = usePrintJobs(propertyId);
+  const { data: properties } = useProperties();
   const createPrinter = useCreatePrinter(propertyId);
   const revokePrinter = useRevokePrinter(propertyId);
   const setLoadedMedia = useSetLoadedMedia(propertyId);
@@ -57,6 +68,7 @@ export function PrinterSettings({ propertyId }: { propertyId?: number }) {
   const retryJob = useRetryPrintJob(propertyId);
   const bindServiceAccount = useBindServiceAccount(propertyId);
   const unbindServiceAccount = useUnbindServiceAccount(propertyId);
+  const movePrinter = useMovePrinter();
 
   const [newName, setNewName] = React.useState('');
   const [issuedToken, setIssuedToken] = React.useState<string | null>(null);
@@ -67,6 +79,29 @@ export function PrinterSettings({ propertyId }: { propertyId?: number }) {
   // new credential from scratch (#278).
   const [removeOpen, setRemoveOpen] = React.useState(false);
   const printer = printers?.[0];
+
+  // Only another property the caller owns is a legal destination — an
+  // editor/viewer-role property would 404 server-side (moveAgent checks
+  // ownership of the destination), so there's no point offering it here.
+  const moveDestinations = (properties ?? []).filter((p) => p.role === 'owner' && p.id !== propertyId);
+  const [moveTargetId, setMoveTargetId] = React.useState('');
+  const [moveOpen, setMoveOpen] = React.useState(false);
+  const moveTarget = moveDestinations.find((p) => String(p.id) === moveTargetId);
+
+  function confirmMove() {
+    if (!printer || !moveTarget) return;
+    movePrinter.mutate({ id: printer.id, toPropertyId: moveTarget.id }, {
+      onSuccess: () => {
+        setMoveOpen(false);
+        toast(`Moved to ${moveTarget.name}`);
+        onMoved?.(moveTarget.id);
+      },
+      onError: (e) => {
+        toast(e instanceof Error ? e.message : 'Could not move the printer');
+        setMoveOpen(false);
+      },
+    });
+  }
 
   function confirmRemove() {
     if (!printer) return;
@@ -185,6 +220,36 @@ export function PrinterSettings({ propertyId }: { propertyId?: number }) {
               ))}
             </div>
           </div>
+
+          {moveDestinations.length > 0 && (
+            <div className="flex flex-col gap-1.5">
+              <p className="font-mono text-[10px] uppercase tracking-[0.1em] text-[var(--color-text-muted)]">Move to another property</p>
+              <div className="flex gap-2">
+                <Select value={moveTargetId} onChange={(e) => setMoveTargetId(e.target.value)}>
+                  <option value="">Select a property…</option>
+                  {moveDestinations.map((p) => (
+                    <option key={p.id} value={p.id}>{p.name}</option>
+                  ))}
+                </Select>
+                <Button size="sm" variant="outline" disabled={!moveTargetId || movePrinter.isPending}
+                        onClick={() => setMoveOpen(true)}>
+                  Move
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {moveTarget && (
+            <ConfirmDialog
+              open={moveOpen}
+              onOpenChange={(open) => { if (!movePrinter.isPending) setMoveOpen(open); }}
+              title={`Move ${printer.name} to ${moveTarget.name}?`}
+              description="The Pi keeps its saved key — nothing to change on the SD card. Jobs waiting here stay with this property; any job mid-print is put back in the queue."
+              confirmLabel="Move"
+              isPending={movePrinter.isPending}
+              onConfirm={confirmMove}
+            />
+          )}
 
           <div className="flex flex-col gap-1.5">
             <p className="font-mono text-[10px] uppercase tracking-[0.1em] text-[var(--color-text-muted)]">pwiam service account</p>

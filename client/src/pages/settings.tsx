@@ -288,7 +288,7 @@ export function SettingsPage() {
           {selectedPropertyId > 0 && (
             <section className="flex flex-col gap-3 animate-fade-up" style={{ animationDelay: '120ms' }}>
               <ColHead>Printing</ColHead>
-              <PrinterSettings propertyId={selectedPropertyId} />
+              <PrinterSettings propertyId={selectedPropertyId} onMoved={setSelectedPropertyId} />
             </section>
           )}
 
