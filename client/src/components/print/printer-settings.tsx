@@ -87,13 +87,26 @@ export function PrinterSettings({
   const [moveTargetId, setMoveTargetId] = React.useState('');
   const [moveOpen, setMoveOpen] = React.useState(false);
   const moveTarget = moveDestinations.find((p) => String(p.id) === moveTargetId);
+  // Looked up once and reused by both the toast and the dialog description —
+  // the source is THIS property, not the destination, so it never comes from
+  // moveDestinations (which excludes it by definition).
+  const sourceName = properties?.find((p) => p.id === propertyId)?.name ?? 'the old property';
 
   function confirmMove() {
     if (!printer || !moveTarget) return;
+    const destName = moveTarget.name;
     movePrinter.mutate({ id: printer.id, toPropertyId: moveTarget.id }, {
-      onSuccess: () => {
+      onSuccess: (res) => {
         setMoveOpen(false);
-        toast(`Moved to ${moveTarget.name}`);
+        setMoveTargetId('');
+        // The source property now has no printer: anything still queued or
+        // held there (including the claims the move just requeued) can't
+        // print until one is added. Silence here is exactly how job 27 sat
+        // for five days unnoticed — say it at the one moment anyone is
+        // looking.
+        toast(res.leftBehind > 0
+          ? `Moved to ${destName} — ${res.leftBehind} job${res.leftBehind === 1 ? '' : 's'} left at ${sourceName} won't print until a printer is added there`
+          : `Moved to ${destName}`);
         onMoved?.(moveTarget.id);
       },
       onError: (e) => {
@@ -231,7 +244,7 @@ export function PrinterSettings({
                     <option key={p.id} value={p.id}>{p.name}</option>
                   ))}
                 </Select>
-                <Button size="sm" variant="outline" disabled={!moveTargetId || movePrinter.isPending}
+                <Button size="sm" variant="outline" disabled={!moveTarget || movePrinter.isPending}
                         onClick={() => setMoveOpen(true)}>
                   Move
                 </Button>
@@ -241,10 +254,10 @@ export function PrinterSettings({
 
           {moveTarget && (
             <ConfirmDialog
-              open={moveOpen}
+              open={moveOpen && !!moveTarget}
               onOpenChange={(open) => { if (!movePrinter.isPending) setMoveOpen(open); }}
               title={`Move ${printer.name} to ${moveTarget.name}?`}
-              description="The Pi keeps its saved key — nothing to change on the SD card. Jobs waiting here stay with this property; any job mid-print is put back in the queue."
+              description={`The Pi keeps its saved key — nothing to change on the SD card. Jobs waiting at ${sourceName} stay with ${sourceName} and won't print until a printer is added there; a job mid-print goes back into that queue.`}
               confirmLabel="Move"
               isPending={movePrinter.isPending}
               onConfirm={confirmMove}

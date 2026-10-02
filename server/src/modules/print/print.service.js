@@ -244,14 +244,27 @@ const PrintService = {
 
     // PROPERTY_ID and PRESET come from the agent row — never from the request,
     // so an agent cannot reach another property or pull a roll it hasn't loaded.
+    //
+    // agent.propertyId was read by the auth middleware before this statement
+    // runs, and a concurrent moveAgent can commit in between — without a
+    // re-check here, this UPDATE would happily claim a job still sitting at
+    // the OLD property, which nothing will ever sweep again (sweeps are
+    // scoped per-property too). The EXISTS subquery re-reads printer_agents
+    // for THIS agent id at claim time; a subquery on a DIFFERENT table is
+    // legal inside the same UPDATE (MySQL error 1093 only forbids the target
+    // table), so this stays the single-table UPDATE ORDER BY/LIMIT needs.
+    // That read also locks the same agent row moveAgent holds FOR UPDATE, so
+    // a claim racing a move simply waits for it, then matches nothing against
+    // the agent's new property.
     const claimId = crypto.randomUUID();
     const claimed = await _db.query(
       `UPDATE TALLY.print_jobs
           SET STATUS = 'claimed', CLAIM_ID = ?, CLAIMED_BY = ?, CLAIMED_AT = NOW()
         WHERE PROPERTY_ID = ? AND STATUS = 'queued' AND PRESET = ?
+          AND EXISTS (SELECT 1 FROM TALLY.printer_agents a WHERE a.ID = ? AND a.PROPERTY_ID = print_jobs.PROPERTY_ID)
         ORDER BY CREATED_AT
         LIMIT 1`,
-      [claimId, agent.id, agent.propertyId, agent.loadedMedia]
+      [claimId, agent.id, agent.propertyId, agent.loadedMedia, agent.id]
     );
     if (claimed.affectedRows === 0) return null;
 
@@ -488,7 +501,7 @@ const PrintService = {
   // move with it (requeued, not failed: this is an operator action, not a
   // job failure, so ATTEMPTS is never incremented).
   async moveAgent(agentId, toPropertyId, userId) {
-    return _db.withTransaction(async (tx) => {
+    const result = await _db.withTransaction(async (tx) => {
       const agentRows = await tx.query(
         `SELECT a.ID, a.PROPERTY_ID, a.LOADED_MEDIA
            FROM TALLY.printer_agents a
@@ -527,12 +540,17 @@ const PrintService = {
       // only runs on claims at the job's OWN property, so a departed
       // printer's claims would otherwise be stranded in 'claimed' forever;
       // clearing CLAIM_ID also fences out a late ack from the Pi for the
-      // claim it no longer holds.
+      // claim it no longer holds. PROPERTY_ID = ? (the agent's CURRENT,
+      // pre-move property) is added alongside CLAIMED_BY so this hits
+      // idx_print_jobs_claim instead of a bare CLAIMED_BY scan — unindexed,
+      // it would lock every row in print_jobs for the duration of this
+      // transaction. A claim is only ever made at the agent's own property,
+      // so the added predicate narrows nothing a correct claim could violate.
       const requeued = await tx.query(
         `UPDATE TALLY.print_jobs
             SET STATUS = 'queued', CLAIM_ID = NULL, CLAIMED_BY = NULL, CLAIMED_AT = NULL
-          WHERE CLAIMED_BY = ? AND STATUS = 'claimed'`,
-        [agentId]
+          WHERE CLAIMED_BY = ? AND STATUS = 'claimed' AND PROPERTY_ID = ?`,
+        [agentId, agent.PROPERTY_ID]
       );
 
       await tx.query(
@@ -544,8 +562,35 @@ const PrintService = {
       // so this scopes to the destination's queue exactly like setLoadedMedia.
       const { released, held } = await reconcileQueueForMedia(tx.query, agentId, agent.LOADED_MEDIA);
 
-      return { id: agentId, propertyId: toPropertyId, requeued: requeued.affectedRows, released, held };
+      return {
+        id: agentId, propertyId: toPropertyId, requeued: requeued.affectedRows, released, held,
+        fromPropertyId: agent.PROPERTY_ID,
+      };
     });
+    if (result.error) return result;
+
+    // The source property now has no printer at all, so whatever it still has
+    // queued or held (including the claims just requeued above) cannot print
+    // until a printer is added there — the exact "job 27 sat queued for five
+    // days" failure createJob's noAgent flag exists for, but discovered here
+    // instead of at queue time. Counted OUTSIDE the transaction: this printer
+    // row has already moved, so nothing about this read needs the lock the
+    // move held, and the caller gets a true post-move count.
+    const leftBehindRows = await _db.query(
+      `SELECT COUNT(*) AS cnt FROM TALLY.print_jobs
+        WHERE PROPERTY_ID = ? AND STATUS IN ('queued', 'held')`,
+      [result.fromPropertyId]
+    );
+    const leftBehind = leftBehindRows[0].cnt;
+
+    // Logged after commit, not inside the transaction: a rollback must never
+    // produce a log line claiming a move that didn't happen.
+    _logger?.info?.('printer moved', {
+      agentId, fromPropertyId: result.fromPropertyId, toPropertyId, userId,
+      requeued: result.requeued, released: result.released, held: result.held, leftBehind,
+    });
+
+    return { ...result, leftBehind };
   },
 };
 

@@ -522,6 +522,34 @@ test('claimNext persists telemetry and derives property/preset from the AGENT, n
   assert.match(claim.sql, /LIMIT 1/i);
 });
 
+test('claimNext guards the claim UPDATE against a concurrent moveAgent — EXISTS on the agent\'s CURRENT property', async () => {
+  // req.agent.propertyId is read by middleware before a concurrent moveAgent
+  // could commit. Without this guard, claimNext can claim a job at the OLD
+  // property that nothing will ever sweep again (the sweep is scoped to
+  // whatever property the caller passes in, which is now wrong too). The
+  // EXISTS subquery re-reads printer_agents for THIS agent id — a FOR UPDATE
+  // row moveAgent also locks — so the claim waits for the move and then
+  // matches nothing against the agent's new property.
+  let claimSql = '', claimParams = null;
+  PrintService.init({ db: fakeDb((sql, params) => {
+    if (/UPDATE TALLY\.printer_agents/i.test(sql)) return { affectedRows: 1 };
+    if (/SET STATUS\s*=\s*'queued'/i.test(sql)) return { affectedRows: 0 };
+    if (/SET STATUS\s*=\s*'claimed'/i.test(sql)) { claimSql = sql; claimParams = params; return { affectedRows: 1 }; }
+    if (/SELECT .* FROM TALLY\.print_jobs/i.test(sql)) {
+      return [{ ID: 11, PROPERTY_ID: 3, CREATED_BY: 42, ENTITY_TYPE: 'container',
+                ENTITY_IDS: '[5]', PRESET: 'large', STATUS: 'claimed', ATTEMPTS: 0 }];
+    }
+    return [];
+  }), logger, config });
+
+  const agent = { id: 7, propertyId: 3, loadedMedia: 'large' };
+  await PrintService.claimNext(agent, {});
+
+  assert.match(claimSql, /AND EXISTS\s*\(\s*SELECT 1 FROM TALLY\.printer_agents a\s+WHERE a\.ID = \?\s+AND a\.PROPERTY_ID = print_jobs\.PROPERTY_ID\s*\)/i,
+    'the claim must re-check the agent\'s live PROPERTY_ID against the job row, inside the same single-table UPDATE');
+  assert.ok(claimParams.includes(7), 'the agent id is bound for the EXISTS subquery');
+});
+
 test('claimNext returns null when nothing is claimable', async () => {
   PrintService.init({ db: fakeDb((sql) => {
     if (/UPDATE/i.test(sql)) return { affectedRows: 0 };
@@ -1135,7 +1163,7 @@ function txHarness(handlers = {}) {
   return { sqls, params, db };
 }
 
-test('moveAgent success: requeues claims, reconciles the destination queue, and moves the #122 tether', async () => {
+test('moveAgent success: requeues claims, reconciles the destination queue, moves the #122 tether, and reports leftBehind', async () => {
   const { sqls, params, db } = txHarness({
     'FROM TALLY\\.printer_agents a': [{ ID: 7, PROPERTY_ID: 3, LOADED_MEDIA: 'medium' }],
     'FROM TALLY\\.properties p': [{ ID: 9 }],
@@ -1143,11 +1171,12 @@ test('moveAgent success: requeues claims, reconciles the destination queue, and 
     "SET STATUS = 'queued', CLAIM_ID = NULL": { affectedRows: 2 },
     "SET j\\.STATUS = 'held'": { affectedRows: 3 },
     "SET j\\.STATUS = 'queued'": { affectedRows: 1 },
+    'SELECT COUNT\\(\\*\\)': [{ cnt: 5 }],
   });
   PrintService.init({ db, logger, config });
 
   const out = await PrintService.moveAgent(7, 9, 42);
-  assert.deepEqual(out, { id: 7, propertyId: 9, requeued: 2, released: 1, held: 3 });
+  assert.deepEqual(out, { id: 7, propertyId: 9, requeued: 2, released: 1, held: 3, fromPropertyId: 3, leftBehind: 5 });
 
   const move = sqls.find((s) => /UPDATE TALLY\.printer_agents SET PROPERTY_ID/i.test(s));
   assert.ok(move, 'the agent row is moved to the destination property');
@@ -1156,9 +1185,56 @@ test('moveAgent success: requeues claims, reconciles the destination queue, and 
   assert.deepEqual(moveParams, [9, 42, 7], 'propertyId, mover userId, then the agent id');
 
   const requeue = sqls.find((s) => /SET STATUS = 'queued', CLAIM_ID = NULL/i.test(s));
-  assert.match(requeue, /WHERE CLAIMED_BY = \? AND STATUS = 'claimed'/i,
-    'only this agent\'s own in-flight claims are requeued');
+  assert.match(requeue, /WHERE CLAIMED_BY = \? AND STATUS = 'claimed' AND PROPERTY_ID = \?/i,
+    'only this agent\'s own in-flight claims, scoped to its CURRENT property, are requeued — ' +
+    'bare CLAIMED_BY has no index and would scan/lock every print_jobs row');
+  const requeueParams = params[sqls.indexOf(requeue)];
+  assert.deepEqual(requeueParams, [7, 3], 'agent id, then the agent\'s own (source) property id');
   assert.ok(!/ATTEMPTS/i.test(requeue), 'a move is an operator action, not a job failure — attempts are untouched');
+
+  const leftBehindQuery = sqls.find((s) => /SELECT COUNT\(\*\)/i.test(s));
+  assert.ok(leftBehindQuery, 'the source property\'s stranded queue is counted after the move');
+  assert.match(leftBehindQuery, /PROPERTY_ID = \? AND STATUS IN \('queued', 'held'\)/i);
+  assert.deepEqual(params[sqls.indexOf(leftBehindQuery)], [3], 'counted at the SOURCE property, not the destination');
+});
+
+test('moveAgent logs the move AFTER the transaction commits, with the full outcome including leftBehind', async () => {
+  const logged = [];
+  const infoLogger = { ...logger, info: (msg, meta) => logged.push({ msg, meta }) };
+  const { db } = txHarness({
+    'FROM TALLY\\.printer_agents a': [{ ID: 7, PROPERTY_ID: 3, LOADED_MEDIA: 'medium' }],
+    'FROM TALLY\\.properties p': [{ ID: 9 }],
+    'SELECT ID FROM TALLY\\.printer_agents WHERE PROPERTY_ID': [],
+    "SET STATUS = 'queued', CLAIM_ID = NULL": { affectedRows: 2 },
+    "SET j\\.STATUS = 'held'": { affectedRows: 3 },
+    "SET j\\.STATUS = 'queued'": { affectedRows: 1 },
+    'SELECT COUNT\\(\\*\\)': [{ cnt: 5 }],
+  });
+  PrintService.init({ db, logger: infoLogger, config });
+
+  await PrintService.moveAgent(7, 9, 42);
+
+  assert.equal(logged.length, 1, 'exactly one log line for a successful move');
+  assert.equal(logged[0].msg, 'printer moved');
+  assert.deepEqual(logged[0].meta, {
+    agentId: 7, fromPropertyId: 3, toPropertyId: 9, userId: 42,
+    requeued: 2, released: 1, held: 3, leftBehind: 5,
+  });
+});
+
+test('moveAgent never logs when it refuses the move (e.g. destination already has a printer)', async () => {
+  const logged = [];
+  const infoLogger = { ...logger, info: (msg, meta) => logged.push({ msg, meta }) };
+  const { db } = txHarness({
+    'FROM TALLY\\.printer_agents a': [{ ID: 7, PROPERTY_ID: 3, LOADED_MEDIA: 'medium' }],
+    'FROM TALLY\\.properties p': [{ ID: 9 }],
+    'SELECT ID FROM TALLY\\.printer_agents WHERE PROPERTY_ID': [{ ID: 99 }],
+  });
+  PrintService.init({ db, logger: infoLogger, config });
+
+  const out = await PrintService.moveAgent(7, 9, 42);
+  assert.deepEqual(out, { error: 'destination_has_printer' });
+  assert.equal(logged.length, 0, 'a refused move must not be logged as a move');
 });
 
 test('moveAgent 404s for a printer the caller does not own at its current property', async () => {
@@ -1198,6 +1274,7 @@ test('moveAgent leaves jobs at the OLD property alone — only claims held BY th
     'FROM TALLY\\.printer_agents a': [{ ID: 7, PROPERTY_ID: 3, LOADED_MEDIA: 'medium' }],
     'FROM TALLY\\.properties p': [{ ID: 9 }],
     'SELECT ID FROM TALLY\\.printer_agents WHERE PROPERTY_ID': [],
+    'SELECT COUNT\\(\\*\\)': [{ cnt: 0 }],
   });
   const wrapped = { ...db, query: async (sql, args) => { seen.push(sql); return db.query(sql, args); } };
   PrintService.init({ db: wrapped, logger, config });

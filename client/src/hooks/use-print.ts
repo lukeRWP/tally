@@ -192,12 +192,25 @@ export function useUnbindServiceAccount(propertyId?: number) {
 // destination property's printer/job lists change — a job may have been
 // requeued or reconciled at either end — so this invalidates the un-scoped
 // prefix (every property's cache) rather than just one id.
+export interface MovePrinterResult {
+  id: number;
+  propertyId: number;
+  requeued: number;
+  released: number;
+  held: number;
+  // The source property has no printer any more: this is how many of its
+  // queued/held jobs (including the just-requeued claims) can't print until
+  // one is added there. The same unclaimable-job problem createJob's noAgent
+  // flag reports at queue time, surfaced here at move time instead.
+  fromPropertyId: number;
+  leftBehind: number;
+}
+
 export function useMovePrinter() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (vars: { id: number; toPropertyId: number }) =>
-      api.put<{ id: number; propertyId: number; requeued: number; released: number; held: number }>(
-        `/api/print/_u_/agents/${vars.id}/property`, { propertyId: vars.toPropertyId }),
+      api.put<MovePrinterResult>(`/api/print/_u_/agents/${vars.id}/property`, { propertyId: vars.toPropertyId }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['print', 'printers'] });
       qc.invalidateQueries({ queryKey: ['print', 'jobs'] });
