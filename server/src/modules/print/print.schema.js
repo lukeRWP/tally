@@ -42,6 +42,12 @@ const bindServiceAccount = Joi.object({
   serviceAccountId: Joi.string().pattern(ULID_RE).required(),
 });
 
+// Move an existing printer to a different property, keeping its credential
+// (tp_ token or pwk_ key) unchanged — no SD-card swap on the Pi.
+const moveAgent = Joi.object({
+  propertyId: Joi.number().integer().required(),
+});
+
 // Telemetry rides the claim request, so it must NEVER be able to break the
 // claim. Rejecting a malformed payload would 400 the whole request and wedge
 // that printer's queue over a cosmetic field — a bad agent build could stop
@@ -71,6 +77,6 @@ const agentAck = Joi.object({
 });
 
 module.exports = {
-  createJob, setLoadedMedia, createAgent, agentClaim, agentAck, bindServiceAccount,
+  createJob, setLoadedMedia, createAgent, agentClaim, agentAck, bindServiceAccount, moveAgent,
   PRINTABLE_PRESETS, ULID_RE,
 };

@@ -4,7 +4,7 @@ module.exports = function printRoutes({ app, db, logger, config }) {
 
   const { requireAgentAny } = require('./agent.middleware');
   const { requirePrintRole } = require('./role.middleware');
-  const { createJob, setLoadedMedia, createAgent, agentClaim, agentAck, bindServiceAccount } = require('./print.schema');
+  const { createJob, setLoadedMedia, createAgent, agentClaim, agentAck, bindServiceAccount, moveAgent } = require('./print.schema');
   const validate = require('../../middleware/validate');
   const { success, error } = require('../../utils/response');
 
@@ -106,6 +106,19 @@ module.exports = function printRoutes({ app, db, logger, config }) {
   app.delete('/api/print/_d_/agents/:id/service-account', requireAuth, role(OWNER, 'agent'), async (req, res) => {
     const ok = await PrintService.unbindServiceAccount(Number(req.params.id), req.user.id);
     return ok ? success(res, { unbound: true }) : error(res, 'Printer not found', 404);
+  });
+
+  // ── PUT /api/print/_u_/agents/:id/property — move a printer ───────────────
+  // Keeps the Pi's existing credential (tp_ token or pwk_ key) — no SD-card
+  // change. role(OWNER, 'agent') checks the caller owns the SOURCE property;
+  // PrintService.moveAgent separately checks ownership of the destination.
+  app.put('/api/print/_u_/agents/:id/property', requireAuth, role(OWNER, 'agent'), validate(moveAgent, 'body'), async (req, res) => {
+    const out = await PrintService.moveAgent(Number(req.params.id), req.body.propertyId, req.user.id);
+    if (out.error === 'not_found') return error(res, 'Printer not found', 404);
+    if (out.error === 'same_property') return error(res, 'The printer is already at that property', 400);
+    if (out.error === 'destination_not_found') return error(res, 'Property not found', 404);
+    if (out.error === 'destination_has_printer') return error(res, 'That property already has a printer', 409);
+    return success(res, out);
   });
 
   // ── Agent endpoints (bearer token; no session, no CSRF) ───────────────────

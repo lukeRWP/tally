@@ -13,6 +13,7 @@ import { fireEvent, render, screen, within } from '@testing-library/react';
 import { test, expect, vi, beforeEach } from 'vitest';
 import { PrinterSettings } from './printer-settings';
 import { usePrinters, usePrintJobs } from '@/hooks/use-print';
+import { useProperties } from '@/hooks/use-inventory';
 import type { Printer } from '@/hooks/use-print';
 
 vi.mock('@/hooks/use-print', () => ({
@@ -25,6 +26,10 @@ vi.mock('@/hooks/use-print', () => ({
   useRetryPrintJob: vi.fn(),
   useBindServiceAccount: vi.fn(),
   useUnbindServiceAccount: vi.fn(),
+  useMovePrinter: vi.fn(),
+}));
+vi.mock('@/hooks/use-inventory', () => ({
+  useProperties: vi.fn(),
 }));
 vi.mock('@/components/ui/toast', () => {
   const toastFn = Object.assign(vi.fn(), { success: vi.fn(), error: vi.fn() });
@@ -46,6 +51,7 @@ function makePrinter(overrides: Partial<Printer>): Printer {
 function renderWith(printer: Printer) {
   vi.mocked(usePrinters).mockReturnValue({ data: [printer] } as ReturnType<typeof usePrinters>);
   vi.mocked(usePrintJobs).mockReturnValue({ data: [] } as unknown as ReturnType<typeof usePrintJobs>);
+  vi.mocked(useProperties).mockReturnValue({ data: [] } as unknown as ReturnType<typeof useProperties>);
   return render(<PrinterSettings propertyId={1} />);
 }
 
@@ -56,7 +62,7 @@ beforeEach(async () => {
   const hooks = vi.mocked(await import('@/hooks/use-print'));
   for (const h of [hooks.useCreatePrinter, hooks.useSetLoadedMedia,
                    hooks.useCancelPrintJob, hooks.useRetryPrintJob,
-                   hooks.useBindServiceAccount, hooks.useUnbindServiceAccount]) {
+                   hooks.useBindServiceAccount, hooks.useUnbindServiceAccount, hooks.useMovePrinter]) {
     h.mockReturnValue(idleMutation as never);
   }
   hooks.useRevokePrinter.mockReturnValue(revokeMutation as never);

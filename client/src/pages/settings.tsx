@@ -288,7 +288,14 @@ export function SettingsPage() {
           {selectedPropertyId > 0 && (
             <section className="flex flex-col gap-3 animate-fade-up" style={{ animationDelay: '120ms' }}>
               <ColHead>Printing</ColHead>
-              <PrinterSettings propertyId={selectedPropertyId} />
+              {/* Keyed by propertyId: a move leaves onMoved re-selecting the
+                  destination while this component stays mounted, so without
+                  a remount its move state (moveTargetId, moveOpen) survives
+                  the switch and can pop the confirm dialog open by itself on
+                  the next property. Keying resets ALL per-property state on
+                  any switch, not just the move-specific pieces (#283's own
+                  column-balance fix leans on the same remount-by-key idiom). */}
+              <PrinterSettings key={selectedPropertyId} propertyId={selectedPropertyId} onMoved={setSelectedPropertyId} />
             </section>
           )}
 

@@ -522,6 +522,34 @@ test('claimNext persists telemetry and derives property/preset from the AGENT, n
   assert.match(claim.sql, /LIMIT 1/i);
 });
 
+test('claimNext guards the claim UPDATE against a concurrent moveAgent — EXISTS on the agent\'s CURRENT property', async () => {
+  // req.agent.propertyId is read by middleware before a concurrent moveAgent
+  // could commit. Without this guard, claimNext can claim a job at the OLD
+  // property that nothing will ever sweep again (the sweep is scoped to
+  // whatever property the caller passes in, which is now wrong too). The
+  // EXISTS subquery re-reads printer_agents for THIS agent id — a FOR UPDATE
+  // row moveAgent also locks — so the claim waits for the move and then
+  // matches nothing against the agent's new property.
+  let claimSql = '', claimParams = null;
+  PrintService.init({ db: fakeDb((sql, params) => {
+    if (/UPDATE TALLY\.printer_agents/i.test(sql)) return { affectedRows: 1 };
+    if (/SET STATUS\s*=\s*'queued'/i.test(sql)) return { affectedRows: 0 };
+    if (/SET STATUS\s*=\s*'claimed'/i.test(sql)) { claimSql = sql; claimParams = params; return { affectedRows: 1 }; }
+    if (/SELECT .* FROM TALLY\.print_jobs/i.test(sql)) {
+      return [{ ID: 11, PROPERTY_ID: 3, CREATED_BY: 42, ENTITY_TYPE: 'container',
+                ENTITY_IDS: '[5]', PRESET: 'large', STATUS: 'claimed', ATTEMPTS: 0 }];
+    }
+    return [];
+  }), logger, config });
+
+  const agent = { id: 7, propertyId: 3, loadedMedia: 'large' };
+  await PrintService.claimNext(agent, {});
+
+  assert.match(claimSql, /AND EXISTS\s*\(\s*SELECT 1 FROM TALLY\.printer_agents a\s+WHERE a\.ID = \?\s+AND a\.PROPERTY_ID = print_jobs\.PROPERTY_ID\s*\)/i,
+    'the claim must re-check the agent\'s live PROPERTY_ID against the job row, inside the same single-table UPDATE');
+  assert.ok(claimParams.includes(7), 'the agent id is bound for the EXISTS subquery');
+});
+
 test('claimNext returns null when nothing is claimable', async () => {
   PrintService.init({ db: fakeDb((sql) => {
     if (/UPDATE/i.test(sql)) return { affectedRows: 0 };
@@ -922,6 +950,7 @@ test('every route is mounted with the correct auth middleware', async () => {
     ['PUT', '/api/print/_u_/agents/:id/loaded-media', 'user'],
     ['PUT', '/api/print/_u_/agents/:id/service-account', 'user'],
     ['DELETE', '/api/print/_d_/agents/:id/service-account', 'user'],
+    ['PUT', '/api/print/_u_/agents/:id/property', 'user'],
     ['POST', '/api/print/_y_/agent/claim', 'agent'],
     ['GET', '/api/print/_x_/agent/jobs/:id/pdf', 'agent'],
     ['POST', '/api/print/_y_/agent/jobs/:id/ack', 'agent'],
@@ -1111,6 +1140,211 @@ test('requirePrintRole resolves the property per route shape and gates on role',
 
   // a non-member gets 404, not 403 — do not leak that the property exists
   assert.equal((await run('agent', {}, ['owner'], [])).status, 404);
+});
+
+// ── moveAgent ─────────────────────────────────────────────────────────────────
+
+// Regex-matched, call-order-independent — moveAgent runs several distinct
+// queries inside one transaction, so pinning them by call index would be
+// fragile to a harmless reordering. Same shape as recycle.test.js's harness.
+function txHarness(handlers = {}) {
+  const sqls = [];
+  const params = [];
+  const query = async (sql, args) => {
+    const flat = sql.replace(/\s+/g, ' ').trim();
+    sqls.push(flat);
+    params.push(args);
+    for (const [pattern, value] of Object.entries(handlers)) {
+      if (new RegExp(pattern, 'i').test(flat)) return typeof value === 'function' ? value(args) : value;
+    }
+    return { affectedRows: 0 };
+  };
+  const db = { query, withTransaction: async (fn) => fn({ query }) };
+  return { sqls, params, db };
+}
+
+test('moveAgent success: requeues claims, reconciles the destination queue, moves the #122 tether, and reports leftBehind', async () => {
+  const { sqls, params, db } = txHarness({
+    'FROM TALLY\\.printer_agents a': [{ ID: 7, PROPERTY_ID: 3, LOADED_MEDIA: 'medium' }],
+    'FROM TALLY\\.properties p': [{ ID: 9 }],
+    'SELECT ID FROM TALLY\\.printer_agents WHERE PROPERTY_ID': [],
+    "SET STATUS = 'queued', CLAIM_ID = NULL": { affectedRows: 2 },
+    "SET j\\.STATUS = 'held'": { affectedRows: 3 },
+    "SET j\\.STATUS = 'queued'": { affectedRows: 1 },
+    'SELECT COUNT\\(\\*\\)': [{ cnt: 5 }],
+  });
+  PrintService.init({ db, logger, config });
+
+  const out = await PrintService.moveAgent(7, 9, 42);
+  assert.deepEqual(out, { id: 7, propertyId: 9, requeued: 2, released: 1, held: 3, fromPropertyId: 3, leftBehind: 5 });
+
+  const move = sqls.find((s) => /UPDATE TALLY\.printer_agents SET PROPERTY_ID/i.test(s));
+  assert.ok(move, 'the agent row is moved to the destination property');
+  assert.match(move, /CREATED_BY\s*=\s*\?/i, 'CREATED_BY moves to the mover — the #122 tether follows the binder');
+  const moveParams = params[sqls.indexOf(move)];
+  assert.deepEqual(moveParams, [9, 42, 7], 'propertyId, mover userId, then the agent id');
+
+  const requeue = sqls.find((s) => /SET STATUS = 'queued', CLAIM_ID = NULL/i.test(s));
+  assert.match(requeue, /WHERE CLAIMED_BY = \? AND STATUS = 'claimed' AND PROPERTY_ID = \?/i,
+    'only this agent\'s own in-flight claims, scoped to its CURRENT property, are requeued — ' +
+    'bare CLAIMED_BY has no index and would scan/lock every print_jobs row');
+  const requeueParams = params[sqls.indexOf(requeue)];
+  assert.deepEqual(requeueParams, [7, 3], 'agent id, then the agent\'s own (source) property id');
+  assert.ok(!/ATTEMPTS/i.test(requeue), 'a move is an operator action, not a job failure — attempts are untouched');
+
+  const leftBehindQuery = sqls.find((s) => /SELECT COUNT\(\*\)/i.test(s));
+  assert.ok(leftBehindQuery, 'the source property\'s stranded queue is counted after the move');
+  assert.match(leftBehindQuery, /PROPERTY_ID = \? AND STATUS IN \('queued', 'held'\)/i);
+  assert.deepEqual(params[sqls.indexOf(leftBehindQuery)], [3], 'counted at the SOURCE property, not the destination');
+});
+
+test('moveAgent logs the move AFTER the transaction commits, with the full outcome including leftBehind', async () => {
+  const logged = [];
+  const infoLogger = { ...logger, info: (msg, meta) => logged.push({ msg, meta }) };
+  const { db } = txHarness({
+    'FROM TALLY\\.printer_agents a': [{ ID: 7, PROPERTY_ID: 3, LOADED_MEDIA: 'medium' }],
+    'FROM TALLY\\.properties p': [{ ID: 9 }],
+    'SELECT ID FROM TALLY\\.printer_agents WHERE PROPERTY_ID': [],
+    "SET STATUS = 'queued', CLAIM_ID = NULL": { affectedRows: 2 },
+    "SET j\\.STATUS = 'held'": { affectedRows: 3 },
+    "SET j\\.STATUS = 'queued'": { affectedRows: 1 },
+    'SELECT COUNT\\(\\*\\)': [{ cnt: 5 }],
+  });
+  PrintService.init({ db, logger: infoLogger, config });
+
+  await PrintService.moveAgent(7, 9, 42);
+
+  assert.equal(logged.length, 1, 'exactly one log line for a successful move');
+  assert.equal(logged[0].msg, 'printer moved');
+  assert.deepEqual(logged[0].meta, {
+    agentId: 7, fromPropertyId: 3, toPropertyId: 9, userId: 42,
+    requeued: 2, released: 1, held: 3, leftBehind: 5,
+  });
+});
+
+test('moveAgent never logs when it refuses the move (e.g. destination already has a printer)', async () => {
+  const logged = [];
+  const infoLogger = { ...logger, info: (msg, meta) => logged.push({ msg, meta }) };
+  const { db } = txHarness({
+    'FROM TALLY\\.printer_agents a': [{ ID: 7, PROPERTY_ID: 3, LOADED_MEDIA: 'medium' }],
+    'FROM TALLY\\.properties p': [{ ID: 9 }],
+    'SELECT ID FROM TALLY\\.printer_agents WHERE PROPERTY_ID': [{ ID: 99 }],
+  });
+  PrintService.init({ db, logger: infoLogger, config });
+
+  const out = await PrintService.moveAgent(7, 9, 42);
+  assert.deepEqual(out, { error: 'destination_has_printer' });
+  assert.equal(logged.length, 0, 'a refused move must not be logged as a move');
+});
+
+test('moveAgent 404s for a printer the caller does not own at its current property', async () => {
+  const { db } = txHarness({ 'FROM TALLY\\.printer_agents a': [] });
+  PrintService.init({ db, logger, config });
+  assert.deepEqual(await PrintService.moveAgent(7, 9, 42), { error: 'not_found' });
+});
+
+test('moveAgent refuses a move to the printer\'s own property', async () => {
+  const { db } = txHarness({ 'FROM TALLY\\.printer_agents a': [{ ID: 7, PROPERTY_ID: 3, LOADED_MEDIA: 'medium' }] });
+  PrintService.init({ db, logger, config });
+  assert.deepEqual(await PrintService.moveAgent(7, 3, 42), { error: 'same_property' });
+});
+
+test('moveAgent 404s a destination the caller does not own — same as one that does not exist', async () => {
+  const { db } = txHarness({
+    'FROM TALLY\\.printer_agents a': [{ ID: 7, PROPERTY_ID: 3, LOADED_MEDIA: 'medium' }],
+    'FROM TALLY\\.properties p': [],
+  });
+  PrintService.init({ db, logger, config });
+  assert.deepEqual(await PrintService.moveAgent(7, 9, 42), { error: 'destination_not_found' });
+});
+
+test('moveAgent refuses a destination that already has a printer (one printer per property)', async () => {
+  const { db } = txHarness({
+    'FROM TALLY\\.printer_agents a': [{ ID: 7, PROPERTY_ID: 3, LOADED_MEDIA: 'medium' }],
+    'FROM TALLY\\.properties p': [{ ID: 9 }],
+    'SELECT ID FROM TALLY\\.printer_agents WHERE PROPERTY_ID': [{ ID: 99 }],
+  });
+  PrintService.init({ db, logger, config });
+  assert.deepEqual(await PrintService.moveAgent(7, 9, 42), { error: 'destination_has_printer' });
+});
+
+test('moveAgent leaves jobs at the OLD property alone — only claims held BY this agent move', async () => {
+  const seen = [];
+  const { db } = txHarness({
+    'FROM TALLY\\.printer_agents a': [{ ID: 7, PROPERTY_ID: 3, LOADED_MEDIA: 'medium' }],
+    'FROM TALLY\\.properties p': [{ ID: 9 }],
+    'SELECT ID FROM TALLY\\.printer_agents WHERE PROPERTY_ID': [],
+    'SELECT COUNT\\(\\*\\)': [{ cnt: 0 }],
+  });
+  const wrapped = { ...db, query: async (sql, args) => { seen.push(sql); return db.query(sql, args); } };
+  PrintService.init({ db: wrapped, logger, config });
+  await PrintService.moveAgent(7, 9, 42);
+  assert.ok(!seen.some((s) => /DELETE FROM TALLY\.print_jobs|UPDATE TALLY\.print_jobs j.*PROPERTY_ID\s*=\s*\?,/i.test(s)),
+    'no query ever reassigns a print_jobs row\'s PROPERTY_ID — jobs stay at the property whose labels they belong to');
+});
+
+test('PUT /api/print/_u_/agents/:id/property — route-level error mapping and validation', async () => {
+  const printRoutes = require('../src/modules/print/print.routes');
+  const routes = {};
+  const requireAuth = (req, res, next) => next();
+  const requireApiKey = (req, res, next) => next();
+  const app = {
+    locals: { requireAuth, requireApiKey },
+    get() {}, post() {}, patch() {}, delete() {},
+    put(p, ...handlers) { routes[p] = handlers; },
+  };
+
+  const outcomes = {
+    not_found: { error: 'not_found' },
+    same_property: { error: 'same_property' },
+    destination_not_found: { error: 'destination_not_found' },
+    destination_has_printer: { error: 'destination_has_printer' },
+  };
+  let nextOutcome = { id: 7, propertyId: 9, requeued: 0, released: 0, held: 0 };
+  const db = fakeDb((sql) => {
+    // role.middleware resolves the agent's property for the gate; always let
+    // the gate through so the handler (and its own error mapping) is reached.
+    if (/FROM TALLY\.printer_agents WHERE ID/i.test(sql)) return [{ PROPERTY_ID: 3 }];
+    if (/property_members/i.test(sql)) return [{ ROLE: 'owner' }];
+    return [];
+  });
+  printRoutes({ app, db, logger, config });
+  PrintService.init({ db, logger, config });
+  PrintService.moveAgent = async () => nextOutcome;
+
+  const run = async (body) => {
+    let status = 200, sent = null;
+    const res = {
+      status(c) { status = c; return this; },
+      json(b) { sent = b; return this; },
+    };
+    // Run through validate() first, exactly as Express would, so a bad body
+    // 400s before the handler is ever reached. validate() answers the
+    // response itself on failure and never calls next (middleware/validate.js).
+    // handlers = [requireAuth, roleGate, validateMw, handler]
+    const [, , validateMw, handler] = routes['/api/print/_u_/agents/:id/property'];
+    let nexted = false;
+    await validateMw({ user: { id: 42 }, params: { id: '7' }, body }, res, () => { nexted = true; });
+    if (nexted) await handler({ user: { id: 42 }, params: { id: '7' }, body }, res);
+    return { status, sent, validationFailed: !nexted };
+  };
+
+  const EXPECTED_STATUS = {
+    not_found: 404, same_property: 400, destination_not_found: 404, destination_has_printer: 409,
+  };
+  for (const [key, outcome] of Object.entries(outcomes)) {
+    nextOutcome = outcome;
+    const { status } = await run({ propertyId: 9 });
+    assert.equal(status, EXPECTED_STATUS[key], key);
+  }
+
+  nextOutcome = { id: 7, propertyId: 9, requeued: 1, released: 0, held: 0 };
+  const ok = await run({ propertyId: 9 });
+  assert.equal(ok.status, 200);
+  assert.deepEqual(ok.sent?.data, nextOutcome);
+
+  const bad = await run({});
+  assert.ok(bad.validationFailed, 'a missing propertyId must 400 before the handler runs');
 });
 
 
