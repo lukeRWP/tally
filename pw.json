@@ -66,6 +66,7 @@
       "print-agent"
     ]
   },
+  "hardening": { "loopbackPorts": true, "appUser": "node", "scopedEnv": true, "realIp": true },
   "environments": {
     "prod": {
       "publicHost": "tally.razorwire-productions.com",
@@ -75,12 +76,11 @@
       },
       "services": {
         "app": {
-          "image": "node:22-bookworm-slim",
+          "image": "node:22-bookworm-slim@sha256:f3a68cf41a855d227d1b0ab832bed9749469ef38cf4f58182fb8c893bc462383",
           "command": [
             "node",
             "index.js"
           ],
-          "user": "1000:1000",
           "init": true,
           "working_dir": "/app/server",
           "volumes": [
