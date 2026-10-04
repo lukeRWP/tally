@@ -1,6 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const Reconcile = require('../src/modules/inventory/move-reconcile.service');
+const { mysqlTagsInsertRoute } = require('./helpers/mysql-tags-insert');
 const AuditService = require('../src/modules/audit/audit.service');
 
 // Initialize AuditService with no-op logger to prevent errors in tests that don't explicitly mock it
@@ -73,17 +74,9 @@ test('carrying tags matches by name case-insensitively and creates the rest', as
 // varchar(7) NOT NULL with no default (SQL/expected-schema.sql) — so MySQL
 // rejected it and the whole move rolled back (500, ER_BAD_NULL_ERROR). The
 // old fakeTx INSERT routes always returned an insertId no matter what they
-// were handed, so nothing ever caught it. This route mimics MySQL's own
-// NOT NULL enforcement instead.
-function mysqlTagsInsertRoute(writes, insertId) {
-  return [/INSERT INTO TALLY\.tags/, (sql, params) => {
-    writes.push({ sql, params });
-    if (params[1] == null) {
-      throw Object.assign(new Error("Column 'COLOR' cannot be null"), { code: 'ER_BAD_NULL_ERROR' });
-    }
-    return { insertId };
-  }];
-}
+// were handed, so nothing ever caught it. mysqlTagsInsertRoute (helpers/)
+// enforces the table's NOT NULL columns against what each column actually
+// receives — including a NULL written into the SQL text itself.
 
 test('REGRESSION: a tag missing at the destination is created with the SOURCE colour, not NULL', async () => {
   const writes = [];
