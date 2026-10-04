@@ -8,6 +8,15 @@ const AuditService = require('../audit/audit.service');
  * commits or rolls back WITH the move itself.
  */
 
+// Same hex-colour shape tags.schema.js enforces for a user-entered colour.
+const HEX_COLOR_RE = /^#[0-9A-Fa-f]{6}$/;
+// tags.COLOR is NOT NULL with no default, so a destination tag created by a
+// carry must always get a real value. This is the fallback when the source
+// tag's own colour is missing or invalid — the blue swatch from the client's
+// own palette (client/src/components/tags/tag-picker.tsx PRESET_COLORS), not
+// a value invented here.
+const DEFAULT_TAG_COLOR = '#3b82f6';
+
 async function movingSet(tx, entityType, entityId) {
   if (entityType === 'item') return { containerIds: [], itemIds: [Number(entityId)], deletedItemIds: [] };
 
@@ -55,7 +64,7 @@ async function attachedTags(tx, set) {
   }
   if (!preds.length) return [];
   return tx.query(
-    `SELECT et.TAG_ID, t.NAME, et.ENTITY_TYPE, et.ENTITY_ID
+    `SELECT et.TAG_ID, t.NAME, t.COLOR, et.ENTITY_TYPE, et.ENTITY_ID
        FROM TALLY.tags t
        JOIN TALLY.entity_tags et ON t.ID = et.TAG_ID
       WHERE ${preds.join(' OR ')}`,
@@ -118,7 +127,7 @@ function distinctTagCount(attached) {
 /** Plan the tag carry against the destination's existing tags. */
 async function tagPlan(tx, set, destPropertyId) {
   const attached = await attachedTags(tx, set);
-  if (!attached.length) return { attached, byName: new Map(), toCreate: [] };
+  if (!attached.length) return { attached, byName: new Map(), toCreate: [], colorByName: new Map() };
   const dest = await tx.query(
     'SELECT ID, NAME FROM TALLY.tags WHERE PROPERTY_ID = ?', [destPropertyId]
   );
@@ -126,7 +135,11 @@ async function tagPlan(tx, set, destPropertyId) {
   const toCreate = [...new Map(
     attached.filter((a) => !byName.has(a.NAME.toLowerCase())).map((a) => [a.NAME.toLowerCase(), a.NAME])
   ).values()];
-  return { attached, byName, toCreate };
+  // One colour per name: within a single source property, names are unique
+  // case-insensitively (uq_tags_name_property, a _ci collation), so every
+  // attached row sharing a lowercased name carries the same TAG_ID and COLOR.
+  const colorByName = new Map(attached.map((a) => [a.NAME.toLowerCase(), a.COLOR]));
+  return { attached, byName, toCreate, colorByName };
 }
 
 async function previewConsequences(tx, set, destPropertyId) {
@@ -143,6 +156,14 @@ async function previewConsequences(tx, set, destPropertyId) {
 // routes need it — shared logic belongs in the shared module.
 function needsConfirm(consequences, confirm) {
   return !confirm && consequences.unlinked.length > 0;
+}
+
+/** The colour for a newly-created destination tag: the source's own colour
+ * when it's valid hex, otherwise the palette default — tags.COLOR is NOT
+ * NULL with no default, so a destination insert must always have one. */
+function colorFor(colorByName, name) {
+  const color = colorByName.get(name.toLowerCase());
+  return HEX_COLOR_RE.test(color) ? color : DEFAULT_TAG_COLOR;
 }
 
 // Data-only: tags + accessories. Callers audit separately via auditMove,
@@ -168,7 +189,7 @@ async function reconcile(tx, set, { destPropertyId }) {
   const remapSet = deletedItemIds.length
     ? { containerIds: set.containerIds, itemIds: [...set.itemIds, ...deletedItemIds] }
     : set;
-  const { attached, byName, toCreate } = await tagPlan(tx, remapSet, destPropertyId);
+  const { attached, byName, toCreate, colorByName } = await tagPlan(tx, remapSet, destPropertyId);
 
   // The live-only view for reporting, resolved BEFORE the create loop below
   // mutates byName (afterwards every name resolves, and "would be created"
@@ -184,9 +205,14 @@ async function reconcile(tx, set, { destPropertyId }) {
   for (const name of toCreate) {
     let tagId;
     try {
+      // Carry the SOURCE tag's own colour to the destination — tags.COLOR is
+      // NOT NULL with no default, and a bare NULL here 500'd every
+      // cross-property move whose moving set carried a tag name missing at
+      // the destination (prod, 2026-10-04). colorFor() falls back to the
+      // palette default when the source colour is missing or invalid.
       const res = await tx.query(
-        'INSERT INTO TALLY.tags (NAME, COLOR, PROPERTY_ID) VALUES (?, NULL, ?)',
-        [name, destPropertyId]
+        'INSERT INTO TALLY.tags (NAME, COLOR, PROPERTY_ID) VALUES (?, ?, ?)',
+        [name, colorFor(colorByName, name), destPropertyId]
       );
       tagId = res.insertId;
     } catch (err) {

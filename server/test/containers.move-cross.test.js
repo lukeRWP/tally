@@ -3,6 +3,7 @@ const assert = require('node:assert');
 const Containers = require('../src/modules/inventory/containers.service');
 const AreasService = require('../src/modules/inventory/areas.service');
 const Reconcile = require('../src/modules/inventory/move-reconcile.service');
+const { mysqlTagsInsertRoute } = require('./helpers/mysql-tags-insert');
 const AuditService = require('../src/modules/audit/audit.service');
 
 const noop = { warn() {}, info() {}, error() {} };
@@ -242,10 +243,12 @@ test('#214: a soft-deleted item in a moved tote gets its entity_tags repointed t
     ]],
     // The only attachment in the subtree belongs to the RECYCLED item.
     [/FROM TALLY\.tags t[\s\S]*entity_tags/, [
-      { TAG_ID: 7, NAME: 'Xmas', ENTITY_TYPE: 'item', ENTITY_ID: 103 },
+      { TAG_ID: 7, NAME: 'Xmas', COLOR: '#22c55e', ENTITY_TYPE: 'item', ENTITY_ID: 103 },
     ]],
     [/FROM TALLY\.tags WHERE PROPERTY_ID/, []], // destination has no such tag
-    [/INSERT INTO TALLY\.tags/, { insertId: 41 }],
+    // Enforces tags' NOT NULL columns like MySQL does: the old static
+    // { insertId } route is how a COLOR-NULL insert reached prod (2026-10-04).
+    mysqlTagsInsertRoute([], 41),
     [/UPDATE TALLY\.entity_tags/, { affectedRows: 1 }],
     [/SELECT.*FROM TALLY\.item_accessories/, []],
     [GET_BY_ID, [{ ID: 5, NAME: 'Tote', AREA_ID: 7 }]],
@@ -259,8 +262,8 @@ test('#214: a soft-deleted item in a moved tote gets its entity_tags repointed t
   const created = db.calls.find((c) => /INSERT INTO TALLY\.tags/.test(c.sql));
   assert.ok(created, "the recycled traveller's tag name is find-or-created in the destination");
   assert.equal(created.tx, db.lastTx, 'created INSIDE the move transaction, not on the pool');
-  assert.ok(created.params.includes('Xmas') && created.params.includes(2),
-    'created by name, in the DESTINATION property');
+  assert.deepEqual(created.params, ['Xmas', '#22c55e', 2],
+    "created by name, with the SOURCE tag's colour, in the DESTINATION property");
 
   const repointed = db.calls.find((c) => /UPDATE TALLY\.entity_tags/.test(c.sql));
   assert.ok(repointed, "the recycled traveller's attachment row is repointed — the live-item treatment");
