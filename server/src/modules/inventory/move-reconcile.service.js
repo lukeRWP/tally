@@ -12,7 +12,7 @@ const AuditService = require('../audit/audit.service');
 const HEX_COLOR_RE = /^#[0-9A-Fa-f]{6}$/;
 // tags.COLOR is NOT NULL with no default, so a destination tag created by a
 // carry must always get a real value. This is the fallback when the source
-// tag's own colour is missing or invalid — the first swatch in the client's
+// tag's own colour is missing or invalid — the blue swatch from the client's
 // own palette (client/src/components/tags/tag-picker.tsx PRESET_COLORS), not
 // a value invented here.
 const DEFAULT_TAG_COLOR = '#3b82f6';
