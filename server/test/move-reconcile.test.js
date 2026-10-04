@@ -67,6 +67,97 @@ test('carrying tags matches by name case-insensitively and creates the rest', as
   assert.ok(created.params.includes(2), 'created in the DESTINATION property');
 });
 
+// ── Prod incident 2026-10-04: destination tag INSERT violated COLOR NOT NULL
+// Every cross-property move whose moving set carried a tag name missing at
+// the destination ran `INSERT ... VALUES (?, NULL, ?)` — tags.COLOR is
+// varchar(7) NOT NULL with no default (SQL/expected-schema.sql) — so MySQL
+// rejected it and the whole move rolled back (500, ER_BAD_NULL_ERROR). The
+// old fakeTx INSERT routes always returned an insertId no matter what they
+// were handed, so nothing ever caught it. This route mimics MySQL's own
+// NOT NULL enforcement instead.
+function mysqlTagsInsertRoute(writes, insertId) {
+  return [/INSERT INTO TALLY\.tags/, (sql, params) => {
+    writes.push({ sql, params });
+    if (params[1] == null) {
+      throw Object.assign(new Error("Column 'COLOR' cannot be null"), { code: 'ER_BAD_NULL_ERROR' });
+    }
+    return { insertId };
+  }];
+}
+
+test('REGRESSION: a tag missing at the destination is created with the SOURCE colour, not NULL', async () => {
+  const writes = [];
+  const updates = [];
+  const tx = fakeTx([
+    [/FROM TALLY\.tags t[\s\S]*entity_tags/, [
+      { TAG_ID: 5, NAME: 'Computer', COLOR: '#3b82f6', ENTITY_TYPE: 'item', ENTITY_ID: 10 },
+    ]],
+    [/FROM TALLY\.tags WHERE PROPERTY_ID/, []], // destination property 6 has no "Computer" tag yet
+    mysqlTagsInsertRoute(writes, 900),
+    [/UPDATE TALLY\.entity_tags/, (sql, params) => { updates.push(params); return { affectedRows: 1 }; }],
+    [/item_accessories/, []],
+  ]);
+
+  const out = await Reconcile.reconcile(tx,
+    { containerIds: [], itemIds: [10] },
+    { srcPropertyId: 1, destPropertyId: 6, userId: 42, rootType: 'item', rootId: 10, moveChanges: {} });
+
+  const created = writes.find((w) => /INSERT INTO TALLY\.tags/.test(w.sql));
+  assert.ok(created, 'the INSERT ran');
+  assert.deepEqual(created.params, ['Computer', '#3b82f6', 6],
+    "the destination tag is created with the SOURCE colour, not NULL — this is the prod 500");
+
+  assert.deepEqual(updates[0], [900, 5, 'item', 10],
+    'the entity_tags repoint points the attachment at the NEW destination tag id');
+  assert.equal(out.tagsCreated, 1);
+});
+
+test('a source tag with no valid COLOR falls back to the client palette default, never NULL', async () => {
+  const writes = [];
+  const tx = fakeTx([
+    [/FROM TALLY\.tags t[\s\S]*entity_tags/, [
+      { TAG_ID: 9, NAME: 'Legacy', COLOR: null, ENTITY_TYPE: 'item', ENTITY_ID: 11 },
+    ]],
+    [/FROM TALLY\.tags WHERE PROPERTY_ID/, []],
+    mysqlTagsInsertRoute(writes, 901),
+    [/UPDATE TALLY\.entity_tags/, () => ({ affectedRows: 1 })],
+    [/item_accessories/, []],
+  ]);
+
+  await Reconcile.reconcile(tx,
+    { containerIds: [], itemIds: [11] },
+    { srcPropertyId: 1, destPropertyId: 6, userId: 42, rootType: 'item', rootId: 11, moveChanges: {} });
+
+  const created = writes.find((w) => /INSERT INTO TALLY\.tags/.test(w.sql));
+  assert.deepEqual(created.params, ['Legacy', '#3b82f6', 6],
+    'a missing/invalid source colour falls back to the default, never NULL');
+});
+
+test('one tag shared by several entities is created once in the destination, with that colour', async () => {
+  const writes = [];
+  const updates = [];
+  const tx = fakeTx([
+    [/FROM TALLY\.tags t[\s\S]*entity_tags/, [
+      { TAG_ID: 3, NAME: 'Fragile', COLOR: '#ef4444', ENTITY_TYPE: 'item', ENTITY_ID: 101 },
+      { TAG_ID: 3, NAME: 'Fragile', COLOR: '#ef4444', ENTITY_TYPE: 'item', ENTITY_ID: 102 },
+    ]],
+    [/FROM TALLY\.tags WHERE PROPERTY_ID/, []],
+    mysqlTagsInsertRoute(writes, 902),
+    [/UPDATE TALLY\.entity_tags/, (sql, params) => { updates.push(params); return { affectedRows: 1 }; }],
+    [/item_accessories/, []],
+  ]);
+
+  const out = await Reconcile.reconcile(tx,
+    { containerIds: [], itemIds: [101, 102] },
+    { srcPropertyId: 1, destPropertyId: 6, userId: 42, rootType: 'item', rootId: 101, moveChanges: {} });
+
+  const inserts = writes.filter((w) => /INSERT INTO TALLY\.tags/.test(w.sql));
+  assert.equal(inserts.length, 1, 'created exactly once, not once per attachment row');
+  assert.deepEqual(inserts[0].params, ['Fragile', '#ef4444', 6], 'created with the shared source colour');
+  assert.deepEqual(updates.map((u) => u[0]), [902, 902], 'both attachment rows repointed at the one new tag');
+  assert.equal(out.tagsCreated, 1);
+});
+
 // ── #244: destination tag find-or-create converges on ER_DUP_ENTRY ─────────
 // Two concurrent moves carrying the same new tag name race
 // uq_tags_name_property; the loser's bare INSERT used to 500 the whole move.
