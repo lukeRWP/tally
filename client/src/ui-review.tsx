@@ -80,7 +80,6 @@ const shareEnvelopes: Record<string, unknown> = {
 
 const routes: [RegExp, () => unknown][] = [
   [/\/api\/sharing\/_x_\/view\//, () => ({ entity: shareEnvelopes[new URLSearchParams(location.search).get('share') || 'cont'] })],
-  [/\/api\/auth\/_x_\/session/, () => ({ user })],
   [/\/api\/properties\/_x_\/list/, () => ({ properties: [property] })],
   [/\/api\/properties\/_x_\/\d+/, () => ({ property })],
   [/\/api\/areas\/_x_\/property\/\d+/, () => ({ areas })],
@@ -116,6 +115,11 @@ const realFetch = window.fetch.bind(window);
 window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
   const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
   if (!url.includes('/api/')) return realFetch(input as RequestInfo, init);
+  // @pw/auth-express's session route (see auth-store.ts): a raw { user, auth } body,
+  // not the { success, data } envelope the docket routes below answer in.
+  if (/\/api\/auth\/session(\?|$)/.test(url)) {
+    return new Response(JSON.stringify({ user, auth: { method: 'session' } }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  }
   for (const [re, fn] of routes) if (re.test(url)) return ok(fn());
   return ok({});
 };
