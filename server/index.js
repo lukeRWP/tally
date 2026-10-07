@@ -6,7 +6,6 @@ require('dotenv').config({ path: require('path').resolve(__dirname, '../.env') }
 const config = require('./src/config');
 const express = require('express');
 const cors = require('cors');
-const helmet = require('helmet');
 const compression = require('compression');
 const cookieParser = require('cookie-parser');
 const rateLimit = require('express-rate-limit');
@@ -15,20 +14,14 @@ const db = require('./src/infrastructure/db');
 const storage = require('./src/infrastructure/storage');
 const logger = require('./src/utils/logger');
 const errorHandler = require('./src/middleware/error-handler');
+const { applyEdge } = require('./src/middleware/edge');
 const { getBuildInfo } = require('./src/utils/version');
 
 const app = express();
-app.set('trust proxy', 1); // Trust first proxy (Nginx)
 
 // ── Middleware ──────────────────────────────────────────────────────────────
 
-app.use(
-  helmet({
-    contentSecurityPolicy: config.isProduction
-      ? undefined
-      : false, // Permissive CSP in development
-  })
-);
+applyEdge(app); // trust proxy + helmet (see middleware/edge.js for the hop analysis)
 
 app.use(cors({ origin: config.clientUrl, credentials: true }));
 

@@ -654,6 +654,11 @@ These rules exist because every one of them was learned from a production failur
 
 13. **`S3_PUBLIC_ENDPOINT` must be an origin, with no path.** With `forcePathStyle` the SDK builds `/{bucket}/{key}` itself, so a path on the endpoint gets signed twice (`/tally-files/tally-files/key` → `NoSuchKey`). `storage.js` strips a trailing copy of the bucket and warns; any other path is left alone but warned about, because it only works if the proxy forwards the path byte for byte. When unset it falls back to `S3_ENDPOINT`, which is the internal service name — links the browser can never load, which is why uploaded photos appeared nowhere for so long.
 
+#### Edge headers and `req.ip` (`server/src/middleware/edge.js`)
+
+- **`trust proxy` is 1, not 2.** Two nginx proxies sit in front (pw-proxy, then the container nginx), but with `hardening.realIp` each PINS `X-Forwarded-For` to the client it resolved instead of appending, so Express sees one hop and a one-entry header. Trusting 2 would let a client-prepended entry choose its rate-limit bucket. If `realIp` is ever dropped the header becomes `client, pw-proxy` and this must become 2.
+- **helmet sends no CSP and no Referrer-Policy.** The container nginx sends pw.json's CSP (every location, `/api` included) and pw-proxy sends Referrer-Policy; a second CSP is enforced as an intersection that silently cancels pw.json's allowances. Change the policy in `pw.json`, never by re-enabling helmet's. `test/edge.test.js` pins all of this.
+
 #### Environment & Secrets
 
 14. **The deploy step needs `permissions: id-token: write` and the `ORCHESTRATOR_URL` variable** — it authenticates with a GitHub Actions OIDC token, not a stored secret (#396). A failed mint prints `::error::could not mint a GitHub OIDC token` and the helper exits 97; a missing `ORCHESTRATOR_URL` makes curl fail with an unhelpful exit code.
