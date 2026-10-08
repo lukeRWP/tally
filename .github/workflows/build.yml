@@ -168,6 +168,12 @@ jobs:
                 printf '%s' "$POLL" | jq -r '.data.output // ""' 2>/dev/null | tail -30 || true
                 exit 1
                 ;;
+              cancelled)
+                # PW #1357: a cancel ends the op `cancelled` (it used to end `failed`).
+                echo "::error::Deploy was cancelled on the orchestrator (operation $OP)"
+                printf '%s' "$POLL" | jq -r '.data.output // ""' 2>/dev/null | tail -20 || true
+                exit 1
+                ;;
               *)
                 ATTEMPTS=$((ATTEMPTS + 1))
                 sleep 10
